@@ -1,0 +1,34 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "xf-dataform",
+      "runtimeExecutable": "/opt/homebrew/bin/bash",
+      "runtimeArgs": [
+        "scripts/preview.sh",
+        "dataform",
+        "7900"
+      ],
+      "port": 7900
+    },
+    {
+      "name": "xf-dbt",
+      "runtimeExecutable": "/opt/homebrew/bin/bash",
+      "runtimeArgs": [
+        "scripts/preview.sh",
+        "dbt",
+        "7901"
+      ],
+      "port": 7901
+    },
+    {
+      "name": "xf-dataform-embedded",
+      "runtimeExecutable": "/opt/homebrew/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "XF_PREVIEW_EMBEDDED=1 exec /opt/homebrew/bin/bash scripts/preview.sh dataform 7902"
+      ],
+      "port": 7902
+    }
+  ]
+}

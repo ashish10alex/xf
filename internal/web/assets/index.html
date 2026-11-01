@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xf</title>
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<!-- With the icons, Chrome's "Install page as app" makes an xf.app of its own (Dock, Raycast, ⌘Tab) rather than a letter tile. use-credentials: when a token is needed, the cookie goes with the fetch. -->
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
+<!-- Going to another page of xf web (another project) keeps the page it
+     leaves on screen until this one has drawn (<html class="drawn">,
+     main.js), 1s at most: no frame of an empty page between them. The
+     hold animation keeps the transition open. Here rather than in
+     style.css, which can still be loading when the browser decides. -->
+<style>
+@view-transition { navigation: auto; }
+::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+:root:not(.drawn)::view-transition-new(root) { opacity: 0; }
+:root:not(.drawn)::view-transition-group(root) { animation: xf-hold 1s; }
+@keyframes xf-hold { to { opacity: 1; } }
+</style>
+<link rel="stylesheet" href="themes.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

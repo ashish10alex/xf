@@ -1,0 +1,7 @@
+config {
+  type: "incremental"
+}
+
+SELECT event_ts, event_name
+FROM ${ref("raw-project", "tracking", "events")}
+${when(incremental(), `WHERE event_ts > (SELECT MAX(event_ts) FROM ${self()})`)}

@@ -1,0 +1,4 @@
+# Check every text file out with LF, on Windows too (where Git for Windows
+# sets core.autocrlf=true): fixtures, examples and expected outputs are
+# compared byte for byte. Projects xf opens may still use CRLF.
+* text=auto eol=lf

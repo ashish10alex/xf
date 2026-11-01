@@ -1,0 +1,316 @@
+{
+    "tables": [
+        {
+            "type": "table",
+            "target": {
+                "schema": "analytics",
+                "name": "daily_orders",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT\n  DATE(o.created_at) AS order_date,\n  c.region,\n  COUNT(DISTINCT o.order_id) AS orders,\n  SUM(o.total_amount) AS gross_revenue\nFROM `demo-project.staging.stg_orders` o\nJOIN `demo-project.staging.stg_customers` c USING (customer_id)\nGROUP BY 1, 2\n",
+            "disabled": false,
+            "fileName": "definitions/daily_orders.sqlx",
+            "tags": [
+                "daily"
+            ],
+            "dependencyTargets": [
+                {
+                    "schema": "staging",
+                    "name": "stg_orders",
+                    "database": "demo-project"
+                },
+                {
+                    "schema": "staging",
+                    "name": "stg_customers",
+                    "database": "demo-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "daily_orders",
+                "database": "demo-project"
+            },
+            "enumType": "TABLE"
+        },
+        {
+            "type": "view",
+            "target": {
+                "schema": "staging",
+                "name": "stg_customers",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT customer_id, region\nFROM `raw-project.shop.customers`\n",
+            "disabled": false,
+            "fileName": "definitions/stg_customers.sqlx",
+            "tags": [
+                "staging"
+            ],
+            "dependencyTargets": [
+                {
+                    "schema": "shop",
+                    "name": "customers",
+                    "database": "raw-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "staging",
+                "name": "stg_customers",
+                "database": "demo-project"
+            },
+            "enumType": "VIEW"
+        },
+        {
+            "type": "view",
+            "target": {
+                "schema": "staging",
+                "name": "stg_orders",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT order_id, customer_id, total_amount, created_at\nFROM `raw-project.shop.orders`\n",
+            "disabled": false,
+            "fileName": "definitions/stg_orders.sqlx",
+            "tags": [
+                "staging"
+            ],
+            "dependencyTargets": [
+                {
+                    "schema": "shop",
+                    "name": "orders",
+                    "database": "raw-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "staging",
+                "name": "stg_orders",
+                "database": "demo-project"
+            },
+            "enumType": "VIEW"
+        },
+        {
+            "type": "view",
+            "target": {
+                "schema": "analytics",
+                "name": "weekly_revenue",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT DATE_TRUNC(order_date, WEEK) AS week, SUM(gross_revenue) AS revenue\nFROM `demo-project.analytics.daily_orders`\nGROUP BY 1\n",
+            "disabled": false,
+            "fileName": "definitions/weekly_revenue.sqlx",
+            "dependencyTargets": [
+                {
+                    "schema": "analytics",
+                    "name": "daily_orders",
+                    "database": "demo-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "weekly_revenue",
+                "database": "demo-project"
+            },
+            "enumType": "VIEW"
+        }
+    ],
+    "operations": [
+        {
+            "target": {
+                "schema": "analytics",
+                "name": "refresh_permissions",
+                "database": "demo-project"
+            },
+            "queries": [
+                "\n\nGRANT `roles/bigquery.dataViewer` ON TABLE `demo-project.analytics.daily_orders` TO \"group:analysts@example.com\"\n",
+                "\nSELECT 1\n"
+            ],
+            "fileName": "definitions/refresh_permissions.sqlx",
+            "dependencyTargets": [
+                {
+                    "schema": "analytics",
+                    "name": "daily_orders",
+                    "database": "demo-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "refresh_permissions",
+                "database": "demo-project"
+            }
+        }
+    ],
+    "assertions": [
+        {
+            "query": "\nSELECT\n  *\nFROM (\n  SELECT\n    order_date, region,\n    COUNT(1) AS index_row_count\n  FROM `demo-project.analytics.daily_orders`\n  GROUP BY order_date, region\n  ) AS data\nWHERE index_row_count > 1\n",
+            "fileName": "definitions/daily_orders.sqlx",
+            "target": {
+                "schema": "analytics_assertions",
+                "name": "analytics_daily_orders_assertions_uniqueKey_0",
+                "database": "demo-project"
+            },
+            "tags": [
+                "daily"
+            ],
+            "dependencyTargets": [
+                {
+                    "schema": "analytics",
+                    "name": "daily_orders",
+                    "database": "demo-project"
+                }
+            ],
+            "canonicalTarget": {
+                "schema": "analytics_assertions",
+                "name": "analytics_daily_orders_assertions_uniqueKey_0",
+                "database": "demo-project"
+            },
+            "parentAction": {
+                "schema": "analytics",
+                "name": "daily_orders",
+                "database": "demo-project"
+            }
+        },
+        {
+            "query": "\nSELECT\n  'order_date IS NOT NULL' AS failing_row_condition,\n  *\nFROM `demo-project.analytics.daily_orders`\nWHERE NOT (order_date IS NOT NULL)\n",
+            "fileName": "definitions/daily_orders.sqlx",
+            "target": {
+                "schema": "analytics_assertions",
+                "name": "analytics_daily_orders_assertions_rowConditions",
+                "database": "demo-project"
+            },
+            "tags": [
+                "daily"
+            ],
+            "dependencyTargets": [
+                {
+                    "schema": "analytics",
+                    "name": "daily_orders",
+                    "database": "demo-project"
+                }
+            ],
+            "canonicalTarget": {
+                "schema": "analytics_assertions",
+                "name": "analytics_daily_orders_assertions_rowConditions",
+                "database": "demo-project"
+            },
+            "parentAction": {
+                "schema": "analytics",
+                "name": "daily_orders",
+                "database": "demo-project"
+            }
+        },
+        {
+            "query": "\n\nSELECT * FROM `demo-project.analytics.weekly_revenue` WHERE revenue < 0\n",
+            "fileName": "definitions/revenue_positive.sqlx",
+            "target": {
+                "schema": "analytics_assertions",
+                "name": "revenue_positive",
+                "database": "demo-project"
+            },
+            "dependencyTargets": [
+                {
+                    "schema": "analytics",
+                    "name": "weekly_revenue",
+                    "database": "demo-project"
+                }
+            ],
+            "canonicalTarget": {
+                "schema": "analytics_assertions",
+                "name": "revenue_positive",
+                "database": "demo-project"
+            }
+        }
+    ],
+    "projectConfig": {
+        "warehouse": "bigquery",
+        "defaultSchema": "analytics",
+        "assertionSchema": "analytics_assertions",
+        "defaultDatabase": "demo-project",
+        "defaultLocation": "EU"
+    },
+    "graphErrors": {},
+    "declarations": [
+        {
+            "target": {
+                "schema": "shop",
+                "name": "customers",
+                "database": "raw-project"
+            },
+            "fileName": "definitions/customers_source.js",
+            "canonicalTarget": {
+                "schema": "shop",
+                "name": "customers",
+                "database": "raw-project"
+            }
+        },
+        {
+            "target": {
+                "schema": "shop",
+                "name": "orders",
+                "database": "raw-project"
+            },
+            "fileName": "definitions/sources.sqlx",
+            "canonicalTarget": {
+                "schema": "shop",
+                "name": "orders",
+                "database": "raw-project"
+            }
+        }
+    ],
+    "dataformCoreVersion": "3.0.43",
+    "targets": [
+        {
+            "schema": "shop",
+            "name": "customers",
+            "database": "raw-project"
+        },
+        {
+            "schema": "analytics_assertions",
+            "name": "analytics_daily_orders_assertions_uniqueKey_0",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics_assertions",
+            "name": "analytics_daily_orders_assertions_rowConditions",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics",
+            "name": "daily_orders",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics",
+            "name": "refresh_permissions",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics_assertions",
+            "name": "revenue_positive",
+            "database": "demo-project"
+        },
+        {
+            "schema": "shop",
+            "name": "orders",
+            "database": "raw-project"
+        },
+        {
+            "schema": "staging",
+            "name": "stg_customers",
+            "database": "demo-project"
+        },
+        {
+            "schema": "staging",
+            "name": "stg_orders",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics",
+            "name": "weekly_revenue",
+            "database": "demo-project"
+        }
+    ]
+}
+

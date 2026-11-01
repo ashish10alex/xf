@@ -1,0 +1,3 @@
+config { type: "assertion" }
+
+SELECT * FROM ${ref("weekly_revenue")} WHERE revenue < 0

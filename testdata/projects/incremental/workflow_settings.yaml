@@ -1,0 +1,5 @@
+defaultProject: demo-project
+defaultLocation: EU
+defaultDataset: reporting
+defaultAssertionDataset: reporting_assertions
+dataformCoreVersion: 3.0.71

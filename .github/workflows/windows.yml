@@ -1,0 +1,46 @@
+# GitHub CI runs Windows only; macOS and Linux are checked locally by
+# `just check` (see the pre-push hook). It also makes a GoReleaser snapshot
+# and keeps the Windows zips.
+
+name: windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser reads the tags
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      # Every OS and arch, as `just release-snapshot` builds them; the
+      # Windows zips are kept as downloads for a run.
+      - name: goreleaser snapshot
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.2
+          args: release --snapshot --clean
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/xf_windows_amd64.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/xf_windows_arm64.zip
+          archive: false

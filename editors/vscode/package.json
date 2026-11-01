@@ -1,0 +1,69 @@
+{
+  "name": "xf-test",
+  "displayName": "xf (test)",
+  "description": "Test-only extension: xf's language server and TUI in VS Code. Not published.",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "ashish10alex",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ashish10alex/xf"
+  },
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:**/workflow_settings.yaml",
+    "workspaceContains:**/dataform.json",
+    "workspaceContains:**/dbt_project.yml"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "sqlx",
+        "aliases": [
+          "SQLX",
+          "sqlx"
+        ],
+        "extensions": [
+          ".sqlx"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "xf.open",
+        "title": "Open",
+        "category": "xf"
+      }
+    ],
+    "configuration": {
+      "title": "xf",
+      "properties": {
+        "xf.path": {
+          "type": "string",
+          "default": "",
+          "description": "The xf to run. Empty runs the one bundled with this extension. dataform, dbt and the dbt target come from xf's own config."
+        },
+        "xf.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Log the messages between VS Code and xf lsp to the xf output channel."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "10.1.2"
+  }
+}

@@ -1,0 +1,2 @@
+{"level":"info","message":"Logger initialised {not a compile result}"}
+{"tables":[{"type":"view","target":{"database":"p","schema":"s","name":"braces"},"query":"SELECT '}' AS closer, '{' AS opener, \"quote \\\" }\" AS q","fileName":"definitions/braces.sqlx"}],"projectConfig":{"warehouse":"bigquery","defaultDatabase":"p","defaultSchema":"s"},"graphErrors":{},"dataformCoreVersion":"2.9.0"}

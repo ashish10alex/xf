@@ -1,0 +1,8 @@
+config {
+  type: "view",
+  schema: "staging",
+  tags: ["staging"]
+}
+
+SELECT order_id, customer_id, total_amount, created_at
+FROM ${ref("raw-project", "shop", "orders")}

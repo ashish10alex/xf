@@ -1,0 +1,26 @@
+{
+  "name": "xf-vendor-codemirror",
+  "private": true,
+  "description": "Builds internal/web/assets/vendor/codemirror.mjs, the editor of xf web's Scratch view and source pane: run `npm install && npm run build` here.",
+  "scripts": {
+    "build": "esbuild entry.js --bundle --minify --format=esm --target=es2022 --legal-comments=none --outfile=../../internal/web/assets/vendor/codemirror.mjs"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "6.18.6",
+    "@codemirror/commands": "6.8.1",
+    "@codemirror/lang-json": "6.0.2",
+    "@codemirror/lang-sql": "6.8.0",
+    "@codemirror/language": "6.11.0",
+    "@codemirror/legacy-modes": "6.5.4",
+    "@codemirror/lint": "6.8.5",
+    "@codemirror/merge": "6.12.2",
+    "@codemirror/search": "6.5.10",
+    "@codemirror/state": "6.5.2",
+    "@codemirror/view": "6.36.8",
+    "@lezer/highlight": "1.2.1",
+    "@replit/codemirror-vim": "6.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.4"
+  }
+}

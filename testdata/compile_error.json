@@ -1,0 +1,104 @@
+{
+    "tables": [
+        {
+            "type": "table",
+            "target": {
+                "schema": "analytics",
+                "name": "good",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT 1 AS id\n",
+            "disabled": false,
+            "fileName": "definitions/good.sqlx",
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "good",
+                "database": "demo-project"
+            },
+            "enumType": "TABLE"
+        },
+        {
+            "type": "table",
+            "target": {
+                "schema": "analytics",
+                "name": "missing_ref",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT * FROM \n",
+            "disabled": false,
+            "fileName": "definitions/missing_ref.sqlx",
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "missing_ref",
+                "database": "demo-project"
+            },
+            "enumType": "TABLE"
+        }
+    ],
+    "projectConfig": {
+        "warehouse": "bigquery",
+        "defaultSchema": "analytics",
+        "assertionSchema": "analytics_assertions",
+        "defaultDatabase": "demo-project",
+        "defaultLocation": "EU"
+    },
+    "graphErrors": {
+        "compilationErrors": [
+            {
+                "fileName": "definitions/bad_js.js",
+                "message": "deliberate error in bad_js.js",
+                "stack": "Error: deliberate error in bad_js.js\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}"
+            },
+            {
+                "fileName": "definitions/bad_js.js",
+                "message": "undefinedVariable is not defined",
+                "stack": "ReferenceError: undefinedVariable is not defined\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}",
+                "actionName": "demo-project.analytics.broken",
+                "actionTarget": {
+                    "schema": "analytics",
+                    "name": "broken",
+                    "database": "demo-project"
+                }
+            },
+            {
+                "fileName": "definitions/missing_ref.sqlx",
+                "message": "Could not resolve \"does_not_exist\"",
+                "stack": "Error: Could not resolve \"does_not_exist\"\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}"
+            },
+            {
+                "fileName": "definitions/missing_ref.sqlx",
+                "message": "Missing dependency detected: Action \"demo-project.analytics.missing_ref\" depends on \"{\"name\":\"does_not_exist\",\"includeDependentAssertions\":false}\" which does not exist",
+                "stack": "Error: Missing dependency detected: Action \"demo-project.analytics.missing_ref\" depends on \"{\"name\":\"does_not_exist\",\"includeDependentAssertions\":false}\" which does not exist\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}\n    at CallSite {}",
+                "actionName": "demo-project.analytics.missing_ref",
+                "actionTarget": {
+                    "schema": "analytics",
+                    "name": "missing_ref",
+                    "database": "demo-project"
+                }
+            }
+        ]
+    },
+    "dataformCoreVersion": "3.0.71",
+    "targets": [
+        {
+            "schema": "analytics",
+            "name": "broken",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics",
+            "name": "good",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics",
+            "name": "missing_ref",
+            "database": "demo-project"
+        }
+    ],
+    "jitData": {}
+}
+
+

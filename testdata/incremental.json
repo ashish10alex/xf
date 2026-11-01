@@ -1,0 +1,157 @@
+{
+    "tables": [
+        {
+            "type": "incremental",
+            "target": {
+                "schema": "reporting",
+                "name": "append_only_log",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT event_ts, event_name\nFROM `raw-project.tracking.events`\n\n",
+            "disabled": false,
+            "protected": false,
+            "fileName": "definitions/append_only_log.sqlx",
+            "incrementalQuery": "\n\nSELECT event_ts, event_name\nFROM `raw-project.tracking.events`\nWHERE event_ts > (SELECT MAX(event_ts) FROM `demo-project.reporting.append_only_log`)\n",
+            "dependencyTargets": [
+                {
+                    "schema": "tracking",
+                    "name": "events",
+                    "database": "raw-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "reporting",
+                "name": "append_only_log",
+                "database": "demo-project"
+            },
+            "enumType": "INCREMENTAL",
+            "onSchemaChange": "IGNORE",
+            "incrementalStrategy": "INCREMENTAL_STRATEGY_UNSPECIFIED"
+        },
+        {
+            "type": "incremental",
+            "target": {
+                "schema": "reporting",
+                "name": "daily_events",
+                "database": "demo-project"
+            },
+            "query": "\n\n\n\nSELECT DATE(event_ts) AS event_date, event_name, COUNT(*) AS events\nFROM `raw-project.tracking.events`\n\nGROUP BY 1, 2\n\n\n",
+            "disabled": false,
+            "protected": false,
+            "preOps": [
+                "\n  DECLARE checkpoint DATE DEFAULT (\n    SELECT DATE '2000-01-01'\n  );\n"
+            ],
+            "postOps": [
+                "\n  ALTER TABLE `demo-project.reporting.daily_events` SET OPTIONS (description = \"daily event counts\")\n"
+            ],
+            "fileName": "definitions/daily_events.sqlx",
+            "bigquery": {
+                "partitionBy": "event_date"
+            },
+            "tags": [
+                "daily"
+            ],
+            "incrementalQuery": "\n\n\n\nSELECT DATE(event_ts) AS event_date, event_name, COUNT(*) AS events\nFROM `raw-project.tracking.events`\nWHERE DATE(event_ts) > checkpoint\nGROUP BY 1, 2\n\n\n",
+            "dependencyTargets": [
+                {
+                    "schema": "tracking",
+                    "name": "events",
+                    "database": "raw-project"
+                }
+            ],
+            "incrementalPreOps": [
+                "\n  DECLARE checkpoint DATE DEFAULT (\n    SELECT MAX(event_date) FROM `demo-project.reporting.daily_events`\n  );\n"
+            ],
+            "incrementalPostOps": [
+                "\n  ALTER TABLE `demo-project.reporting.daily_events` SET OPTIONS (description = \"daily event counts\")\n"
+            ],
+            "uniqueKey": [
+                "event_date",
+                "event_name"
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "reporting",
+                "name": "daily_events",
+                "database": "demo-project"
+            },
+            "enumType": "INCREMENTAL",
+            "onSchemaChange": "IGNORE",
+            "incrementalStrategy": "INCREMENTAL_STRATEGY_UNSPECIFIED"
+        },
+        {
+            "type": "table",
+            "target": {
+                "schema": "reporting",
+                "name": "event_summary",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT event_name, SUM(events) AS total FROM `demo-project.reporting.daily_events` GROUP BY 1\n",
+            "disabled": false,
+            "fileName": "definitions/event_summary.sqlx",
+            "dependencyTargets": [
+                {
+                    "schema": "reporting",
+                    "name": "daily_events",
+                    "database": "demo-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "reporting",
+                "name": "event_summary",
+                "database": "demo-project"
+            },
+            "enumType": "TABLE"
+        }
+    ],
+    "projectConfig": {
+        "warehouse": "bigquery",
+        "defaultSchema": "reporting",
+        "assertionSchema": "reporting_assertions",
+        "defaultDatabase": "demo-project",
+        "defaultLocation": "EU"
+    },
+    "graphErrors": {},
+    "declarations": [
+        {
+            "target": {
+                "schema": "tracking",
+                "name": "events",
+                "database": "raw-project"
+            },
+            "fileName": "definitions/events.sqlx",
+            "canonicalTarget": {
+                "schema": "tracking",
+                "name": "events",
+                "database": "raw-project"
+            }
+        }
+    ],
+    "dataformCoreVersion": "3.0.71",
+    "targets": [
+        {
+            "schema": "reporting",
+            "name": "append_only_log",
+            "database": "demo-project"
+        },
+        {
+            "schema": "reporting",
+            "name": "daily_events",
+            "database": "demo-project"
+        },
+        {
+            "schema": "reporting",
+            "name": "event_summary",
+            "database": "demo-project"
+        },
+        {
+            "schema": "tracking",
+            "name": "events",
+            "database": "raw-project"
+        }
+    ],
+    "jitData": {}
+}
+

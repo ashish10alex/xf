@@ -1,0 +1,5 @@
+config { type: "view" }
+
+SELECT DATE_TRUNC(order_date, WEEK) AS week, SUM(gross_revenue) AS revenue
+FROM ${ref("daily_orders")}
+GROUP BY 1

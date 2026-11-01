@@ -1,0 +1,107 @@
+# GoReleaser builds xf for every OS and arch into archives with checksums.
+# A v* tag runs the release workflow, which publishes them as a GitHub
+# Release and updates the Homebrew tap, the Scoop bucket and winget (see
+# docs/agents/releasing.md). `just release-snapshot` builds the same locally,
+# publishing nothing, as does the Windows CI workflow, which keeps the
+# Windows zips.
+version: 2
+project_name: xf
+
+builds:
+  - id: xf
+    main: ./cmd/xf
+    binary: xf
+    env:
+      - CGO_ENABLED=0
+    goos: [windows, darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: xf
+    ids: [xf]
+    # zip on Windows, where Expand-Archive and winget expect it; tar.gz
+    # elsewhere, as minimal Linux images often lack unzip.
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # One portable executable per archive, beside the licence and README.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: false
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"
+
+changelog:
+  disable: true
+
+# The tap, the bucket and the winget fork are written with
+# XF_PACKAGES_TOKEN, which can push to them; the workflow's own
+# GITHUB_TOKEN can only write this repo.
+homebrew_casks:
+  - name: xf
+    ids: [xf]
+    binaries: [xf]
+    description: A terminal UI, web UI and language server for Dataform and dbt projects
+    homepage: https://github.com/ashish10alex/xf
+    license: MIT
+    repository:
+      owner: ashish10alex
+      name: homebrew-tap
+      token: "{{ .Env.XF_PACKAGES_TOKEN }}"
+    # The Mac builds aren't notarized, so Gatekeeper would refuse the
+    # quarantined download on its first run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/xf"]
+          end
+
+scoops:
+  - name: xf
+    ids: [xf]
+    description: A terminal UI, web UI and language server for Dataform and dbt projects
+    homepage: https://github.com/ashish10alex/xf
+    license: MIT
+    repository:
+      owner: ashish10alex
+      name: scoop-bucket
+      token: "{{ .Env.XF_PACKAGES_TOKEN }}"
+
+winget:
+  - name: xf
+    package_identifier: AshishAlex.xf
+    publisher: Ashish Alex
+    author: Ashish Alex
+    short_description: A terminal UI, web UI and language server for Dataform and dbt projects
+    homepage: https://github.com/ashish10alex/xf
+    license: MIT
+    license_url: https://github.com/ashish10alex/xf/blob/main/LICENSE
+    tags: [dataform, dbt, bigquery, tui, lsp]
+    installation_notes: >-
+      xf keeps a background engine running per project. Before upgrading,
+      run `xf stop`, which stops the engines and lists the xf windows still
+      open; quit xf in them first.
+    ids: [xf]
+    repository:
+      owner: ashish10alex
+      name: winget-pkgs
+      branch: "xf-{{ .Version }}"
+      token: "{{ .Env.XF_PACKAGES_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master

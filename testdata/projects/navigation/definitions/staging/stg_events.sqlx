@@ -1,0 +1,16 @@
+config { type: "view" }
+
+js {
+  const threshold = 10;
+  const lib = require("includes/lib/extra");
+}
+
+WITH filtered AS (
+  SELECT * FROM ${ref("events")}
+  WHERE ${helpers.dateFilter("ts")} AND schema_name = "${constants.SCHEMA}"
+),
+counted AS (
+  SELECT user_id, COUNT(*) AS n FROM filtered GROUP BY 1
+)
+SELECT *, ${lib.fn()} AS extra FROM counted
+WHERE n > ${threshold}

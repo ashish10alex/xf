@@ -1,0 +1,16 @@
+{
+  "type": "TABLE",
+  "description": "Daily report of user events (from BigQuery)",
+  "location": "EU",
+  "lastModifiedTime": "1790758497000",
+  "schema": {
+    "fields": [
+      {"name": "user_id", "type": "STRING", "mode": "REQUIRED", "description": "User id in BigQuery"},
+      {"name": "created_at", "type": "TIMESTAMP"},
+      {"name": "payload", "type": "RECORD", "mode": "NULLABLE", "fields": [
+        {"name": "kind", "type": "STRING"},
+        {"name": "tags", "type": "STRING", "mode": "REPEATED", "description": "Free-form\ntags | labels"}
+      ]}
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+config {
+  type: "operations",
+  dependencies: ["daily_orders"]
+}
+
+GRANT `roles/bigquery.dataViewer` ON TABLE ${ref("daily_orders")} TO "group:analysts@example.com"
+---
+SELECT 1

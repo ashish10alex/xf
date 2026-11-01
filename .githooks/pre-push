@@ -1,0 +1,15 @@
+#!/bin/sh
+# Pushing main runs `just check`: go vet + go test on this machine. GitHub
+# CI covers Windows; `just check-linux` covers Linux, in a container, when a
+# change needs it. Enable with `just install-hooks`; skip once with
+# `git push --no-verify`.
+while read -r local_ref local_sha remote_ref remote_sha; do
+    if [ "$remote_ref" = "refs/heads/main" ] && [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+        echo "pre-push: pushing main, running just check" >&2
+        # git gives a hook $GIT_DIR and its like; tests that make
+        # repositories of their own would write into this one with them.
+        unset $(git rev-parse --local-env-vars)
+        exec just check
+    fi
+done
+exit 0

@@ -1,0 +1,7 @@
+config { type: "table" }
+
+-- Deliberately broken: no action is called order_lines.
+SELECT o.order_id, COUNT(*) AS lines
+FROM ${ref("orders")} AS o
+JOIN ${ref("order_lines")} AS l USING (order_id)
+GROUP BY 1

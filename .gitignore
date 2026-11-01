@@ -1,0 +1,13 @@
+bin/
+dist/
+node_modules/
+*.vsix
+__pycache__/
+*.py[cod]
+
+/testdata/local/
+/testdata/projects/*/.df-credentials.json
+/testdata/projects/*/package-lock.json
+/examples/*/.df-credentials.json
+/examples/*/package-lock.json
+/.wayfinder/

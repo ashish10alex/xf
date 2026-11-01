@@ -1,0 +1,159 @@
+{
+    "tables": [
+        {
+            "type": "table",
+            "target": {
+                "schema": "analytics",
+                "name": "dev_report",
+                "database": "demo-project"
+            },
+            "query": "\n\nSELECT e.*, c.user_id AS helpers\nFROM `demo-project.analytics.dev_stg_events` e\nJOIN `demo-project.analytics.dev_stg_events` c USING (user_id)\nJOIN `demo-project.analytics.dev_stg_events` d USING (user_id)\nJOIN `demo-project.analytics.dev_js_view` v USING (user_id)\nJOIN raw-project.raw.events r USING (user_id)\nWHERE DATE(created_at) >= \"2026-01-01\" -- ${self()} is today's partition\n",
+            "disabled": false,
+            "fileName": "definitions/marts/report.sqlx",
+            "bigquery": {
+                "partitionBy": "DATE(created_at)"
+            },
+            "actionDescriptor": {
+                "description": "Daily report of user events",
+                "columns": [
+                    {
+                        "description": "The user who acted",
+                        "path": [
+                            "user_id"
+                        ]
+                    },
+                    {
+                        "description": "Raw event payload",
+                        "path": [
+                            "payload"
+                        ]
+                    },
+                    {
+                        "description": "What kind of event it was",
+                        "path": [
+                            "payload",
+                            "kind"
+                        ]
+                    }
+                ]
+            },
+            "dependencyTargets": [
+                {
+                    "schema": "analytics",
+                    "name": "dev_stg_events",
+                    "database": "demo-project"
+                },
+                {
+                    "schema": "analytics",
+                    "name": "dev_js_view",
+                    "database": "demo-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "report",
+                "database": "demo-project"
+            },
+            "enumType": "TABLE"
+        },
+        {
+            "type": "view",
+            "target": {
+                "schema": "analytics",
+                "name": "dev_js_view",
+                "database": "demo-project"
+            },
+            "query": "SELECT * FROM `raw-project.raw.events`",
+            "disabled": false,
+            "fileName": "definitions/sources.js",
+            "dependencyTargets": [
+                {
+                    "schema": "raw",
+                    "name": "events",
+                    "database": "raw-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "js_view",
+                "database": "demo-project"
+            },
+            "enumType": "VIEW"
+        },
+        {
+            "type": "view",
+            "target": {
+                "schema": "analytics",
+                "name": "dev_stg_events",
+                "database": "demo-project"
+            },
+            "query": "\n\n\n\nWITH filtered AS (\n  SELECT * FROM `raw-project.raw.events`\n  WHERE ts >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) AND schema_name = \"analytics\"\n),\ncounted AS (\n  SELECT user_id, COUNT(*) AS n FROM filtered GROUP BY 1\n)\nSELECT *, 1 AS extra FROM counted\nWHERE n > 10\n",
+            "disabled": false,
+            "fileName": "definitions/staging/stg_events.sqlx",
+            "dependencyTargets": [
+                {
+                    "schema": "raw",
+                    "name": "events",
+                    "database": "raw-project"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "analytics",
+                "name": "stg_events",
+                "database": "demo-project"
+            },
+            "enumType": "VIEW"
+        }
+    ],
+    "projectConfig": {
+        "warehouse": "bigquery",
+        "defaultSchema": "analytics",
+        "assertionSchema": "analytics_assertions",
+        "defaultDatabase": "demo-project",
+        "tablePrefix": "dev",
+        "defaultLocation": "EU"
+    },
+    "graphErrors": {},
+    "declarations": [
+        {
+            "target": {
+                "schema": "raw",
+                "name": "events",
+                "database": "raw-project"
+            },
+            "fileName": "definitions/sources.js",
+            "canonicalTarget": {
+                "schema": "raw",
+                "name": "events",
+                "database": "raw-project"
+            }
+        }
+    ],
+    "dataformCoreVersion": "3.0.43",
+    "targets": [
+        {
+            "schema": "analytics",
+            "name": "report",
+            "database": "demo-project"
+        },
+        {
+            "schema": "raw",
+            "name": "events",
+            "database": "raw-project"
+        },
+        {
+            "schema": "analytics",
+            "name": "js_view",
+            "database": "demo-project"
+        },
+        {
+            "schema": "analytics",
+            "name": "stg_events",
+            "database": "demo-project"
+        }
+    ]
+}
+

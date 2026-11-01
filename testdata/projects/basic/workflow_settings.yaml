@@ -1,0 +1,5 @@
+defaultProject: demo-project
+defaultLocation: EU
+defaultDataset: analytics
+defaultAssertionDataset: analytics_assertions
+dataformCoreVersion: 3.0.43

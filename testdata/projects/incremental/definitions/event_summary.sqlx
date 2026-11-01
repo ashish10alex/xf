@@ -1,0 +1,3 @@
+config { type: "table" }
+
+SELECT event_name, SUM(events) AS total FROM ${ref("daily_events")} GROUP BY 1

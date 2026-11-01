@@ -1,0 +1,17 @@
+config {
+  type: "table",
+  tags: ["daily"],
+  assertions: {
+    uniqueKey: ["order_date", "region"],
+    nonNull: ["order_date"]
+  }
+}
+
+SELECT
+  DATE(o.created_at) AS order_date,
+  c.region,
+  COUNT(DISTINCT o.order_id) AS orders,
+  SUM(o.total_amount) AS gross_revenue
+FROM ${ref("stg_orders")} o
+JOIN ${ref("stg_customers")} c USING (customer_id)
+GROUP BY 1, 2

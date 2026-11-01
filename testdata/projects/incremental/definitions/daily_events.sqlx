@@ -1,0 +1,23 @@
+config {
+  type: "incremental",
+  uniqueKey: ["event_date", "event_name"],
+  bigquery: { partitionBy: "event_date" },
+  tags: ["daily"]
+}
+
+pre_operations {
+  DECLARE checkpoint DATE DEFAULT (
+    ${when(incremental(),
+      `SELECT MAX(event_date) FROM ${self()}`,
+      `SELECT DATE '2000-01-01'`)}
+  );
+}
+
+SELECT DATE(event_ts) AS event_date, event_name, COUNT(*) AS events
+FROM ${ref("raw-project", "tracking", "events")}
+${when(incremental(), `WHERE DATE(event_ts) > checkpoint`)}
+GROUP BY 1, 2
+
+post_operations {
+  ALTER TABLE ${self()} SET OPTIONS (description = "daily event counts")
+}

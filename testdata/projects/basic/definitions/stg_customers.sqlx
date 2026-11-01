@@ -1,0 +1,8 @@
+config {
+  type: "view",
+  schema: "staging",
+  tags: ["staging"]
+}
+
+SELECT customer_id, region
+FROM ${ref("raw-project", "shop", "customers")}

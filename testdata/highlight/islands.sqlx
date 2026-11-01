@@ -1,0 +1,21 @@
+config {
+  type: "incremental",
+  bigquery: { partitionBy: "DATE(ts)", labels: { a: "}" } },
+  tags: ["daily"]
+}
+
+js {
+  const x = `a ${ {b: 1}.b } c`;
+  function f() { return "}"; }
+}
+
+pre_operations {
+  DELETE FROM ${self()} WHERE DATE(ts) = CURRENT_DATE()
+}
+
+-- a comment with ${ref("nope")}
+SELECT id, 'it''s ${ref("x")} ok' AS s, COUNT(*) AS n, # hash comment
+  SAFE_CAST(x AS INT64) /* block } */
+FROM ${ref({schema: "s", name: "t"})} AS o
+JOIN `proj.ds.tbl` t ON t.id = o.id
+WHERE ts > ${when(incremental(), `(SELECT MAX(ts) FROM ${self()})`, "1=1")}

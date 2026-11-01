@@ -1,0 +1,13 @@
+id,order_id,payment_method,amount,status
+1001,101,card,2599,success
+1002,102,card,4800,success
+1003,103,paypal,1250,success
+1004,103,gift_card,500,success
+1005,104,card,3999,success
+1006,105,card,1875,fail
+1007,105,card,1875,success
+1008,106,bank_transfer,12000,success
+1009,107,card,650,success
+1010,108,paypal,2200,success
+1011,109,card,999,fail
+1012,110,card,1500,success

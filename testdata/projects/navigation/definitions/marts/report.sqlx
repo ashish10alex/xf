@@ -1,0 +1,20 @@
+config {
+  type: "table",
+  description: "Daily report of user events",
+  bigquery: { partitionBy: "DATE(created_at)" },
+  columns: {
+    user_id: "The user who acted",
+    payload: {
+      description: "Raw event payload",
+      columns: { kind: "What kind of event it was" },
+    },
+  },
+}
+
+SELECT e.*, c.user_id AS helpers
+FROM ${ref("stg_events")} e
+JOIN ${ref("analytics", "stg_events")} c USING (user_id)
+JOIN ${ref({schema: "analytics", name: "stg_events"})} d USING (user_id)
+JOIN ${ref("js_view")} v USING (user_id)
+JOIN raw-project.raw.events r USING (user_id)
+WHERE DATE(created_at) >= "2026-01-01" -- ${self()} is today's partition

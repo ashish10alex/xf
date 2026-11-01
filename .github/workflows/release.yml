@@ -1,0 +1,40 @@
+# A v* tag publishes a release: the archives and checksums as a GitHub
+# Release, the cask in ashish10alex/homebrew-tap, the manifest in
+# ashish10alex/scoop-bucket, and a pull request to microsoft/winget-pkgs
+# (see .goreleaser.yaml and docs/agents/releasing.md).
+#
+# XF_PACKAGES_TOKEN is a fine-grained token with contents write on
+# homebrew-tap, scoop-bucket and winget-pkgs (the fork), and pull requests
+# write on the fork.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser reads the tags
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: goreleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.18.2
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          XF_PACKAGES_TOKEN: ${{ secrets.XF_PACKAGES_TOKEN }}

@@ -1,0 +1,4 @@
+{
+    "vscode-dataform-tools.compilerOptions": "--table-prefix=\"AA\"",
+    "vscode-dataform-tools.prodCompilerOptions": "--default-database=alex-personal-prod-01"
+}

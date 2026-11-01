@@ -1,0 +1,6 @@
+{
+  "vscode-dataform-tools.defaultBranch": "main",
+  "vscode-dataform-tools.dbtProdTarget": "prod",
+  "vscode-dataform-tools.deferToProd": true
+}
+
