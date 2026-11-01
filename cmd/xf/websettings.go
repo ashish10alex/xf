@@ -122,8 +122,19 @@ func settingsKeys(tool string) []string {
 var usageDefault = regexp.MustCompile(`\s*\(default:.*\)$`)
 
 // settingDoc is a key's description for the page: its flag's usage,
+
+// webDocs are the page's own words for the keys it shows as forms (ADR
+// 0037), whose flag usage talks of flags the form fills in.
+var webDocs = map[string]string{
+	config.KeyProdCompilerOptions: "where the project's prod runs build: column impact compares with these tables, query cost dry runs against them and defer to prod reads them. More flags are any other flags of dataform compile; all empty says the default targets are prod",
+	config.KeyDbtProdTarget:       "the profile target of the project's prod runs: column impact compares with its tables and query cost dry runs against them",
+}
+
 // without the backticks that name the flag's argument or its default.
 func settingDoc(key string) string {
+	if d, ok := webDocs[key]; ok {
+		return d
+	}
 	return usageDefault.ReplaceAllString(strings.ReplaceAll(strings.TrimPrefix(flagUsage[key], vimDoc), "`", ""), "")
 }
 

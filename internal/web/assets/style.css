@@ -306,6 +306,15 @@ body.resizing { cursor: row-resize; user-select: none; }
 .sc-defer-table { display: flex; gap: 1ch; color: var(--dim); overflow-wrap: anywhere; }
 .sc-defer-table.read { color: var(--fg); }
 .sc-defer-tag { flex: none; width: 4ch; }
+/* dev's and prod's names, the words that differ marked as git-delta marks a changed line */
+.sc-defer-table.gone, .sc-defer-table.came { margin: 0 -4px; padding: 0 4px; border-radius: 3px; }
+.sc-defer-table.gone { background: color-mix(in srgb, var(--red) 9%, transparent); }
+.sc-defer-table.came { background: color-mix(in srgb, var(--green) 9%, transparent); }
+.sc-defer-table.gone .sc-defer-tag { color: var(--red); }
+.sc-defer-table.came .sc-defer-tag { color: var(--green); }
+.sc-defer-word { border-radius: 2px; color: var(--fg); }
+.gone .sc-defer-word { background: color-mix(in srgb, var(--red) 32%, transparent); }
+.came .sc-defer-word { background: color-mix(in srgb, var(--green) 32%, transparent); }
 
 /* 2 target: what a compile adds to the names it builds (target-view.js) */
 .target-closed { flex: 0 0 auto; padding: 8px 0 6px; cursor: pointer; }
@@ -867,6 +876,15 @@ mark.cur { background: var(--amber); color: var(--bg); }
 .prod .opt { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 4px; }
 .prod .opt.on { background: var(--sel); }
 .prod input.text { border-bottom: 1px dotted var(--dim); max-width: 40ch; }
+/* prodCompilerOptions as a form, in the dialog and the settings (prod-form-view.js) */
+.pf-wrap, .prod-form { display: flex; flex-direction: column; gap: 5px; width: 100%; min-width: 0; }
+.prod .prod-form { max-width: 60ch; margin: 4px 0 8px; }
+.pf-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pf-label { flex: 0 0 12ch; font: 12px/1.45 var(--sans); color: var(--dim); }
+.pf-row .set-input { flex: 1; min-width: 0; }
+.pf-more { align-self: flex-start; font: 12px/1.45 var(--sans); }
+.pf-note { font: 12px/1.45 var(--sans); color: var(--dim); }
+.pf-note.warn { color: var(--amber); }
 
 /* ---- the picker ---- */
 /* The picker is a column no taller than the window: the list takes what

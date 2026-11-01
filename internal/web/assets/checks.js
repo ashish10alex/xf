@@ -3,6 +3,7 @@
 
 import { openBase } from './branches.js';
 import { showErrorsTab } from './errors-tab.js';
+import { joinOptions } from './prod-options.js';
 import { S, compile, copy, get, hasErrors, hooks, launch, post, redraw, refreshView, running, say, toggles } from './state.js';
 
 // R: the Changed Actions.
@@ -199,7 +200,7 @@ export async function openCheck(which, refresh) {
       S[which].token = ''; // nothing to reuse: the next look checks again
       // Only asked on the page: left meanwhile, it asks when you come back.
       if (S.checks === which) {
-        S.prod = { after: which, options: '', onDefault: false, saving: false, err: '' };
+        S.prod = { after: which, saving: false, err: '' };
         S.overlay = 'prod';
       }
       redraw();
@@ -312,7 +313,8 @@ export async function answerProd(dismiss) {
   p.saving = true; p.err = '';
   redraw();
   try {
-    const r = await post('/api/prod', { options: p.options, default: p.onDefault });
+    const options = joinOptions(p.fields || {});
+    const r = await post('/api/prod', { options, default: !options });
     S.prod = null;
     S.flash = r.message || '';
     if (after === 'defer') setDefer(true); else openCheck(after);
@@ -335,7 +337,7 @@ export async function setDefer(on) {
   try {
     const r = await post('/api/defer', { on });
     if (r.prod) {
-      S.prod = { after: 'defer', options: '', onDefault: false, saving: false, err: '' };
+      S.prod = { after: 'defer', saving: false, err: '' };
       S.overlay = 'prod';
       redraw();
       return;

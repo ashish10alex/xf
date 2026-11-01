@@ -253,6 +253,11 @@ type Graph struct {
 	// project Dataform runs its BigQuery jobs in, and where. Empty for dbt.
 	DefaultDatabase string
 	DefaultLocation string
+	// DefaultSchema, TablePrefix, SchemaSuffix and DatabaseSuffix are the
+	// rest of a Dataform compile's projectConfig: the dataset it builds in
+	// and what it adds to the names, from the workflow settings or the
+	// compile's options. Empty for dbt.
+	DefaultSchema, TablePrefix, SchemaSuffix, DatabaseSuffix string
 	// Notice is something about this compile the user should know, such as
 	// that its SQL is uncompiled; empty for most.
 	Notice string

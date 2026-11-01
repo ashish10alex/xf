@@ -48,7 +48,7 @@ An `Access Denied` on a Prod Target marks that table as unreadable, and the next
 
 **What you see.**
 
-- After each `ref()` in the source editor, a label: `→ prod`, `⚠ prod · changed on this branch`, `✓ dev · built 12 min ago`, `⚠ not built in dev or prod`, or `⚠ no prod access`. A hover gives both tables and a link to the prod table.
+- After each `ref()` in the source editor, a label: `→ prod`, `⚠ prod · changed on this branch`, `✓ dev · built 12 min ago`, `⚠ not built in dev or prod`, or `⚠ no prod access`. A hover gives both tables and a link to the prod table. The words that differ between the two names are marked, as git-delta marks a changed line: dev's in red, prod's in green.
 - In pane 2, a list of the same tables.
 - In the status line, whether defer is on.
 - In the run preview, "reads N upstream tables from prod".

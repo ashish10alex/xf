@@ -36,6 +36,8 @@ func buildGraph(raw compiledJSON) *project.Graph {
 	g.CoreVersion = raw.DataformCoreVersion
 	g.DefaultDatabase = raw.ProjectConfig.DefaultDatabase
 	g.DefaultLocation = raw.ProjectConfig.DefaultLocation
+	pc := raw.ProjectConfig
+	g.DefaultSchema, g.TablePrefix, g.SchemaSuffix, g.DatabaseSuffix = pc.DefaultSchema, pc.TablePrefix, pc.SchemaSuffix, pc.DatabaseSuffix
 	for _, e := range raw.GraphErrors.CompilationErrors {
 		g.Errors = append(g.Errors, project.CompilationError{FileName: project.SlashPath(e.FileName), Message: e.Message, Stack: e.Stack})
 	}

@@ -91,3 +91,32 @@ export function diffRows(a, b) {
   if (last.a !== a || last.b !== b) last = { a, b, rows: withContext(lineRows(a, b), 3) };
   return last.rows;
 }
+
+// wordMarks are the ranges of a and of b that differ, word by word, as
+// git-delta marks a changed line: a word is a run of letters and digits,
+// and each other character is one. Defer to prod's card uses it on the
+// dev and prod table names, so `dev-01` against `prod-01`, or a table
+// prefix, stands out whole rather than letter by letter.
+export function wordMarks(a, b) {
+  const words = (s) => [...s.matchAll(/[A-Za-z0-9]+|[^A-Za-z0-9]/g)].map((m) => ({ w: m[0], at: m.index }));
+  const wa = words(a), wb = words(b);
+  // lcs[i][j] is the longest common run of words in wa[i:] and wb[j:].
+  const lcs = Array.from({ length: wa.length + 1 }, () => new Array(wb.length + 1).fill(0));
+  for (let i = wa.length - 1; i >= 0; i--) {
+    for (let j = wb.length - 1; j >= 0; j--) {
+      lcs[i][j] = wa[i].w === wb[j].w ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const ma = [], mb = [];
+  const mark = (marks, x) => {
+    const last = marks[marks.length - 1];
+    if (last && last[1] === x.at) last[1] += x.w.length; else marks.push([x.at, x.at + x.w.length]);
+  };
+  let i = 0, j = 0;
+  while (i < wa.length || j < wb.length) {
+    if (i < wa.length && j < wb.length && wa[i].w === wb[j].w) { i++; j++; }
+    else if (j >= wb.length || (i < wa.length && lcs[i + 1][j] >= lcs[i][j + 1])) mark(ma, wa[i++]);
+    else mark(mb, wb[j++]);
+  }
+  return [ma, mb];
+}

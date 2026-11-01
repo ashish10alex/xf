@@ -20,6 +20,7 @@ import { DiffPane } from './diff-view.js';
 import { BuffersOverlay } from './buffers-view.js';
 import { ExternalsTable } from './externals-view.js';
 import { TargetSection } from './target-view.js';
+import { ProdForm, prodOptionsOf } from './prod-form-view.js';
 import { vimKey } from './editor.js';
 import { vimOn } from './vim-mode.js';
 
@@ -1701,31 +1702,20 @@ function ProdPrompt() {
   useTick(p.saving, 100);
   const key = (e) => {
     e.stopPropagation(); // the prompt has the keys
-    if (e.key === 'Escape') { e.preventDefault(); st.answerProd(true); return; }
-    if (p.saving) return;
-    if (e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); p.onDefault = !p.onDefault; redraw(); return; }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (p.onDefault || p.options.trim()) st.answerProd(false); // an empty box is not an answer: tab picks the other one
-    }
+    if (e.key === 'Escape') { e.preventDefault(); st.answerProd(true); }
   };
   const errLines = p.err ? p.err.trim().split('\n').slice(0, 2).join('\n') : '';
+  const empty = !prodOptionsOf(p);
   return html`<${Modal} title="compare with prod" onClose=${() => st.answerProd(true)}>
-    <div class="prod" tabindex="-1" onKeyDown=${key} ref=${(e) => e && p.onDefault && !e.contains(document.activeElement) && e.focus()}>
-      <p class="dim">Without the compiler options of this project's prod runs, the changes are compared with its default targets. If those are dev tables, a run of the branch there hides what it drops.</p>
-      <p>Compiler options of this project's prod runs:</p>
-      <label class=${'opt' + (!p.onDefault ? ' on' : '')} onMouseDown=${() => { p.onDefault = false; redraw(); }}>
-        <span class="prompt">></span>
-        <input class="text" value=${p.options} placeholder="--default-database=acme-prod" spellcheck="false" disabled=${p.saving}
-          ref=${(e) => e && !p.onDefault && document.activeElement !== e && e.focus()}
-          onInput=${(e) => { p.options = e.currentTarget.value; p.err = ''; }} /></label>
-      <label class=${'opt' + (p.onDefault ? ' on' : '')} onMouseDown=${(e) => { e.preventDefault(); p.onDefault = true; redraw(); }}>
-        ${p.onDefault ? '(•)' : '( )'} the default targets are prod</label>
-      ${p.saving && html`<p class="warn">${spinner()} ${p.onDefault ? 'saving…' : 'compiling with these options…'}</p>`}
-      ${p.err && html`<pre class="error">${errLines}</pre><p class="dim">The options are flags of dataform compile, such as --default-database=acme-prod.</p>`}
+    <div class="prod" tabindex="-1" onKeyDown=${key}>
+      <p class="dim">The checks compare the branch with the tables this project's prod runs build. Left empty, they use its default targets: if those are dev tables, a run of the branch there hides what it drops.</p>
+      <p>Where this project's prod runs build:</p>
+      <${ProdForm} holder=${p} options="" disabled=${p.saving} focus=${true}
+        onInput=${() => { p.err = ''; }} onDone=${(enter) => { if (enter && !p.saving) st.answerProd(false); }} />
+      ${p.saving && html`<p class="warn">${spinner()} ${empty ? 'saving…' : 'compiling with these options…'}</p>`}
+      ${p.err && html`<pre class="error">${errLines}</pre><p class="dim">More flags are flags of dataform compile, such as --vars=env=prod.</p>`}
       <div class="buttons">
-        <button class="run-btn" disabled=${p.saving} onClick=${() => { if (p.onDefault || p.options.trim()) st.answerProd(false); }}><kbd>enter</kbd> save to .xf/config.json</button>
-        <button class="plain" disabled=${p.saving} onMouseDown=${(e) => { e.preventDefault(); p.onDefault = !p.onDefault; redraw(); }}><kbd>tab</kbd> switch</button>
+        <button class="run-btn" disabled=${p.saving} onClick=${() => st.answerProd(false)}><kbd>enter</kbd> save to .xf/config.json</button>
         <button class="plain" onClick=${() => st.answerProd(true)}><kbd>esc</kbd> not now</button>
       </div>
     </div>

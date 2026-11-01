@@ -17,6 +17,7 @@ import { createEditor } from './editor.js';
 import * as se from './settings.js';
 import { GitHosting } from './forge-view.js';
 import { vimOn, savesWith } from './vim-mode.js';
+import { ProdForm, TargetPick, prodOptionsOf } from './prod-form-view.js';
 
 const html = htm.bind(h);
 const { SET } = se;
@@ -325,12 +326,36 @@ function Row({ k, i }) {
     </div>
     <div class="set-ctl">
       <div class="set-field">
-        <${Control} k=${k} i=${i} />
-        ${k.key === 'prodCompilerOptions' && !lock && html`<button class=${'chip' + (fv === '' ? ' on' : '')} title="Write an empty value: the default targets are prod"
-          onClick=${() => { SET.cursor = i; se.setEmpty(k); }}>default targets are prod</button>`}
+        ${k.key === 'prodCompilerOptions' && !lock && se.hasProject() ? html`<${ProdRow} k=${k} i=${i} />`
+          : k.key === 'dbtProdTarget' && !lock && se.hasProject() ? html`<${TargetPick} value=${fv} inUse=${k.value}
+              onPick=${(t) => { SET.cursor = i; se.save(k, t); }}><${Control} k=${k} i=${i} /><//>`
+          : html`<${Control} k=${k} i=${i} />`}
       </div>
       <${Source} k=${k} i=${i} />
     </div>
+  </div>`;
+}
+
+// ProdRow is prodCompilerOptions as a form (ADR 0037), saved on leaving
+// it. Every box empty writes "", the default targets are prod; where the
+// file doesn't set the key, that is written only from the link.
+function ProdRow({ k, i }) {
+  const fv = se.fileValue(k);
+  const hold = SET.prodForm || (SET.prodForm = {});
+  if (hold.tab !== SET.tab || (hold.from !== fv && !hold.editing)) {
+    hold.tab = SET.tab; hold.from = fv; hold.fields = null; hold.focused = true;
+  }
+  const done = () => {
+    hold.editing = false;
+    const v = prodOptionsOf(hold);
+    if (v === (fv === null ? '' : fv)) return;
+    SET.cursor = i;
+    se.save(k, v, false, true);
+  };
+  return html`<div class="pf-wrap">
+    <${ProdForm} holder=${hold} options=${fv || ''} unset=${fv === null} onInput=${() => { hold.editing = true; SET.cursor = i; }} onDone=${done} />
+    ${fv === null && !prodOptionsOf(hold) && html`<button class="link pf-more" title="Write an empty value: the default targets are prod"
+      onClick=${() => { SET.cursor = i; se.setEmpty(k); }}>set: the default targets are prod</button>`}
   </div>`;
 }
 

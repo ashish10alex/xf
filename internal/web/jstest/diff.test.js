@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffRows } from '../assets/diff.js';
+import { diffRows, wordMarks } from '../assets/diff.js';
 
 const ops = (rows) => rows.map((r) => (r ? r.op + r.text : null));
 
@@ -28,4 +28,16 @@ test('changes far apart keep three lines round each, with a gap between', () => 
   changed[18] = 'x18';
   const rows = diffRows(lines.join('\n'), changed.join('\n'));
   assert.deepEqual(ops(rows), [' l0', '-l1', '+x1', ' l2', ' l3', ' l4', null, ' l15', ' l16', ' l17', '-l18', '+x18', ' l19']);
+});
+
+test('word marks pick out whole words that differ', () => {
+  const dev = 'alex-personal-dev-01.world_cup_dataform.AA_fct_matches';
+  const prod = 'alex-personal-prod-01.world_cup_dataform.fct_matches';
+  const [a, b] = wordMarks(dev, prod);
+  assert.deepEqual(a.map(([f, t]) => dev.slice(f, t)), ['dev', 'AA_']);
+  assert.deepEqual(b.map(([f, t]) => prod.slice(f, t)), ['prod']);
+});
+
+test('the same names have no word marks', () => {
+  assert.deepEqual(wordMarks('p.d.t', 'p.d.t'), [[], []]);
 });

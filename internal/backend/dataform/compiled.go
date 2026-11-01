@@ -58,6 +58,10 @@ type compiledJSON struct {
 	ProjectConfig struct {
 		DefaultDatabase string `json:"defaultDatabase"`
 		DefaultLocation string `json:"defaultLocation"`
+		DefaultSchema   string `json:"defaultSchema"`
+		TablePrefix     string `json:"tablePrefix"`
+		SchemaSuffix    string `json:"schemaSuffix"`
+		DatabaseSuffix  string `json:"databaseSuffix"`
 	} `json:"projectConfig"`
 	DataformCoreVersion string `json:"dataformCoreVersion"`
 }

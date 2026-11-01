@@ -28,6 +28,7 @@
 import * as cm from './vendor/codemirror.mjs';
 import { S, get, post, redraw, hooks, setFocus, say } from './state.js';
 import { SRC, sourceEditor, goToPlace, isLibraryFile } from './source.js';
+import { wordMarks } from './diff.js';
 import { jumpWithin } from './editor.js';
 import { tableCard, cardDOM, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts } from './scratch-complete.js';
 import { loadFunctions, functionOptions, valueOptions, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
@@ -498,16 +499,29 @@ function deferLines(h) {
     return d;
   };
   line('sc-defer-why', why.replace(/^Defer to prod: /, ''));
-  const table = (tag, name, read) => {
-    const d = line('sc-defer-table' + (read ? ' read' : ''), '');
+  // A table's name, with the words marked that differ from the other's,
+  // as git-delta shows a changed line: dev's in red, prod's in green.
+  const table = (tag, name, read, marks, side) => {
+    const d = line('sc-defer-table' + (read ? ' read' : '') + (marks ? ' ' + side : ''), '');
     const t = document.createElement('span');
     t.className = 'sc-defer-tag';
     t.textContent = tag;
-    d.append(t, name);
+    const n = document.createElement('span');
+    let at = 0;
+    for (const [from, to] of marks || []) {
+      const m = document.createElement('span');
+      m.className = 'sc-defer-word';
+      m.textContent = name.slice(from, to);
+      n.append(name.slice(at, from), m);
+      at = to;
+    }
+    n.append(name.slice(at));
+    d.append(t, n);
   };
   const prod = readsProd(h);
-  table('dev', h.dev, !prod && h.tone === 'dev');
-  if (h.prod) table('prod', h.prod, prod);
+  const [devMarks, prodMarks] = h.prod && h.prod !== h.dev ? wordMarks(h.dev, h.prod) : [null, null];
+  table('dev', h.dev, !prod && h.tone === 'dev', devMarks, 'gone');
+  if (h.prod) table('prod', h.prod, prod, prodMarks, 'came');
   for (const l of rest) if (l !== h.dev && !l.startsWith('→ ')) line('sc-card-meta', l);
   if (h.url) {
     const open = document.createElement('button');
