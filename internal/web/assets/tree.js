@@ -303,6 +303,7 @@ export function toggleView(view) {
   }
   T.shown = true;
   T.view = view;
+  if (view === 'scm' && hooks.scmOpenChanges) hooks.scmOpenChanges();
   keep();
   refresh();
   // The open file's row shows in the middle of the list, as VS Code's
@@ -319,6 +320,7 @@ export function showView(view) {
   if (T.view === view && T.shown) return;
   T.shown = true;
   T.view = view;
+  if (view === 'scm' && hooks.scmOpenChanges) hooks.scmOpenChanges();
   keep();
   refresh();
   focusTree();

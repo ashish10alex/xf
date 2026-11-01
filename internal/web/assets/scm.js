@@ -65,12 +65,17 @@ function restore() {
     if (v.open) Object.assign(G.open, v.open);
     draft = v.draft || '';
   } catch { /* no storage */ }
+  G.open.changes = true;
 }
+
+// openChanges opens the Changes section: it opens whenever Source
+// Control shows, so closing it lasts only while the view stays.
+export function openChanges() { restore(); G.open.changes = true; }
 
 function keep() {
   try {
     const open = {};
-    for (const k of ['mr', 'conflicts', 'staged', 'changes', 'stashes', 'commits']) open[k] = !!G.open[k];
+    for (const k of ['mr', 'conflicts', 'staged', 'stashes', 'commits']) open[k] = !!G.open[k];
     localStorage.setItem(storeKey(), JSON.stringify({ open, draft }));
   } catch { /* no storage */ }
 }
@@ -559,7 +564,7 @@ part('scm', () => ({
   open: G.open, filter: G.filter, cursor: G.cursor,
   diff: G.diff && { side: G.diff.side, path: G.diff.path, rev: G.diff.rev, base: G.diff.base },
 }), (v) => {
-  if (v.open) G.open = { ...G.open, ...v.open };
+  if (v.open) G.open = { ...G.open, ...v.open, changes: true };
   G.filter = v.filter || '';
   G.cursor = v.cursor || '';
   const d = v.diff;
@@ -846,6 +851,7 @@ hooks.scmPush = push;
 hooks.scmFocus = focusSCM;
 hooks.scmTypeOnShow = () => { box.typeNext = true; };
 hooks.scmKey = key;
+hooks.scmOpenChanges = openChanges;
 // A git command, here or in a terminal (a pull, a commit, a checkout),
 // can change the source pane's file or its base without a compile, so
 // the pane looks at the disk again.
