@@ -3,9 +3,9 @@
 # ashish10alex/scoop-bucket, and a pull request to microsoft/winget-pkgs
 # (see .goreleaser.yaml and docs/agents/releasing.md).
 #
-# XF_PACKAGES_TOKEN is a fine-grained token with contents write on
-# homebrew-tap, scoop-bucket and winget-pkgs (the fork), and pull requests
-# write on the fork.
+# XF_PACKAGES_TOKEN is a classic token with the public_repo scope: it pushes
+# to homebrew-tap, scoop-bucket and the winget-pkgs fork, and opens the pull
+# request on microsoft/winget-pkgs, which a fine-grained token can't reach.
 name: release
 
 on:

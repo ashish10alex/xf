@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -183,7 +184,7 @@ func Serve(r io.Reader, w io.Writer) {
 			}
 			md := "```python\n" + word + "\n```\nA word."
 			if lib := os.Getenv(LibEnv); lib != "" {
-				md += "\n\nGo to [lib](" + (&url.URL{Scheme: "file", Path: lib}).String() + "#L1,5)"
+				md += "\n\nGo to [lib](" + fileURI(lib) + "#L1,5)"
 			}
 			_ = c.Reply(m.ID, map[string]any{
 				"contents": map[string]any{"kind": "markdown", "value": md},
@@ -195,7 +196,7 @@ func Serve(r io.Reader, w io.Writer) {
 			word, _, _ := wordAt(p)
 			uri := p.TextDocument.URI
 			if lib := os.Getenv(LibEnv); word == "lib" && lib != "" {
-				uri = (&url.URL{Scheme: "file", Path: lib}).String()
+				uri = fileURI(lib)
 			}
 			_ = c.Reply(m.ID, []any{map[string]any{"uri": uri, "range": map[string]any{"start": map[string]int{"line": 0, "character": 4}, "end": map[string]int{"line": 0, "character": 7}}}}, nil)
 		case "textDocument/completion":
@@ -217,4 +218,15 @@ func Serve(r io.Reader, w io.Writer) {
 			}
 		}
 	}
+}
+
+// fileURI is path as a file URI, made as pyrefly.URI makes it, which this
+// package can't import: pyrefly's tests import it. On Windows a path gets
+// forward slashes and a leading one, as pyrefly's own URIs have.
+func fileURI(path string) string {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
 }

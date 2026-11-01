@@ -304,7 +304,10 @@ func TestFindBin(t *testing.T) {
 	root := t.TempDir()
 	look := func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	none := func(string) (string, error) { return "", exec.ErrNotFound }
-	if got, _ := FindBin("/opt/sqlfluff", root, look); got != "/opt/sqlfluff" {
+	// Absolute on every OS: "/opt/sqlfluff" has no drive, so Windows takes it
+	// as relative.
+	abs := filepath.Join(t.TempDir(), "opt", "sqlfluff")
+	if got, _ := FindBin(abs, root, look); got != abs {
 		t.Errorf("configured: %q", got)
 	}
 	if got, _ := FindBin("tools/sqlfluff", root, look); got != filepath.Join(root, "tools", "sqlfluff") {

@@ -292,7 +292,9 @@ func (s *session) format(ctx context.Context, text string, locate bool) (string,
 	if code > 1 || (code == 1 && stdout == "") {
 		return "", nil, fmt.Errorf("sqlfluff: %s", firstLine(stderr, stdout))
 	}
-	return stdout, nil, nil
+	// Python writes \r\n to stdout on Windows; the text went in with \n, and
+	// formatText puts \r\n back for a file that had it.
+	return strings.ReplaceAll(stdout, "\r\n", "\n"), nil, nil
 }
 
 var positionPrefix = regexp.MustCompile(`^Line \d+, Position \d+: `)

@@ -2,7 +2,7 @@
 
 # A Raycast script command (macOS): typing "xf" in Raycast brings the xf web
 # window you used last to the front, or starts `xf web --app` when none is
-# open. See "Back to xf web from Raycast" in the README.
+# open. See "Back to xf web from Raycast" in docs/xf-web.md.
 
 # Required parameters:
 # @raycast.schemaVersion 1

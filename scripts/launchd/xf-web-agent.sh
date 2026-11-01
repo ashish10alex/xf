@@ -3,7 +3,7 @@
 # Keeps `xf web` running on a fixed port (macOS), so the xf app that Chrome
 # installs from the page ("Install page as app") opens at once: that app is a
 # window onto 127.0.0.1:<port>, and cannot start xf web itself. See "xf as a
-# Mac app" in the README.
+# Mac app" in docs/xf-web.md.
 #
 #   xf-web-agent.sh install [port]   write and start the agent (default port 7777)
 #   xf-web-agent.sh uninstall        stop and remove it
@@ -52,7 +52,7 @@ PLIST
 }
 
 need_xf() {
-  [ -n "$xf_bin" ] || { echo "xf isn't on PATH: install it first (README, 'Install xf')" >&2; exit 1; }
+  [ -n "$xf_bin" ] || { echo "xf isn't on PATH: install it first (README, 'Install')" >&2; exit 1; }
 }
 
 case "$cmd" in

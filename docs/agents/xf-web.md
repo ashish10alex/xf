@@ -30,5 +30,5 @@ Two tests in `internal/web` hold the page's speed: `TestFirstLoadBudget` (how ma
 
 ## Where a user-visible change is written down
 
-- Keys: the `?` help (`helpSections` in `view.js`, and the TUI's) and the README.
+- Keys: the `?` help (`helpSections` in `view.js`, and the TUI's) and the user docs in `docs/` (`xf-web.md` for xf web; the README only for install and the quick start).
 - Decisions the user made: an ADR in `docs/adr/`.

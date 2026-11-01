@@ -1788,6 +1788,11 @@ func TestProgramWatch(t *testing.T) {
 		}
 	}
 	waitCalls(1)
+	// The first compile's result opens the palette; on a slow machine it can
+	// arrive after the keys below, which would then type into it.
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		return strings.Contains(ansi.Strip(string(b)), "daily_orders")
+	}, teatest.WithDuration(5*time.Second))
 	watch <- struct{}{}
 	waitCalls(2)
 	watch <- struct{}{}
