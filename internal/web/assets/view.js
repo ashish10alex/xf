@@ -1206,7 +1206,7 @@ function helpSections() {
   if (c.cost) run.push(['C', 'query cost of changes']);
   if (c.run) run.push(['d', 'deps'], ['D', 'dependents'], ['f', 'full refresh']);
   if (c.api) run.push(['a', 'run via Dataform API']);
-  const panes = [[st.onMac ? '⌘b' : 'ctrl+b', 'show/hide the file tree'], ['ctrl+g', 'show/hide source control'], [st.projectsKey, 'show/hide open projects'], [search.searchKey + (st.onMac ? '/ctrl+shift+f' : ''), 'search in files'], ['F4/shift+F4', 'next/prev search match'], ['ctrl+0', 'file tree / source control / search'], ['ctrl+1', 'source (left)'], ['ctrl+2', 'inspector / sql (right)'], ['ctrl+3', 'log (bottom)'], [st.rightKey(), 'show/hide pane 2 (right)'],
+  const panes = [[st.onMac ? '⌘b' : 'ctrl+b', 'show/hide the file tree'], ['ctrl+g', 'show/hide source control'], [st.projectsKey, 'show/hide open projects'], [st.revealKey, 'show the open file in the file tree'], [search.searchKey + (st.onMac ? '/ctrl+shift+f' : ''), 'search in files'], ['F4/shift+F4', 'next/prev search match'], ['ctrl+0', 'file tree / source control / search'], ['ctrl+1', 'source (left)'], ['ctrl+2', 'inspector / sql (right)'], ['ctrl+3', 'log (bottom)'], [st.rightKey(), 'show/hide pane 2 (right)'],
     ['z', 'zoom pane'], ['esc', 'unzoom'], ['O', 'lineage tab (again: the sql)'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
   const target = [['u', 'open in BigQuery'], ['y', 'copy `table` name'], ['Y', 'copy file path (again: absolute)']];
   const log = [['g', 'top'], ['G', 'bottom'], ['u', 'open run in browser'], ['y', 'copy the run\'s command for a terminal']];

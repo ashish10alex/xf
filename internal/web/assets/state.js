@@ -1965,6 +1965,7 @@ function commands() {
     toggle('View: zoom terminal', termZoomed(), onMac ? '⌘z' : 'alt+z', toggleTermZoom);
   }
   if (hooks.toggleTree) toggle('View: file tree', hooks.treeShown() && !hooks.scmShown() && !hooks.projectsShown(), onMac ? '⌘b' : 'ctrl+b', hooks.toggleTree);
+  if (hooks.revealActive) add('View: show the open file in the file tree', revealKey, hooks.revealActive);
   add('View: open projects', projectsKey, openProjectList);
   if (hooks.toggleSCM) toggle('View: source control', hooks.scmShown(), 'ctrl+g', hooks.toggleSCM);
   if (hooks.searchCommands) for (const [label, key, f] of hooks.searchCommands()) add(label, key, f);
@@ -2267,6 +2268,14 @@ export const isCommandsKey = (e) => isP(e, true);
 // projectsKey shows and hides the column's projects tab: cmd+shift+w on a
 // Mac, ctrl+shift+w elsewhere.
 export const projectsKey = onMac ? '⇧⌘w' : 'ctrl+shift+w';
+
+// revealKey shows the open file in the file tree, as VS Code's Show
+// Explorer does: cmd+shift+e on a Mac, ctrl+shift+e elsewhere.
+export const revealKey = onMac ? '⇧⌘e' : 'ctrl+shift+e';
+export function isRevealKey(e) {
+  const mod = onMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  return mod && !e.altKey && e.shiftKey && (e.key === 'e' || e.key === 'E');
+}
 export function isProjectsKey(e) {
   const mod = onMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
   return mod && !e.altKey && e.shiftKey && (e.key === 'w' || e.key === 'W');

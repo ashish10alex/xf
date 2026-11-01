@@ -3,7 +3,7 @@
 import { h, render } from './vendor/preact.mjs';
 import { App, LostNotice } from './view.js';
 import { runScratch, toggleResults, toggleList, flushSave, SC } from './scratch.js';
-import { S, start, onRedraw, handleKey, keyName, redraw, toggleLog, toggleTerm, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
+import { S, start, onRedraw, handleKey, keyName, redraw, toggleLog, toggleTerm, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
 import { SET, reopenAfterReload, openSettings, closeSettings } from './settings.js';
 import { T, closeThemePicker } from './theme.js';
 import { track } from './windows.js';
@@ -174,6 +174,20 @@ window.addEventListener('keydown', (e) => {
   const hiding = hooks.treeShown() && !hooks.scmShown();
   if (!hiding && document.activeElement instanceof HTMLElement && document.activeElement.closest('.cm-editor')) document.activeElement.blur();
   hooks.toggleColumn();
+  redraw();
+}, true);
+
+// cmd+shift+e (ctrl+shift+e off a Mac) shows the open file in the file
+// tree and gives it the keys, or gives them back to the editor, as VS
+// Code's Show Explorer does, from anywhere, the editors included.
+window.addEventListener('keydown', (e) => {
+  if (termHasKey(e)) return; // the terminal's own
+  if (!isRevealKey(e)) return;
+  if (S.mode !== 'project' || S.overlay || S.checks || SET.open || SC.open || T.pick || !hooks.revealActive) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (document.activeElement instanceof HTMLElement && document.activeElement.closest('.cm-editor')) document.activeElement.blur();
+  hooks.revealActive();
   redraw();
 }, true);
 

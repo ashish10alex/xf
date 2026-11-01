@@ -1,7 +1,7 @@
 // The file tree's pane (see tree.js), and the note the right-hand panes
-// show while a file with no action is open. The column's header has a tab
-// for the tree, one for Source Control (scm-view.js) and one for Search
-// (search-view.js), which it shows instead.
+// show while a file with no action is open. The column shows the tree,
+// Source Control (scm-view.js), Search (search-view.js) or the open
+// projects, one at a time, which the rail's icons switch between.
 
 import { h } from './vendor/preact.mjs';
 import { useLayoutEffect, useRef } from './vendor/hooks.mjs';
@@ -178,26 +178,29 @@ export function Rail() {
   </nav>`;
 }
 
-// ColumnTabs is the column's header: a tab for each view, Source
-// Control's with how many files have changed, Search's with how many
-// matches it lists, and the column's close.
-function ColumnTabs() {
-  if (!sc.G.loaded && !sc.G.error) sc.refresh();
-  const n = sc.count();
-  const tab = (view, label, key, extra) => html`<button class=${'col-tab' + (T.view === view ? ' on' : '')} title=${label + ' (' + key + ')'}
-      onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); tr.showView(view); redraw(); }}>${label}${extra}</button>`;
-  const hide = T.view === 'scm' ? sc.scmKey : tr.treeKey;
-  sr.restore();
-  const found = sr.F.query && sr.F.result ? sr.counts().matches : 0;
-  return html`<header class="pane-title col-tabs">
-    <span class="pane-num">0</span>
-    ${tab('files', 'files', tr.treeKey, T.view === 'files' && T.loaded && !T.git ? html`<span class="dim"> · not git</span>` : T.view === 'files' && T.truncated ? html`<span class="warn"> · first 20000</span>` : '')}
-    ${tab('scm', 'source control', sc.scmKey, n ? html`<span class="col-count">${n}</span>` : '')}
-    ${tab('search', 'search', sr.searchKey, found ? html`<span class="col-count">${found}${sr.F.result.truncated ? '+' : ''}</span>` : '')}
-    ${tab('projects', 'projects', projectsKey + ' lists them in the palette', S.open.length > 1 ? html`<span class="col-count">${S.open.length}</span>` : '')}
-    <span class="spacer"></span>
-    <button class="tree-close" title=${'hide the column (' + hide + ')'}
-      onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); tr.toggleColumn(); redraw(); }}>✕</button>
+// ColumnTitle is the column's header, set in its border as every pane's
+// title is: its number and the view it shows, with Source Control's
+// count of changed files, Search's of matches and the open projects'.
+// The rail (ADR 0035) switches the view and hides the column.
+function ColumnTitle() {
+  let extra = '';
+  if (T.view === 'files') {
+    if (T.loaded && !T.git) extra = html`<span class="dim"> · not git</span>`;
+    else if (T.truncated) extra = html`<span class="warn"> · first 20000</span>`;
+  } else if (T.view === 'scm') {
+    if (!sc.G.loaded && !sc.G.error) sc.refresh();
+    const n = sc.count();
+    if (n) extra = html`<span class="col-count">${n}</span>`;
+  } else if (T.view === 'search') {
+    sr.restore();
+    const found = sr.F.query && sr.F.result ? sr.counts().matches : 0;
+    if (found) extra = html`<span class="col-count">${found}${sr.F.result.truncated ? '+' : ''}</span>`;
+  } else if (T.view === 'projects' && S.open.length > 1) {
+    extra = html`<span class="col-count">${S.open.length}</span>`;
+  }
+  const name = { files: 'files', scm: 'source control', search: 'search', projects: 'projects' }[T.view];
+  return html`<header class="pane-title col-title">
+    <span class="pane-num">0</span><span class="col-name">${name}${extra}</span>
   </header>`;
 }
 
@@ -205,8 +208,8 @@ export function TreePane() {
   const list = useRef(null);
   useLayoutEffect(() => { if (T.view === 'files') centre(list.current); });
   const style = T.width ? `flex:0 0 ${T.width}px;width:${T.width}px` : '';
-  if (T.view === 'scm') return html`<${ScmPane} tabs=${html`<${ColumnTabs} />`} style=${style} />`;
-  if (T.view === 'search') return html`<${SearchPane} tabs=${html`<${ColumnTabs} />`} style=${style} />`;
+  if (T.view === 'scm') return html`<${ScmPane} header=${html`<${ColumnTitle} />`} style=${style} />`;
+  if (T.view === 'search') return html`<${SearchPane} header=${html`<${ColumnTitle} />`} style=${style} />`;
   if (T.view === 'projects') return html`<${ProjectsPane} style=${style} />`;
   const focused = S.focus === 'tree';
   const rows = tr.rows();
@@ -218,7 +221,7 @@ export function TreePane() {
   const note = focused ? 'a new · r rename · d delete' : tr.treeKey + ' hides';
   return html`<section class=${'pane tree-pane' + (focused ? ' focused' : '')} data-pane="tree" style=${style}
       onMouseDown=${() => { setFocus('tree'); redraw(); }}>
-    <${ColumnTabs} />
+    <${ColumnTitle} />
     <div class="pane-body">
       <${Filter} />
       ${T.prompt && html`<${Prompt} />`}
@@ -240,7 +243,7 @@ function ProjectsPane({ style }) {
   const cursor = rows.some((o) => o.key === T.projCursor) ? T.projCursor : S.key;
   return html`<section class=${'pane tree-pane projects-pane' + (focused ? ' focused' : '')} data-pane="tree" style=${style}
       onMouseDown=${() => { setFocus('tree'); redraw(); }}>
-    <${ColumnTabs} />
+    <${ColumnTitle} />
     <div class="pane-body"><div class="tree-list">
       ${rows.map((o) => html`<${ProjectRow} key=${o.key} o=${o} cur=${o.key === cursor} focused=${focused} />`)}
       <div class="tree-row proj-row proj-more" title=${'switch to or add any project (' + commandsKey + ' › Project: switch or add)'}

@@ -1518,15 +1518,10 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 @media (hover: none) { .ps-acts { display: inline-flex; } .ps-line-no { display: none; } }
 
 /* ---- Source Control (ADR 0007) ---- */
-/* The column's header: a tab for the files and one for Source Control. */
-.col-tabs .col-tab { border: 0; font: inherit; color: var(--dim); cursor: pointer; background: var(--bg); padding: 0 4px; letter-spacing: inherit; }
-.col-tabs .col-tab.on { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
-.pane.focused .col-tabs .col-tab:not(.on) { color: var(--dim); font-weight: 500; }
-.col-tabs .col-count { margin-left: 4px; padding: 0 5px; border-radius: 8px; font-size: 10px; color: var(--bg); background: var(--blue); font-weight: 700; }
-/* Three tabs don't fit a narrow column: the ones not shown shrink first. */
-.col-tabs .col-tab { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
-.col-tabs .col-tab.on { flex: none; }
-.col-tabs .pane-num, .col-tabs .tree-close { flex: none; }
+/* The column's header: the view it shows, with its count. */
+.col-title .col-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-title .col-count { margin-left: 4px; padding: 0 5px; border-radius: 8px; font-size: 10px; color: var(--bg); background: var(--blue); font-weight: 700; }
+.col-title .pane-num { flex: none; }
 .scm-pane .pane-body { padding: 4px 0 2px; }
 .scm-branch, .scm-status { display: flex; align-items: center; gap: 0.6ch; padding: 0 6px 0 8px; height: var(--lh); white-space: nowrap; }
 .scm-branch-name { overflow: hidden; text-overflow: ellipsis; color: var(--purple); }

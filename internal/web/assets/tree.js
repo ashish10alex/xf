@@ -11,8 +11,9 @@
 // The column shows the tree, Source Control (ADR 0007, scm.js) or Search
 // (ADR 0016, search.js), one at a time: ctrl+g shows Source Control, cmd+b
 // the tree, each hiding the column when its view already shows, and cmd+
-// shift+f Search, which cmd+b hides. Its fourth tab lists the projects
-// open in xf web (ADR 0008), to switch to another.
+// shift+f Search, which cmd+b hides. Its fourth view lists the projects
+// open in xf web (ADR 0008), to switch to another. The rail's icons (ADR
+// 0035) switch between the four; the header names the one showing.
 
 import { S, get, post, redraw, hooks, setFocus, selectAction, showPlainFile, onMac, copy, absPath, say, openNewWorktree } from './state.js';
 import { SRC } from './source.js';
@@ -278,6 +279,25 @@ function toSource() {
 // toggleTree is cmd+b: it shows the column on the tree, or hides it when
 // the tree shows.
 export function toggleTree() { toggleView('files'); }
+
+// revealActive is cmd+shift+e (ctrl+shift+e off a Mac), VS Code's Show
+// Explorer: it shows the tree with the open file's row in the middle and
+// gives it the keys. Pressed while the tree has them, it gives them back
+// to the source editor and leaves the tree showing.
+export function revealActive() {
+  restore();
+  if (T.shown && T.view === 'files' && S.focus === 'tree') {
+    if (hooks.sourceShownNow && hooks.sourceShownNow()) toSource();
+    else setFocus('sql');
+    return;
+  }
+  T.shown = true;
+  T.view = 'files';
+  keep();
+  refresh();
+  reveal(SRC.file, true);
+  focusTree();
+}
 
 // toggleSCM is ctrl+g: the same for Source Control.
 export function toggleSCM() { toggleView('scm'); }
@@ -663,6 +683,7 @@ part('tree', () => ({ cursor: T.cursor, filter: T.filter }), (v) => {
 hooks.treeKey = key;
 hooks.treeFocus = focusTree;
 hooks.toggleTree = toggleTree;
+hooks.revealActive = revealActive;
 hooks.toggleColumn = toggleColumn;
 hooks.toggleSCM = toggleSCM;
 hooks.scmShown = () => { restore(); return T.shown && T.view === 'scm'; };

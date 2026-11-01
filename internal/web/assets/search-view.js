@@ -129,7 +129,7 @@ function File({ r, cur, focused }) {
   </div>`;
 }
 
-export function SearchPane({ tabs, style }) {
+export function SearchPane({ header, style }) {
   sr.restore();
   const focused = S.focus === 'tree';
   const rows = sr.rows();
@@ -137,7 +137,7 @@ export function SearchPane({ tabs, style }) {
   const note = focused ? 'j/k show · enter go · x dismiss' + (F.replacing ? ' · r replace' : '') + ' · F4 next' : sr.searchKey + ' searches';
   return html`<section class=${'pane tree-pane ps-pane' + (focused ? ' focused' : '')} data-pane="tree" style=${style}
       onMouseDown=${() => { setFocus('tree'); redraw(); }}>
-    ${tabs}
+    ${header}
     <div class="pane-body">
       <${Boxes} />
       <${Summary} />

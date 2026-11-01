@@ -432,7 +432,7 @@ function Sash() {
     }}></div>`;
 }
 
-export function ScmPane({ tabs, style }) {
+export function ScmPane({ header, style }) {
   const focused = S.focus === 'tree';
   let body, dock = null;
   const st = G.st;
@@ -461,7 +461,7 @@ export function ScmPane({ tabs, style }) {
     : 'space stage · c commit · ? keys';
   return html`<section class=${'pane tree-pane scm-pane' + (focused ? ' focused' : '')} data-pane="tree" style=${style}
       onMouseDown=${() => { setFocus('tree'); redraw(); }}>
-    ${tabs}
+    ${header}
     <div class="pane-body">
       <${Branch} />
       <${Status} />
