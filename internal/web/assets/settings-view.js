@@ -16,6 +16,7 @@ import { S, redraw, copy } from './state.js';
 import { createEditor } from './editor.js';
 import * as se from './settings.js';
 import { GitHosting } from './forge-view.js';
+import { vimOn, savesWith } from './vim-mode.js';
 
 const html = htm.bind(h);
 const { SET } = se;
@@ -288,13 +289,19 @@ function PyreflyNote() {
   </div>`;
 }
 
+// vimModeOn says whether the vimMode in use is on: the Vim tab's keys do
+// something only then.
+const vimModeOn = () => { const k = SET.data && SET.data.keys.find((x) => x.key === 'vimMode'); return !k || k.value === 'true'; };
+
 function Row({ k, i }) {
   const fv = se.fileValue(k);
   const lock = se.locked(k);
   const err = se.errorOf(k);
   const pending = SET.data.pending.includes(k.key);
   const notFound = k.value === '(not found)';
-  return html`<div class=${'set-row' + (i === SET.cursor ? ' sel' : '') + (fv !== null ? ' chg' : '') + (lock ? ' locked' : '') + (notFound ? ' warn-row' : '')}
+  // A vim key with vim off stays editable, dimmed.
+  const idle = k.section === se.VIM && k.key !== 'vimMode' && !vimModeOn();
+  return html`<div class=${'set-row' + (i === SET.cursor ? ' sel' : '') + (fv !== null ? ' chg' : '') + (lock ? ' locked' : '') + (idle ? ' idle' : '') + (notFound ? ' warn-row' : '')}
       data-key=${k.key}
       ref=${(e) => {
         if (e && i === SET.cursor && SET.reveal && !SET.editing) {
@@ -548,8 +555,8 @@ function JSONView() {
   const j = se.jsonOf();
   const lvl = se.level();
   const state = j.saving ? html`<span class="dim">saving…</span>`
-    : j.draft !== null ? html`<span class="warn">● not saved${se.jsonAutosave() ? '' : ' · :w or ' + (/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘s' : 'ctrl+s') + ' saves'}</span>`
-    : html`<span class="dim">${se.jsonAutosave() ? 'autosave' : ':w saves'}</span>`;
+    : j.draft !== null ? html`<span class="warn">● not saved${se.jsonAutosave() ? '' : ' · ' + (vimOn() ? ':w or ' : '') + (/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘s' : 'ctrl+s') + ' saves'}</span>`
+    : html`<span class="dim">${se.jsonAutosave() ? 'autosave' : savesWith() + ' saves'}</span>`;
   return html`<div class="set-json">
     ${j.conflict && html`<div class="set-banner set-conflict">file changed on disk
       <span class="spacer"></span>
@@ -586,7 +593,7 @@ function SettingsBody({ list, sections }) {
         if (!ks.length) return null;
         return html`<section class="set-section"><h2 id=${secId(s)}>${s}</h2>
           ${s === se.GIT && !q && html`<${GitHosting} />`}
-          ${s === se.VIM && html`<p class="dim set-file">The keys of the editor's own commands in vim's normal mode (the source pane, Scratch and this page's JSON), as vim writes them, e.g. ]g or ${'<C-j>'}.</p>`}
+          ${s === se.VIM && html`<p class="dim set-file">Vim mode gives the editors (the source pane, Scratch and this page's JSON) vim's keys. The keys below are of the editor's own commands in vim's normal mode, as vim writes them, e.g. ]g or ${'<C-j>'}${vimModeOn() ? '' : ': with vim mode off they do nothing until it is on'}.</p>`}
           ${ks.map((k) => { n++; return html`<${Row} k=${k} i=${n} />`; })}</section>`;
       })}
       ${!list.length && html`<div class="dim pad">${q ? 'no setting matches · esc clears the search' : SET.only === 'changed' ? 'this file sets no setting · c shows them all' : 'no settings'}</div>`}
@@ -618,7 +625,7 @@ export function SettingsPage() {
   const keys = view === 'overview'
     ? [...other, ['j/k', 'scroll'], ['r', 'refresh'], ['c', 'changed settings'], ['/', 'search settings'], ...(d && d.pending.length ? [['R', 'reopen']] : []), ['ctrl+q', 'back']]
     : SET.mode === 'json'
-      ? [...other, ['enter', 'edit'], ['ctrl+q', 'back'], [':w', 'save'], ...(project ? [['tab', 'Global/Project']] : []), ['ctrl+w', 'leave the editor']]
+      ? [...other, ['enter', 'edit'], ['ctrl+q', 'back'], [savesWith(), 'save'], ...(project ? [['tab', 'Global/Project']] : []), ['ctrl+w', 'leave the editor']]
       : [...other, ['j/k', 'move'], ['enter', 'edit / next choice'], ['h/l', 'choice'], ['x', 'reset'], ['c', SET.only === 'changed' ? 'all' : 'changed only'], ...(project ? [['tab', 'Global/Project']] : []), ['/', 'search'], ...(d && d.pending.length ? [['R', 'reopen']] : []), ['ctrl+q', 'back']];
   return html`<div class="app settings-page">
     <header class="set-top">

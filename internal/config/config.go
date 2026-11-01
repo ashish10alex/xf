@@ -123,6 +123,10 @@ const (
 	// while the branch's pipeline runs, in seconds, at least
 	// MinForgePollSeconds (ADR 0020). It is the user's to set.
 	KeyForgePollSeconds = "forgePollSeconds"
+	// KeyVimMode gives xf web's editors vim's keys: "false" (the default)
+	// or "true". Off, they take the usual editor keys and the vim keys
+	// below do nothing. It is the user's to set.
+	KeyVimMode = "vimMode"
 	// The vim keys of xf web's editor (the source pane and the Scratch
 	// view), in normal mode: the next and previous git change (hunk),
 	// undoing and staging the change under the cursor, the next and previous error, the documentation of what is under the cursor, and going to
@@ -260,6 +264,7 @@ var Titles = map[string]string{
 	KeyWebOpenProjectIn:     "Open projects in",
 	KeyWebBrowser:           "Browser",
 	KeyForgePollSeconds:     "Pipeline check interval",
+	KeyVimMode:              "Vim mode",
 	KeyVimNextHunk:          "Next git change",
 	KeyVimPrevHunk:          "Previous git change",
 	KeyVimUndoHunk:          "Undo git change",
@@ -318,6 +323,7 @@ var Defaults = func() map[string]string {
 		KeyWebOpenProjectIn:     OpenSameTab,
 		KeyWebBrowser:           BrowserDefault,
 		KeyForgePollSeconds:     strconv.Itoa(DefaultForgePollSeconds),
+		KeyVimMode:              "false",
 	}
 	for k, v := range VimKeyDefaults {
 		d[k] = v
@@ -328,11 +334,11 @@ var Defaults = func() map[string]string {
 
 // Keys lists every key in the order they are documented.
 var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyForgePollSeconds,
-	KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
+	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
 var userKeys = []string{KeyTheme, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyForgePollSeconds,
-	KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
+	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // Flags maps each key to the flag that sets it; the vim keys, the
 // themes of xf web's auto and diffStyle have none.
@@ -440,6 +446,8 @@ type Settings struct {
 	Pane2Tab string
 	// WrapLines is "true" to wrap long lines in xf web's editors
 	WrapLines string
+	// VimMode is "true" to give xf web's editors vim's keys
+	VimMode string
 	// WebAutoExitSeconds is seconds, as a whole number
 	WebAutoExitSeconds string
 	// WebOpenProjectIn is "same-tab" or "new-tab"
@@ -518,6 +526,8 @@ func (s *Settings) field(key string) *string {
 		return &s.Pane2Tab
 	case KeyWrapLines:
 		return &s.WrapLines
+	case KeyVimMode:
+		return &s.VimMode
 	case KeyWebAutoExitSeconds:
 		return &s.WebAutoExitSeconds
 	case KeyForgePollSeconds:
@@ -808,7 +818,7 @@ func (l *Loaded) parse(data []byte, shown, base, home string) error {
 // base.
 func valueOf(key string, raw json.RawMessage, base, home string) (string, error) {
 	var v string
-	if key == KeyDbtCompileWithHooks || key == KeyAutoHidePane2 || key == KeyWrapLines || key == KeyDeferToProd {
+	if key == KeyDbtCompileWithHooks || key == KeyAutoHidePane2 || key == KeyWrapLines || key == KeyVimMode || key == KeyDeferToProd {
 		var b bool
 		if err := json.Unmarshal(raw, &b); err != nil {
 			return "", fmt.Errorf("%s must be true or false, not %s", key, raw)
@@ -1183,7 +1193,7 @@ func CheckFile(data []byte, user bool) (errs, warns []Problem) {
 // that are one, else a string.
 func rawOf(key, value string) json.RawMessage {
 	switch key {
-	case KeyDbtCompileWithHooks, KeyAutoHidePane2, KeyWrapLines, KeyDeferToProd:
+	case KeyDbtCompileWithHooks, KeyAutoHidePane2, KeyWrapLines, KeyVimMode, KeyDeferToProd:
 		if value == "true" || value == "false" {
 			return json.RawMessage(value)
 		}

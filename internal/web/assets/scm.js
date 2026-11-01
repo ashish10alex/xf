@@ -16,6 +16,7 @@ import { T } from './tree.js';
 import { setBase, unstagedText } from './git-hunks.js';
 import { part } from './workspace.js';
 import * as fg from './forge.js';
+import { unsavedIn } from './vim-mode.js';
 
 export const G = {
   loaded: false,
@@ -389,7 +390,7 @@ function askDiscard(r) {
     return;
   }
   if (r.kind === 'file' && r.section === 'changes') {
-    if (SRC.dirty && r.file && SRC.file === r.file) { say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards'); return; }
+    if (SRC.dirty && r.file && SRC.file === r.file) { say(unsavedIn(SRC.file)); return; }
     G.prompt = { kind: 'discard', paths: [r.path], name: shownPath(r), untracked: r.git === 'U' };
     return;
   }
@@ -398,7 +399,7 @@ function askDiscard(r) {
 }
 
 async function discard(p) {
-  if (p.all && SRC.dirty) { say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards'); return; }
+  if (p.all && SRC.dirty) { say(unsavedIn(SRC.file)); return; }
   await act('/api/scm/discard', p.all ? { all: true } : { paths: p.paths });
 }
 
@@ -478,12 +479,12 @@ function askBranch(r) {
 
 function askStash() {
   if (!G.st || !G.st.changes.length && !G.st.staged.length) { say('no changes to stash'); return; }
-  if (SRC.dirty) { say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards'); return; }
+  if (SRC.dirty) { say(unsavedIn(SRC.file)); return; }
   G.prompt = { kind: 'stash', value: '' };
 }
 
 function applyStash(r, pop) {
-  if (SRC.dirty) { say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards'); return; }
+  if (SRC.dirty) { say(unsavedIn(SRC.file)); return; }
   act('/api/scm/stash/apply', { index: r.index, pop });
 }
 
@@ -600,7 +601,7 @@ export async function openDiff(r) {
   const d = { side: q.get('side'), path: r.path, file: v.file || '', rev: q.get('rev') || '', base: q.get('base') || '', v, live: !!v.live, armed: false, under: '', at: Date.now() };
   if (d.live) {
     if (SRC.dirty && SRC.file !== d.file && !(hooks.sourceFlush && await hooks.sourceFlush())) {
-      say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards');
+      say(unsavedIn(SRC.file));
       return;
     }
     G.diff = d;

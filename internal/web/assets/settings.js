@@ -10,7 +10,7 @@
 // it; ctrl+q leaves it.
 
 import { S, get, post, redraw, hooks, fitFocus, pane2Default, say } from './state.js';
-import { setVimKeys, setWrap } from './editor.js';
+import { setVimKeys, setVimMode, setWrap } from './editor.js';
 
 export const SECTIONS = ['Running', 'Tool', 'Editor & look', 'Scratch & source', 'Git hosting'];
 export const GIT = 'Git hosting'; // the hosts and their tokens (forge-view.js), then forgePollSeconds
@@ -694,15 +694,17 @@ hooks.openSettings = openSettings;
 hooks.settingsShowAll = () => { setView('settings'); setOnly('all'); };
 hooks.refreshSettingsInfo = refreshInfo;
 hooks.vimKeys = setVimKeys;
+hooks.vimMode = setVimMode;
 hooks.wrapLines = setWrap;
 hooks.settingsChanged = (ev) => {
   if (S.boot) {
     if (ev.pane2Tab !== S.boot.pane2Tab) pane2Default(ev.pane2Tab);
-    S.boot.sourceAutosaveMs = ev.sourceAutosaveMs; S.boot.vimKeys = ev.vimKeys; S.boot.diffStyle = ev.diffStyle; S.boot.autoHidePane2 = ev.autoHidePane2; S.boot.pane2Tab = ev.pane2Tab; S.boot.wrapLines = ev.wrapLines;
+    S.boot.sourceAutosaveMs = ev.sourceAutosaveMs; S.boot.vimKeys = ev.vimKeys; S.boot.diffStyle = ev.diffStyle; S.boot.autoHidePane2 = ev.autoHidePane2; S.boot.pane2Tab = ev.pane2Tab; S.boot.wrapLines = ev.wrapLines; S.boot.vimMode = ev.vimMode;
     fitFocus();
   }
   if (ev.openIn) S.openIn = ev.openIn;
   setVimKeys(ev.vimKeys);
+  setVimMode(ev.vimMode);
   setWrap(ev.wrapLines);
   if (SET.open) { load(); checkFiles(); }
 };

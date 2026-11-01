@@ -19,6 +19,7 @@ import { SRC } from './source.js';
 import { part } from './workspace.js';
 import { askRemoveWorktreeHere, openFoundRow, projectTabRows, switchProject } from './picker.js';
 import { showMenu } from './ctx-menu.js';
+import { unsavedIn, staleIn } from './vim-mode.js';
 
 export const T = {
   shown: false,
@@ -365,7 +366,7 @@ export async function openFile(file, opts = {}) {
   if (SRC.dirty && SRC.file !== file) {
     const saved = hooks.sourceFlush ? await hooks.sourceFlush() : false;
     if (!saved) {
-      say(SRC.stale ? SRC.file + ' changed on disk: :w to choose what to keep, :e! discards' : 'unsaved changes in ' + SRC.file + ': :w saves, :e! discards');
+      say(SRC.stale ? staleIn(SRC.file) : unsavedIn(SRC.file));
       return;
     }
   }
@@ -447,14 +448,14 @@ export function askNew(dir) {
 export function askRename(move) {
   const r = current();
   if (!r) return;
-  if (holdsDirty(r.path)) { say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards'); return; }
+  if (holdsDirty(r.path)) { say(unsavedIn(SRC.file)); return; }
   T.prompt = { kind: 'rename', path: r.path, value: r.path, dir: r.dir, move: !!move };
 }
 
 export function askDelete() {
   const r = current();
   if (!r) return;
-  if (holdsDirty(r.path)) { say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards'); return; }
+  if (holdsDirty(r.path)) { say(unsavedIn(SRC.file)); return; }
   T.prompt = { kind: 'delete', path: r.path, dir: r.dir, count: r.dir ? filesIn(r.path) : 0 };
 }
 

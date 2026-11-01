@@ -76,6 +76,7 @@ var settingMetas = map[string]settingMeta{
 	config.KeyAutoHidePane2:        {"Scratch & source", "bool", nil, true},
 	config.KeyPane2Tab:             {"Scratch & source", "choice", []string{config.Pane2SQL, config.Pane2Columns}, true},
 	config.KeyWrapLines:            {"Scratch & source", "bool", nil, true},
+	config.KeyVimMode:              {"Vim", "bool", nil, true},
 	config.KeyVimNextHunk:          {"Vim", "text", nil, true},
 	config.KeyVimPrevHunk:          {"Vim", "text", nil, true},
 	config.KeyVimUndoHunk:          {"Vim", "text", nil, true},

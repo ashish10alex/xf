@@ -828,5 +828,6 @@ func (p *projectState) setScratch(o *Project) {
 	p.autoHidePane2 = o.AutoHidePane2
 	p.pane2Tab = o.Pane2Tab
 	p.wrapLines = o.WrapLines
+	p.vimMode = o.VimMode
 	p.vimKeys = o.VimKeys
 }

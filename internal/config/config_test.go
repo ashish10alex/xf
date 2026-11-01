@@ -392,6 +392,9 @@ func TestWebAutoExitSecondsIsTheUsers(t *testing.T) {
 	if !UserOnly(KeyWrapLines) {
 		t.Error("wrapLines isn't user-only")
 	}
+	if !UserOnly(KeyVimMode) || Flags[KeyVimMode] != "" || IsVimKey(KeyVimMode) {
+		t.Error("vimMode isn't user-only with no flag, apart from the vim keys")
+	}
 }
 
 func TestVimKeysAreTheUsers(t *testing.T) {
@@ -452,6 +455,7 @@ func TestCheck(t *testing.T) {
 		{KeyWebOpenProjectIn, "same-tab", true}, {KeyWebOpenProjectIn, "new-tab", true}, {KeyWebOpenProjectIn, "window", false},
 		{KeyPane2Tab, "sql", true}, {KeyPane2Tab, "columns", true}, {KeyPane2Tab, "lineage", false},
 		{KeyWrapLines, "true", true}, {KeyWrapLines, "false", true}, {KeyWrapLines, "on", false},
+		{KeyVimMode, "true", true}, {KeyVimMode, "false", true}, {KeyVimMode, "on", false},
 		{KeyEditor, "code", true}, {"nope", "x", false},
 		{KeyVimNextHunk, "]c", true}, {KeyVimHover, "<C-k>", true}, {KeyVimNextHunk, "", false}, {KeyVimNextHunk, "] g", false},
 	} {

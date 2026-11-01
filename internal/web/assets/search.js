@@ -13,6 +13,7 @@
 import { S, post, redraw, hooks, setFocus, onMac, say } from './state.js';
 import { SRC, sourceEditor, goToLine } from './source.js';
 import { T, showView } from './tree.js';
+import { undoesWith } from './vim-mode.js';
 
 export const F = {
   query: '',
@@ -361,7 +362,7 @@ async function replace(targets) {
     const r = replaceInEditor(here.matches);
     if (r.replaced) {
       F.replaced = here.path;
-      parts.push((r.replaced === 1 ? '1 match' : r.replaced + ' matches') + ' in ' + here.path + ', unsaved: u undoes it');
+      parts.push((r.replaced === 1 ? '1 match' : r.replaced + ' matches') + ' in ' + here.path + ', unsaved: ' + undoesWith() + ' undoes it');
     }
     if (r.skipped) parts.push(r.skipped + ' skipped in ' + here.path + ': its text changed');
   }
@@ -412,7 +413,7 @@ export async function undoReplace() {
   try {
     const v = await post('/api/search/undo');
     F.undo = false;
-    say(v.message + (F.replaced ? ' · in ' + F.replaced + ', u undoes it' : ''));
+    say(v.message + (F.replaced ? ' · in ' + F.replaced + ', ' + undoesWith() + ' undoes it' : ''));
   } catch (e) { F.undo = false; say(e.message); }
   F.replaced = '';
   search(0);

@@ -43,7 +43,7 @@ func (f *fakeSettings) hook() *Settings {
 				v.Levels = append(v.Levels, SettingsLevel{Level: "project", Path: ".xf/config.json"})
 			}
 			userFile, projectFile := f.fileKeys("user"), f.fileKeys("project")
-			for _, k := range []string{config.KeySourceAutosaveMs, config.KeyDbtTarget, config.KeyWebTheme, config.KeyAutoHidePane2, config.KeyPane2Tab, config.KeyWrapLines} {
+			for _, k := range []string{config.KeySourceAutosaveMs, config.KeyDbtTarget, config.KeyWebTheme, config.KeyAutoHidePane2, config.KeyPane2Tab, config.KeyWrapLines, config.KeyVimMode} {
 				sk := SettingKey{Key: k, Live: k != config.KeyDbtTarget, UserOnly: config.UserOnly(k), From: "default"}
 				if val, ok := f.user[k]; ok {
 					sk.User, sk.Value, sk.From = &val, val, "~/.config/xf/config.json"
@@ -224,6 +224,30 @@ func TestSettingsWrapLines(t *testing.T) {
 	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
 	if !boot.WrapLines {
 		t.Error("boot wrapLines = false after setting true")
+	}
+}
+
+// vimMode is off unless a file says true, and every page is told of a
+// change at once, which switches its editors.
+func TestSettingsVimMode(t *testing.T) {
+	f := &fakeSettings{user: map[string]string{}, project: map[string]string{}}
+	opens := 0
+	s, ts, c := newSettingsTest(t, f, &opens)
+	events := openEvents(t, c, ts.URL, "proj")
+	var boot projectBoot
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
+	if boot.VimMode {
+		t.Error("boot vimMode = true with nothing set, want the default, false")
+	}
+
+	postJSON(t, c, ts.URL+"/api/settings", map[string]any{"level": "user", "key": config.KeyVimMode, "value": "true"}, nil)
+	events.until(t, "settings", `"vimMode":true`)
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
+	if !boot.VimMode {
+		t.Error("boot vimMode = false after setting true")
+	}
+	if opens != 0 {
+		t.Errorf("vimMode reopened the project %d times, want it live", opens)
 	}
 }
 

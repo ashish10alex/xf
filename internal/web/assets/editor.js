@@ -6,6 +6,7 @@
 
 import * as cm from './vendor/codemirror.mjs';
 import { toggleSelection, toggleRange } from './comment.js';
+import { undoesWith, vimOn as vimSetting, noteVimMode } from './vim-mode.js';
 
 const { EditorView, EditorState, keymap, Prec, tags } = cm;
 
@@ -105,7 +106,8 @@ function vimOwns(b) {
 // than take focus out of the editor.
 const vimPlainKey = /^(Shift-)?(Enter|Backspace|Delete|Tab)$/;
 function inserting(view) {
-  const vim = cm.getCM(view).state.vim;
+  const adapter = cm.getCM(view);
+  const vim = adapter && adapter.state.vim;
   return !vim || vim.insertMode;
 }
 function insertOnly(b) {
@@ -113,6 +115,67 @@ function insertOnly(b) {
   const tab = /Tab$/.test(b.key);
   const only = (f) => f && ((v) => (inserting(v) ? f(v) : tab));
   return { ...b, run: only(b.run), shift: only(b.shift) };
+}
+
+// ---- vim or not ----
+
+// The vimMode setting gives every editor vim's keys; off, they have
+// CodeMirror's own, as VS Code's: the default keymap whole, and esc
+// leaving the editor once nothing is left for it to close. setVimMode
+// switches every editor made, at once. Vim's handler and the default
+// keymap each sit in a compartment where they always were, so with vim
+// on the editor is as it was before the setting.
+let vimOn = vimSetting();
+const vimSlot = new cm.Compartment();
+const keysSlot = new cm.Compartment();
+const defaultKeys = () => [...cm.defaultKeymap, ...cm.historyKeymap, ...cm.searchKeymap, cm.indentWithTab];
+const vimExt = (on) => (on ? cm.vim() : []);
+const keysExt = (on) => cm.keymap.of(on ? defaultKeys().filter((b) => !vimOwns(b)).map(insertOnly) : defaultKeys());
+
+// vimMode says whether the editors have vim's keys.
+export const vimMode = () => vimOn;
+
+// setVimMode gives every editor vim's keys (on) or the usual ones.
+export function setVimMode(on) {
+  on = !!on;
+  noteVimMode(on);
+  if (on === vimOn) return;
+  vimOn = on;
+  for (const ref of views) {
+    const view = ref.deref();
+    if (!view || view.destroyed) views.delete(ref);
+    else applyVim(view);
+  }
+}
+
+function applyVim(view) {
+  view.dispatch({ effects: [vimSlot.reconfigure(vimExt(vimOn)), keysSlot.reconfigure(keysExt(vimOn))] });
+  const o = owners.get(view);
+  if (o && o.vimChanged) o.vimChanged(vimOn);
+}
+
+const bindingOf = (keys, key) => keys.find((b) => b.key === key && b.run);
+const closeSearch = bindingOf(cm.searchKeymap, 'Escape');
+const simplifySelection = bindingOf(cm.defaultKeymap, 'Escape');
+const openSearch = bindingOf(cm.searchKeymap, 'Mod-f');
+
+// openFind opens the find panel in view, as cmd+f (ctrl+f) does.
+export function openFind(view) { if (openSearch) openSearch.run(view); }
+
+// escapeOff is esc without vim: it closes the first thing open of the
+// completions, the card, the mouse's hover card, the find panel and the
+// extra cursors or the selection; with none, leave() gives the keys back
+// to the page.
+function escapeOff(view, leave) {
+  if (cm.completionStatus(view.state)) { cm.closeCompletion(view); return true; }
+  if (view.state.field(cardField, false)) { view.dispatch({ effects: setCard.of(null) }); return true; }
+  if (view.dom.querySelector('.cm-tooltip-hover')) { view.dispatch({ effects: cm.closeHoverTooltips }); return true; }
+  if (view.dom.querySelector('.cm-panel.cm-search') && closeSearch && closeSearch.run(view)) return true;
+  if (simplifySelection && simplifySelection.run(view)) return true;
+  const sel = view.state.selection.main;
+  if (!sel.empty) { view.dispatch({ selection: { anchor: sel.head } }); return true; }
+  leave(view);
+  return true;
 }
 
 // isBlock says whether the selection is a ctrl+v block that covers text: a
@@ -175,7 +238,7 @@ export async function formatText(ed, call, say) {
     if (ed.doc() !== sent) { say('typed while formatting: not applied'); return false; }
     if (!res.changed) { say(res.note || 'already formatted'); return true; }
     replaceWith(ed.view, res.text);
-    say(res.note ? res.note + ' (u undoes it)' : 'formatted: u undoes it');
+    say(res.note ? res.note + ' (' + undoesWith() + ' undoes it)' : 'formatted: ' + undoesWith() + ' undoes it');
     return true;
   } catch (e) {
     say(e.message);
@@ -219,9 +282,17 @@ function installJumps() {
 }
 
 // jumpWithin moves the cursor to pos, remembered in vim's jump list so
-// ctrl+o comes back.
+// ctrl+o comes back. Without vim the editor's own jump list, where it has
+// one, remembers it (jumps.addAt, with the two offsets).
 export function jumpWithin(view, pos) {
   const adapter = cm.getCM(view);
+  if (!adapter) {
+    const from = view.state.selection.main.head;
+    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+    const o = owners.get(view);
+    if (o && o.jumps && o.jumps.addAt) o.jumps.addAt(from, pos);
+    return;
+  }
   const from = adapter.getCursor();
   view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
   cm.Vim.getVimGlobalState_().jumpList.add(adapter, from, adapter.getCursor());
@@ -272,7 +343,7 @@ export function cardOf(lines, meta) {
 
 // The next and previous error (]e and [e) wrap at the ends, as
 // vim.diagnostic.goto_next does, and show its message in a card.
-function jumpToError(view, dir, say) {
+export function jumpToError(view, dir, say) {
   const list = [];
   cm.forEachDiagnostic(view.state, (d, from) => list.push({ from, message: d.full || d.message, source: d.source || '' }));
   if (!list.length) { if (say) say('no errors'); return; }
@@ -396,8 +467,9 @@ export function setVimKeys(keys) {
   takeLeader(usesLeader ? leader : null);
 }
 
-// vimKey is the keys of a command, for the help.
-export const vimKey = (name) => vimMapped[name] || vimCommands[name].keys;
+// vimKey is the keys of a command, for the help and the menus; without
+// vim, none.
+export const vimKey = (name) => (vimOn ? vimMapped[name] || vimCommands[name].keys : '');
 
 // ---- holding keys back for a mapping ----
 
@@ -565,7 +637,7 @@ function lensOf(doc, diags, warnings) {
 // difference, whose two sides line up a line at a time.
 let wrapOn = false;
 const wrapping = new cm.Compartment();
-const wrapViews = new Set(); // WeakRefs of the editors made
+const views = new Set(); // WeakRefs of the editors made
 const unwrapped = new WeakSet(); // the editors held unwrapped
 
 function applyWrap(view) {
@@ -578,9 +650,9 @@ function applyWrap(view) {
 // setWrap turns wrapping on or off in every editor.
 export function setWrap(on) {
   wrapOn = !!on;
-  for (const ref of wrapViews) {
+  for (const ref of views) {
     const view = ref.deref();
-    if (!view || view.destroyed) wrapViews.delete(ref);
+    if (!view || view.destroyed) views.delete(ref);
     else applyWrap(view);
   }
 }
@@ -612,7 +684,9 @@ export function holdUnwrapped(view, on) {
 //   menu         what gm does, given the view: opens a context menu
 //   goToFile     what gf (and gF, line true) does, given the view and line
 //   completeFile what ctrl+x ctrl+f does in insert mode, given the view
-//   jumps        its own jump list, for ctrl+o and ctrl+i (see installJumps)
+//   jumps        its own jump list, for ctrl+o and ctrl+i (see installJumps);
+//                without vim, its addAt(from, to) and step(n) do them
+//   vimChanged   called with whether vim is on when setVimMode switches it
 //   onFocus      called when the editor gets focus, onBlur when it loses it
 //   onUpdate     called with each update but those set() makes
 //   readOnly     whether the text can't be changed
@@ -625,6 +699,7 @@ export function holdUnwrapped(view, on) {
 // setMarks(diags), setReadOnly(on), focus(), blur() }.
 export function createEditor(parent, opts) {
   let quiet = false; // set while the page replaces the text
+  const madeWithVim = vimOn; // what extensions (and so restore) start with
   const language = new cm.Compartment();
   const editable = new cm.Compartment();
   const undo = new cm.Compartment(); // the undo history, which set() starts again
@@ -664,15 +739,26 @@ export function createEditor(parent, opts) {
       // open it indents, or moves to a snippet's next argument.
       { key: 'Tab', run: (v) => cm.completionStatus(v.state) === 'active' && cm.acceptCompletion(v) },
       // Escape closes the completions and goes on to vim, which leaves
-      // insert mode: one press, as in vim, not one for each.
-      { key: 'Escape', run: (v) => { if (cm.completionStatus(v.state)) cm.closeCompletion(v); return false; } },
+      // insert mode: one press, as in vim, not one for each. Without vim
+      // it closes one thing open, or leaves (escapeOff).
+      { key: 'Escape', run: (v) => {
+        if (!vimOn) return escapeOff(v, leave);
+        if (cm.completionStatus(v.state)) cm.closeCompletion(v);
+        return false;
+      } },
       { key: 'Ctrl-x', run: startCtrlX },
       { key: 'Ctrl-f', run: afterCtrlX },
     ])),
     // vim goes next, so its keys win over the default keymap's.
-    cm.vim(),
+    vimSlot.of(vimExt(vimOn)),
     Prec.highest(keymap.of([
       ...(opts.keys || []),
+      // Without vim, ctrl+o and ctrl+i walk the editor's own jump list, as
+      // vim's do; with vim they are vim's.
+      ...(opts.jumps && opts.jumps.step ? [
+        { key: 'Ctrl-o', run: () => !vimOn && (opts.jumps.step(-1), true) },
+        { key: 'Ctrl-i', run: () => !vimOn && (opts.jumps.step(1), true) },
+      ] : []),
       { key: 'Mod-s', run: save, preventDefault: true },
       // cmd+/ (ctrl+/ off a Mac) comments out the selection's lines, or
       // brings them back in, as VS Code's.
@@ -682,7 +768,7 @@ export function createEditor(parent, opts) {
     // ctrl+v's block is a range per line.
     EditorState.allowMultipleSelections.of(true),
     undo.of(cm.history()),
-    cm.keymap.of([...cm.defaultKeymap, ...cm.historyKeymap, ...cm.searchKeymap, cm.indentWithTab].filter((b) => !vimOwns(b)).map(insertOnly)),
+    keysSlot.of(keysExt(vimOn)),
     cm.lineNumbers(),
     cm.highlightActiveLine(),
     cm.highlightActiveLineGutter(),
@@ -704,9 +790,10 @@ export function createEditor(parent, opts) {
           ctrlX = false;
           if (opts.say) opts.say('');
         }
-        if (e.key === 'Escape' && v.state.field(cardField, false)) v.dispatch({ effects: setCard.of(null) });
+        // Without vim, escapeOff closes these, one a press.
+        if (e.key === 'Escape' && vimOn && v.state.field(cardField, false)) v.dispatch({ effects: setCard.of(null) });
         // The mouse's hover card stays until the pointer leaves it, so esc closes it too.
-        if (e.key === 'Escape' && v.dom.querySelector('.cm-tooltip-hover')) v.dispatch({ effects: cm.closeHoverTooltips });
+        if (e.key === 'Escape' && vimOn && v.dom.querySelector('.cm-tooltip-hover')) v.dispatch({ effects: cm.closeHoverTooltips });
         return false;
       },
       focus: () => { if (opts.onFocus) opts.onFocus(); },
@@ -720,7 +807,7 @@ export function createEditor(parent, opts) {
 
   owners.set(view, { ...opts, ex: { write: save, quit: () => leave(view), ...(opts.ex || {}) } });
   if (opts.wrap === false) unwrapped.add(view);
-  wrapViews.add(new WeakRef(view));
+  views.add(new WeakRef(view));
   applyWrap(view);
   shareClipboard();
   defineEx('write', 'w');
@@ -763,6 +850,7 @@ export function createEditor(parent, opts) {
         view.setState(EditorState.fromJSON(json, { extensions }));
         view.dispatch({ effects: [language.reconfigure(lang || []), editable.reconfigure(ro || [])] });
         applyWrap(view);
+        if (madeWithVim !== vimOn) applyVim(view);
         // The history goes back in its compartment, where set() can start
         // it again: fromJSON would add it outside. It is taken out first,
         // or the empty one would be kept over the saved one.

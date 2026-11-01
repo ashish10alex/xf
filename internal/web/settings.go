@@ -106,6 +106,7 @@ type settingsEvent struct {
 	AutoHidePane2    bool              `json:"autoHidePane2"`
 	Pane2Tab         string            `json:"pane2Tab"`
 	WrapLines        bool              `json:"wrapLines"`
+	VimMode          bool              `json:"vimMode"`
 	// OpenIn is webOpenProjectIn: same-tab or new-tab.
 	OpenIn string `json:"openIn"`
 }
@@ -451,7 +452,7 @@ func changedKeys(was, now []byte) []string {
 
 func (s *Server) settingsEventOf(v SettingsView) settingsEvent {
 	ms, _ := strconv.Atoi(valueOf(v, config.KeySourceAutosaveMs))
-	return settingsEvent{SourceAutosaveMs: autosaveMs(ms), VimKeys: vimKeysOf(v), DiffStyle: diffStyleOf(valueOf(v, config.KeyDiffStyle)), AutoHidePane2: valueOf(v, config.KeyAutoHidePane2) != "false", Pane2Tab: pane2TabOf(valueOf(v, config.KeyPane2Tab)), WrapLines: valueOf(v, config.KeyWrapLines) == "true", OpenIn: s.openIn()}
+	return settingsEvent{SourceAutosaveMs: autosaveMs(ms), VimKeys: vimKeysOf(v), DiffStyle: diffStyleOf(valueOf(v, config.KeyDiffStyle)), AutoHidePane2: valueOf(v, config.KeyAutoHidePane2) != "false", Pane2Tab: pane2TabOf(valueOf(v, config.KeyPane2Tab)), WrapLines: valueOf(v, config.KeyWrapLines) == "true", VimMode: valueOf(v, config.KeyVimMode) == "true", OpenIn: s.openIn()}
 }
 
 // vimKeysOf are the vim keys in use in v, by key.
@@ -508,6 +509,7 @@ func (p *projectState) applySettings(v SettingsView, changed ...string) {
 	p.autoHidePane2 = valueOf(v, config.KeyAutoHidePane2) != "false"
 	p.pane2Tab = valueOf(v, config.KeyPane2Tab)
 	p.wrapLines = valueOf(v, config.KeyWrapLines) == "true"
+	p.vimMode = valueOf(v, config.KeyVimMode) == "true"
 	p.mu.Unlock()
 	if off {
 		p.py.stop()

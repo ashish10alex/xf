@@ -3,6 +3,7 @@
 
 import { openCheck, requestChanged } from './checks.js';
 import { S, get, getAs, goToProject, hooks, post, postAs, projectURL, redraw, say } from './state.js';
+import { savesWith, discardsWith } from './vim-mode.js';
 
 // The status line's branch is read at start, when a compile starts, when
 // the page gets focus back, and is sent by the server when HEAD changes
@@ -122,7 +123,7 @@ export async function switchBranch(i) {
   if (row.current) { S.overlay = null; S.branches = null; say('already on ' + row.name); return; }
   if (localRun()) { b.err = branchRunBlocker; redraw(); return; }
   if (hooks.sourceHolds && hooks.sourceHolds()) {
-    b.err = 'the source pane has unsaved changes: save them (:w) or discard them (:e!) before you switch';
+    b.err = 'the source pane has unsaved changes: save them (' + savesWith() + ') or discard them (' + discardsWith() + ') before you switch';
     redraw();
     return;
   }

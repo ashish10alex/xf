@@ -13,6 +13,7 @@ import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showE
 import { clearHistory, closeWatch, hasTabs, jobsTableKey, logKey, nextTab, openKept, openURL, openWatch } from './log-tabs.js';
 import { askRemoveWorktreeHere, cycleProject, nextOpenProject, openByName, pickerKey, readOpenWorktrees, setPickerQuery, switchProject } from './picker.js';
 import { columnsKey, searchSQLFromPalette, sqlKey } from './sql-pane.js';
+import { unsavedIn, noteVimMode } from './vim-mode.js';
 
 // hooks are what modules that import this one (scratch.js) fill in, for the
 // keys and commands here to call.
@@ -532,6 +533,8 @@ function startProject(p, ws) {
   S.mode = 'project';
   S.boot = p;
   if (hooks.vimKeys) hooks.vimKeys(p.vimKeys);
+  noteVimMode(p.vimMode);
+  if (hooks.vimMode) hooks.vimMode(p.vimMode);
   if (hooks.wrapLines) hooks.wrapLines(p.wrapLines);
   S.caps = p.caps;
   S.flags.api = p.caps.apiDefault;
@@ -1988,6 +1991,7 @@ function commands() {
   if (hooks.forgeCommands) for (const [label, key, f] of hooks.forgeCommands()) add(label, key, f);
   if (hooks.pythonCommands) for (const [label, key, f, state] of hooks.pythonCommands()) add(label, key, f, state);
   if (hooks.formatCommands) for (const [label, key, f] of hooks.formatCommands()) add(label, key, f);
+  if (hooks.sourceCommands) for (const [label, key, f, state] of hooks.sourceCommands()) add(label, key, f, state);
   if (hooks.bufferCommands) for (const [label, key, f, state] of hooks.bufferCommands()) add(label, key, f, state);
   if (v) add('SQL: search', '/', searchSQLFromPalette);
   if (shownFile()) add('Go to: symbol in model', 'ctrl+shift+o', openSymbols);
@@ -2059,7 +2063,7 @@ export function openHelp() { S.overlay = 'help'; S.help = { query: '', typing: f
 export async function askQuit() {
   if (followHeld()) {
     // With autosave on, the source pane saves first.
-    hooks.sourceFlush().then((ok) => { if (ok) { askQuit(); redraw(); } else say('unsaved changes in the source pane: :w saves, :e! discards'); });
+    hooks.sourceFlush().then((ok) => { if (ok) { askQuit(); redraw(); } else say(unsavedIn('the source pane')); });
     return;
   }
   S.quitUnsaved = [];

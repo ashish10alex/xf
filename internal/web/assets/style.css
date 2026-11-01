@@ -1263,7 +1263,7 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .set-row.sel { background: var(--bg-2); }
 .set-row.chg::before, .set-row.warn-row::before { content: ""; position: absolute; left: 3px; top: 12px; bottom: 12px; width: 2px; border-radius: 2px; background: var(--green); }
 .set-row.warn-row::before { background: var(--amber); }
-.set-row.locked .set-row-text, .set-row.locked .set-field { opacity: 0.55; }
+.set-row.locked .set-row-text, .set-row.locked .set-field, .set-row.idle .set-row-text, .set-row.idle .set-field { opacity: 0.55; }
 .set-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .set-name { font: 600 13.5px/1.4 var(--sans); color: var(--fg); }
 .set-key { font: 11.5px/1.4 var(--mono); color: var(--dim); opacity: 0; transition: opacity 0.12s; }

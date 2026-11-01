@@ -9,6 +9,7 @@ import { ThemeButton } from './theme-view.js';
 import { WindowsPill } from './windows-view.js';
 import * as sc from './scratch.js';
 import { mountEditor, mountRunSQL } from './scratch-editor.js';
+import { savesWith } from './vim-mode.js';
 
 const html = htm.bind(h);
 const { SC, ROW_H } = sc;
@@ -500,7 +501,7 @@ export function ScratchPage() {
     </div>
     ${SC.flash ? html`<div class="footer warn">${SC.flash}</div>`
       : html`<div class="footer">${focus === 'editor'
-        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [':w', 'save'], ['⌘J', 'results'], ['⌘B', 'scratches'], ...(SC.standalone ? [] : [['ctrl+q', 'back']])])
+        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [savesWith(), 'save'], ['⌘J', 'results'], ['⌘B', 'scratches'], ...(SC.standalone ? [] : [['ctrl+q', 'back']])])
         : k([[commandsKey, 'commands'], ['i', 'edit'], ['⌘↵/r', 'run'], ['ctrl+c', 'cancel run'], ['j/k', 'switch scratch'], ['h', 'recent results'], ['⌘J', 'results'], ['⌘B/b', 'scratches'], ['n', 'new'], ['d', 'delete'], ['y/Y', 'copy cell/row'], ...(SC.standalone ? [] : [['ctrl+q', 'back']])])}</div>`}
     <${NewBox} />
     <${ConfirmBox} />

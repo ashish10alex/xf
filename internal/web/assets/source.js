@@ -9,11 +9,12 @@
 // selected, so nothing switches the file away from under them. A pane
 // without changes reloads when the file changes on disk.
 
-import { EditorView, Vim, getCM } from './vendor/codemirror.mjs';
+import { EditorView, Vim, getCM, searchKeymap } from './vendor/codemirror.mjs';
 import { S, get, post, redraw, hooks, setFocus, followPending, selectAction, goBack, showPlainFile, rightKey, say } from './state.js';
 import { setBase, baseOf } from './git-hunks.js';
 import { part } from './workspace.js';
 import { noteBuffer, noteAction } from './buffers.js';
+import { unsavedIn, staleIn, savesWith, discardsWith } from './vim-mode.js';
 
 export const SRC = {
   shown: true,
@@ -185,7 +186,7 @@ function addJump(from, to) {
 // whether it is on its way.
 function openPlace(e) {
   if (SRC.dirty && !canAutosave()) {
-    say(SRC.stale ? SRC.file + ' changed on disk: :w to choose what to keep, :e! discards' : 'unsaved changes in ' + SRC.file + ': :w saves, :e! discards');
+    say(SRC.stale ? staleIn(SRC.file) : unsavedIn(SRC.file));
     return false;
   }
   cursorAfterLoad = e;
@@ -279,6 +280,13 @@ export function goToLine(file, action, line, col = 0, opts = {}) {
 // answers the entry for vim to put the cursor at; in another, it opens
 // that file and answers nothing.
 function stepJump(adapter, n) {
+  const e = stepEntry(n);
+  return e && { find: () => adapter.posFromIndex(posIn(ed.view.state.doc, e)) };
+}
+
+// stepEntry steps the jump list n entries: in the file shown it answers
+// the entry there; in another, it opens that file and answers nothing.
+function stepEntry(n) {
   if (!J.list.length || !ed) return undefined;
   const t = Math.max(0, Math.min(J.list.length - 1, J.at + n));
   const e = J.list[t];
@@ -287,7 +295,27 @@ function stepJump(adapter, n) {
     return undefined;
   }
   J.at = t;
-  return { find: () => adapter.posFromIndex(posIn(ed.view.state.doc, e)) };
+  return e;
+}
+
+// stepPlain is ctrl+o and ctrl+i without vim. As vim's do, a step back
+// from the newest entry first records where the cursor is, so ctrl+i
+// comes back to it.
+function stepPlain(n) {
+  if (!ed) return;
+  if (n < 0 && J.at === J.list.length - 1) {
+    const here = placeAt(ed.view.state.selection.main.head);
+    const last = J.list[J.at];
+    if (!last || last.file !== here.file || last.line !== here.line) {
+      J.list = J.list.filter((o) => o.file !== here.file || o.line !== here.line);
+      J.list.push(here);
+      J.at = J.list.length - 1;
+    }
+  }
+  const e = stepEntry(n);
+  if (!e) return;
+  const pos = posIn(ed.view.state.doc, e);
+  ed.view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
 }
 
 // sourceJumps is the editor's jump list, as editor.js's installJumps
@@ -299,6 +327,10 @@ export const sourceJumps = {
     const e = J.list[Math.max(0, Math.min(J.list.length - 1, J.at + n))];
     return e && ed && e.file === SRC.file ? adapter.posFromIndex(posIn(ed.view.state.doc, e)) : undefined;
   },
+  // Without vim: a jump between two offsets in the file shown, and
+  // ctrl+o (n < 0) and ctrl+i (n > 0).
+  addAt: (from, to) => { if (ed) addJump(placeAt(from), placeAt(to)); },
+  step: stepPlain,
 };
 
 // syncFile shows the selected action's file, unless that's the one shown.
@@ -552,7 +584,7 @@ export function conflictCancel() {
   S.overlay = null;
   SRC.conflict = null;
   SRC.stale = true;
-  say('kept your changes: :w asks again, :e! discards them');
+  say('kept your changes: ' + savesWith() + ' asks again, ' + discardsWith() + ' discards them');
 }
 
 export function toggleDiff() { SRC.diffing = !SRC.diffing; }
@@ -571,7 +603,7 @@ export function conflictKey(k) {
 // ---- showing and focusing the pane ----
 
 export function toggleSource() {
-  if (SRC.shown && SRC.dirty) { say('unsaved changes in ' + SRC.file + ': :w saves, :e! discards'); return; }
+  if (SRC.shown && SRC.dirty) { say(unsavedIn(SRC.file)); return; }
   // Pane 1 and pane 2 are never both hidden.
   if (SRC.shown && S.rightHidden) { say('pane 2 hidden: ' + rightKey() + ' shows it'); return; }
   SRC.shown = !SRC.shown;
@@ -595,7 +627,7 @@ export function editSource() {
 }
 
 // returnToSource gives the keys back to the editor in vim's normal mode,
-// as a palette closed with nothing picked does.
+// as a palette closed with nothing picked does; without vim, to type.
 export function returnToSource() {
   editSource();
   const adapter = ed && getCM(ed.view);
@@ -603,10 +635,17 @@ export function returnToSource() {
   if (vim && (vim.insertMode || vim.visualMode)) Vim.handleKey(adapter, '<Esc>', 'user');
 }
 
-// searchSource gives the keys to the editor and starts vim's / there.
+// searchSource gives the keys to the editor and starts vim's / there, or
+// without vim opens the find panel, as cmd+f does.
+const findKey = searchKeymap.find((b) => b.key === 'Mod-f');
 export function searchSource() {
   editSource();
-  queueMicrotask(() => { if (ed) Vim.handleKey(getCM(ed.view), '/', 'user'); });
+  queueMicrotask(() => {
+    if (!ed) return;
+    const adapter = getCM(ed.view);
+    if (adapter) Vim.handleKey(adapter, '/', 'user');
+    else if (findKey) findKey.run(ed.view);
+  });
 }
 
 export function blurSource() {
@@ -635,11 +674,11 @@ export function blocks(id, opts) {
   if (canAutosave()) {
     flush().then((ok) => {
       if (ok) selectAction(id, opts);
-      else say(SRC.file + ' changed on disk: :w to choose what to keep');
+      else say(SRC.file + ' changed on disk: ' + savesWith() + ' to choose what to keep');
     });
     return true;
   }
-  say(SRC.stale ? SRC.file + ' changed on disk: :w to choose what to keep, :e! discards' : 'unsaved changes in ' + SRC.file + ': :w saves, :e! discards');
+  say(SRC.stale ? staleIn(SRC.file) : unsavedIn(SRC.file));
   return true;
 }
 

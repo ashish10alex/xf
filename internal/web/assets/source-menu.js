@@ -17,10 +17,11 @@
 import * as cm from './vendor/codemirror.mjs';
 import { S, redraw, hooks, copy, onMac, absPath, openLink, say } from './state.js';
 import { SRC, isLibraryFile } from './source.js';
-import { vimKey, clipCopy, clipText } from './editor.js';
-import { hunkUnder, undoHunk, stageHunk } from './git-hunks.js';
+import { vimKey, clipCopy, clipText, jumpToError } from './editor.js';
+import { hunkUnder, undoHunk, stageHunk, jumpToHunk } from './git-hunks.js';
 import { refUnder } from './source-smart.js';
 import { showMenu, menuOpen, closeMenu } from './ctx-menu.js';
+import { vimOn } from './vim-mode.js';
 
 const { Vim, getCM } = cm;
 
@@ -104,6 +105,14 @@ async function itemsFor(view, range, wasInsert) {
     { label: 'Show Card', key: vimKey('vimHover'), run: () => hooks.sourceHover && hooks.sourceHover(view), stay: true },
   ];
 
+  // ]g [g ]e [e, for those without vim's keys too.
+  const move = [
+    { label: 'Next Change', key: vimKey('vimNextHunk'), run: () => jumpToHunk(view, 1, say), stay: true },
+    { label: 'Previous Change', key: vimKey('vimPrevHunk'), run: () => jumpToHunk(view, -1, say), stay: true },
+    { label: 'Next Error', key: vimKey('vimNextError'), run: () => jumpToError(view, 1, say), stay: true },
+    { label: 'Previous Error', key: vimKey('vimPrevError'), run: () => jumpToError(view, -1, say), stay: true },
+  ];
+
   const git = [];
   if (hunkUnder(view)) {
     git.push({ label: 'Stage Change', key: vimKey('vimStageHunk'), run: () => stageHunk(view, say), stay: true });
@@ -135,9 +144,9 @@ async function itemsFor(view, range, wasInsert) {
   ];
 
   // The whole file's SQL and config block, whatever the click was on (ADR 0024).
-  const fmt = [{ label: 'Format File', key: ':format', off: hooks.unformatable ? hooks.unformatable() : '', run: () => hooks.formatSource && hooks.formatSource(), stay: true }];
+  const fmt = [{ label: 'Format File', key: vimOn() ? ':format' : '', off: hooks.unformatable ? hooks.unformatable() : '', run: () => hooks.formatSource && hooks.formatSource(), stay: true }];
 
-  return [...nav, '-', ...(git.length ? [...git, '-'] : []), ...table, '-', ...paths, '-', ...fmt, '-', ...clip];
+  return [...nav, '-', ...move, '-', ...(git.length ? [...git, '-'] : []), ...table, '-', ...paths, '-', ...fmt, '-', ...clip];
 }
 
 // noTable is why there is no table to open: an operation without

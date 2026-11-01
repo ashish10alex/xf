@@ -173,6 +173,8 @@ type Project struct {
 	Pane2Tab string
 	// WrapLines wraps long lines in the page's editors.
 	WrapLines bool
+	// VimMode gives the page's editors vim's keys.
+	VimMode bool
 	// VimKeys are the keys of the editor's own vim commands, by config
 	// key (config.VimKeys); a key left out keeps its default.
 	VimKeys map[string]string

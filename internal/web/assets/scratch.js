@@ -5,6 +5,7 @@
 import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects } from './state.js';
 import { openThemePicker, themeLabel } from './theme.js';
 import { part } from './workspace.js';
+import { vimOn } from './vim-mode.js';
 
 export const GiB = 1024 ** 3;
 const ROW_H = 22;
@@ -840,7 +841,7 @@ export function scratchCommands() {
     toResults();
     setTimeout(() => { const el = document.querySelector('.sc-target-in'); if (el) { el.focus(); el.select(); } }, 0);
   }, [cur.project, cur.location].filter(Boolean).join(' · '));
-  if (cur && ed && ed.format) add('Format: query with sqlfluff', ':format', () => ed.format());
+  if (cur && ed && ed.format) add('Format: query with sqlfluff', vimOn() ? ':format' : '', () => ed.format());
   add('Tables: refresh what is known of tables and columns', ':refresh', refreshMeta);
   if (SC.recent.length) add('Results: recent results', 'h', toggleRecent, SC.recent.length + ' kept');
   if (shown && shown.phase === 'done' && csvURL()) add('Results: export CSV', '', downloadCSV);

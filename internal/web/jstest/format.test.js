@@ -1,7 +1,12 @@
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EditorState } from '../assets/vendor/codemirror.mjs';
-import { replaceWith, formatText } from '../assets/editor.js';
+import { replaceWith, formatText, setVimMode } from '../assets/editor.js';
+
+// The messages name vim's undo (u), as with vimMode on; the last test has
+// it off.
+before(() => setVimMode(true));
+after(() => setVimMode(false));
 
 // view stands in for an EditorView: the state and dispatch of one.
 function fakeView(doc, anchor) {
@@ -82,4 +87,16 @@ test('empty text is not sent', async () => {
   let called = false;
   await formatText(editorOf(v), async () => { called = true; return {}; }, () => {});
   assert.equal(called, false);
+});
+
+test('without vim, the messages name the usual undo', async () => {
+  setVimMode(false);
+  try {
+    const v = fakeView('select 1', 0);
+    const said = [];
+    await formatText(editorOf(v), async (text) => ({ text: text.toUpperCase(), changed: true }), (m) => said.push(m));
+    assert.deepEqual(said, ['formatting…', 'formatted: ctrl+z undoes it']); // setup.js: not a Mac
+  } finally {
+    setVimMode(true);
+  }
 });

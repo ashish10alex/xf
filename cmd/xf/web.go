@@ -302,6 +302,7 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 	p.AutoHidePane2 = settings.AutoHidePane2 != "false"
 	p.Pane2Tab = settings.Pane2Tab
 	p.WrapLines = settings.WrapLines == "true"
+	p.VimMode = settings.VimMode == "true"
 	p.VimKeys = vimKeys(settings.Settings)
 	if dir := sessionDir(); dir != "" {
 		file := session.Path(dir, root)

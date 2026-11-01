@@ -133,6 +133,8 @@ type projectState struct {
 	pane2Tab string
 	// wrapLines wraps long lines in the editors (see Project.WrapLines).
 	wrapLines bool
+	// vimMode gives the editors vim's keys (see Project.VimMode).
+	vimMode bool
 	// openedWith are the values in use, when the project opened, of the
 	// settings that apply on reopen: the page says which have changed.
 	openedWith map[string]string
@@ -469,6 +471,8 @@ type projectBoot struct {
 	Pane2Tab string `json:"pane2Tab"`
 	// WrapLines wraps long lines in the page's editors.
 	WrapLines bool `json:"wrapLines"`
+	// VimMode gives the page's editors vim's keys.
+	VimMode bool `json:"vimMode"`
 	// CommandUses are how often the palette's commands were done, which
 	// it lists most used first.
 	CommandUses map[string]commanduse.Use `json:"commandUses"`
@@ -546,6 +550,7 @@ func (p *projectState) boot() *projectBoot {
 		AutoHidePane2:    p.autoHidePane2,
 		Pane2Tab:         pane2TabOf(p.pane2Tab),
 		WrapLines:        p.wrapLines,
+		VimMode:          p.vimMode,
 	}
 }
 

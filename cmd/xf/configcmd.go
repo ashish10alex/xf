@@ -363,6 +363,8 @@ func defaultSetting(key string, l config.Loaded, root string) (value, from strin
 		return config.Pane2SQL, "default"
 	case config.KeyWrapLines:
 		return "false", "default: long lines scroll sideways"
+	case config.KeyVimMode:
+		return "false", "default: the usual editor keys"
 	case config.KeyWebOpenProjectIn:
 		return config.OpenSameTab, "default"
 	case config.KeyWebBrowser:
