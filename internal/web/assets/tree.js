@@ -286,7 +286,9 @@ export function toggleSCM() { toggleView('scm'); }
 // shows, Source Control too, and shows it on the tree when hidden.
 export function toggleColumn() { toggleView(T.shown ? T.view : 'files'); }
 
-function toggleView(view) {
+// toggleView shows the column on view, or hides it when view shows: the
+// keys above, and the rail's icons (ADR 0035).
+export function toggleView(view) {
   restore();
   if (T.shown && T.view === view) {
     T.shown = false;

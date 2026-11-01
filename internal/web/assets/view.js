@@ -10,7 +10,7 @@ import './scratch.js';
 import * as src from './source.js';
 import './source-smart.js';
 import { sourceEditorDOM } from './source-editor.js';
-import { TreePane, TreeSplitter, PlainNote } from './tree-view.js';
+import { TreePane, TreeSplitter, PlainNote, Rail } from './tree-view.js';
 import './tree.js';
 import * as scm from './scm.js';
 import { GitOutput } from './scm-view.js';
@@ -2057,11 +2057,11 @@ function Project() {
   // (ADR 0006); zoomed, the pane zoomed is all there is. The row is there
   // with the tree hidden too, so cmd+b doesn't remount the panes: the
   // source pane's editor would lose the keys.
+  // The rail of icons is left of it (ADR 0035), and goes with a zoom too.
   const tree = st.hooks.treeShown && st.hooks.treeShown() && !S.zoomed;
-  body = html`<div class="main-row">${tree && html`<${TreePane} />`}${tree && html`<${TreeSplitter} />`}${body}</div>`;
+  body = html`<div class="main-row">${!S.zoomed && html`<${Rail} />`}${tree && html`<${TreePane} />`}${tree && html`<${TreeSplitter} />`}${body}</div>`;
   const compiling = S.state && S.state.compiling;
   return html`<div class="app">
-    <${GearButton} cls="gear-top" />
     <div class=${'compile-bar' + (compiling ? ' on' : '')}></div>
     ${body}
     <${StatusLine} />

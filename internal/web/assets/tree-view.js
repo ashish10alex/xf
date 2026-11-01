@@ -6,7 +6,7 @@
 import { h } from './vendor/preact.mjs';
 import { useLayoutEffect, useRef } from './vendor/hooks.mjs';
 import htm from './vendor/htm.mjs';
-import { S, redraw, setFocus, openProjects, commandsKey, projectsKey } from './state.js';
+import { S, redraw, setFocus, openProjects, commandsKey, projectsKey, hooks, onMac, toggleTerm, toggleLog } from './state.js';
 import * as tr from './tree.js';
 import { SRC } from './source.js';
 import { readOpenWorktrees } from './picker.js';
@@ -140,6 +140,42 @@ function Filter() {
       }}
       onBlur=${() => { if (T.filtering) tr.endFilter(true); }} />
   </div>`;
+}
+
+// ---- the rail ----
+
+// The rail's icons: line drawings on a 24px grid, in the text's colour.
+const icon = (body) => html`<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const icons = {
+  files: icon(html`<path d="M14 3H9a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M4 8v11a2 2 0 0 0 2 2h8" />`),
+  search: icon(html`<circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.3-4.3" />`),
+  scm: icon(html`<circle cx="6" cy="18" r="2.5" /><circle cx="6" cy="6" r="2.5" /><circle cx="18" cy="8" r="2.5" /><path d="M6 8.5v7" /><path d="M18 10.5c0 4-4 5-10 6" />`),
+  projects: icon(html`<rect x="3" y="8" width="13" height="13" rx="2" /><path d="M8 8V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-3" />`),
+  term: icon(html`<rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 10 3 2.5L7 15" /><path d="M12.5 15H17" />`),
+  settings: icon(html`<path d="M20 7h-9" /><path d="M14 17H4" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" />`),
+};
+
+// Rail is the thin column of icons on the far left (ADR 0035): the
+// column's four views, the log pane's terminal and the settings, each
+// doing what its key does, so a mouse finds them and the title teaches
+// the key. The one showing is lit.
+export function Rail() {
+  if (!sc.G.loaded && !sc.G.error) sc.refresh();
+  const n = sc.count();
+  const shows = (view) => T.shown && T.view === view;
+  const btn = (name, title, on, count, act, cls) => html`<button class=${'rail-btn' + (on ? ' on' : '') + (cls ? ' ' + cls : '')} title=${title} aria-label=${title}
+      onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); if (e.button === 0) { act(); redraw(); } }}>${icons[name]}${count}</button>`;
+  const badge = (k, cls) => (k ? html`<span class=${'rail-count' + (cls ? ' ' + cls : '')}>${k}</span>` : '');
+  const term = S.caps.terminal;
+  const jKey = onMac ? '⌘j' : 'ctrl+j';
+  return html`<nav class="rail">
+    ${btn('files', 'Files (' + tr.treeKey + ')', shows('files'), '', () => tr.toggleView('files'))}
+    ${btn('search', 'Search (' + sr.searchKey + ')', shows('search'), '', () => (shows('search') ? tr.toggleView('search') : sr.openSearch()))}
+    ${btn('scm', 'Source Control (' + sc.scmKey + ')', shows('scm'), badge(n, 'changes'), () => tr.toggleView('scm'))}
+    ${btn('projects', 'Projects (' + projectsKey + ' lists them in the palette)', shows('projects'), badge(S.open.length > 1 ? S.open.length : 0), () => tr.toggleView('projects'))}
+    ${btn('term', (term ? 'Terminal (' : 'Log (') + jKey + ')', S.showLog && (!term || S.logTab === 'term'), '', () => (term ? toggleTerm() : toggleLog()))}
+    ${btn('settings', 'Settings (ctrl+,)', false, '', () => hooks.openSettings(), 'rail-end')}
+  </nav>`;
 }
 
 // ColumnTabs is the column's header: a tab for each view, Source

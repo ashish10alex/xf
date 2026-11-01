@@ -1196,9 +1196,7 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .gear { border: 0; background: none; color: var(--dim); cursor: pointer; padding: 2px 4px; display: inline-flex; align-items: center; border-radius: 4px; }
 .gear:hover { color: var(--fg); background: var(--bg-2); }
 .picker h1 .gear { margin-left: 8px; }
-/* In a project it sits at the top right, on the first pane's border. */
 .app { position: relative; }
-.gear-top { position: absolute; top: 6px; right: 14px; z-index: 5; background: var(--bg); }
 
 /* A sidebar of sections that follows the scroll, a card per setting with
    its control on the right, or the scope's file in the editor.
@@ -1374,6 +1372,27 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
    whole row up by those 9px, cutting off the pane titles. */
 .main-row { flex: 1; min-height: 0; display: flex; flex-direction: row; overflow: clip; overflow-clip-margin: 9px; }
 .main-row > .body { flex: 1 1 0; min-width: 0; }
+/* The rail (ADR 0035): the column's views, the terminal and the
+   settings as icons, muted until the mouse comes near, the one showing
+   lit with a bar on its left. */
+.rail { flex: none; width: 28px; margin: 9px 6px 0 -4px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.rail-btn {
+  position: relative; width: 28px; height: 28px; display: grid; place-items: center;
+  border: 0; border-radius: 5px; background: none; color: var(--dim); opacity: 0.6; cursor: pointer;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.rail:hover .rail-btn { opacity: 0.85; }
+.rail .rail-btn:hover, .rail .rail-btn.on { opacity: 1; }
+.rail-btn:hover { color: var(--fg); background: var(--bg-2); }
+.rail-btn.on { color: var(--focus); }
+.rail-btn.on::before { content: ""; position: absolute; left: -3px; top: 6px; bottom: 6px; width: 2px; border-radius: 1px; background: var(--focus); }
+.rail-btn svg { width: 16px; height: 16px; }
+.rail-count {
+  position: absolute; right: 0; top: 2px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px;
+  font: 700 8px/13px var(--chrome); text-align: center; color: var(--bg); background: var(--dim);
+}
+.rail-count.changes { background: var(--amber); }
+.rail-end { margin-top: auto; margin-bottom: 2px; }
 .tree-pane { flex: 0 0 260px; width: 260px; min-width: 140px; min-height: 0; margin: 9px 0 0; }
 /* The projects tab's rows: tree rows with a project's marks. */
 .proj-row { gap: 0.6ch; padding-right: 8px; white-space: nowrap; }
