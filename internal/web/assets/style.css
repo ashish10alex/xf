@@ -1627,6 +1627,9 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .scm-count { flex: none; font-size: 10px; padding: 0 5px; border-radius: 8px; background: color-mix(in srgb, var(--sel) 80%, transparent); color: var(--fg); letter-spacing: 0; }
 .scm-sha { flex: none; color: var(--blue); font-size: 11px; }
 .scm-author { overflow: hidden; text-overflow: ellipsis; max-width: 12ch; font-size: 11px; }
+/* A commit's subject keeps the room; its author's badge gives it up first. */
+.scm-row.commit .scm-name { flex: 1 1 auto; }
+.scm-row.commit .scm-author { flex: 0 1000 auto; min-width: 0; width: 3ch; text-align: center; }
 .scm-buttons { display: none; gap: 2px; flex: none; }
 .scm-row:hover .scm-buttons, .scm-row.cur.focused .scm-buttons { display: inline-flex; }
 .scm-buttons button { border: 0; background: transparent; color: var(--dim); font: 12px/1 var(--mono); cursor: pointer; padding: 1px 4px; border-radius: 3px; text-transform: none; letter-spacing: 0; }

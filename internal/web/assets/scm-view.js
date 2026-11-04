@@ -96,15 +96,17 @@ function StashRow({ r, cur, focused }) {
 
 function CommitRow({ r, cur, focused }) {
   const cls = 'scm-row commit' + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '');
+  // A merge says the branch it brought in; the tooltip has the subject.
+  const subj = sc.commitSubject(r.subject);
   return html`<div class=${cls} title=${r.short + ' · ' + r.subject + ' · ' + r.author + (r.unpushed ? ' · not pushed' : '')} style="padding-left:2ch"
       onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.clickRow(r); }}
       ref=${(el) => { if (el && cur) nearest(el); }}>
     <span class="tree-caret">${r.open ? '▾' : '▸'}</span>
     ${r.unpushed ? html`<span class="scm-ahead" title="not pushed">↑</span>` : ''}
     <span class="scm-sha">${r.short}</span>
-    <span class="scm-name">${r.subject}</span>
+    <span class="scm-name">${subj.merge && html`<span class="dim scm-merge">⑂ </span>`}${subj.text}</span>
     <span class="spacer"></span>
-    <span class="dim scm-author">${r.author}</span>
+    <span class="dim scm-author" title=${r.author}>${sc.initials(r.author)}</span>
     <span class="dim">${r.age}</span>
   </div>`;
 }

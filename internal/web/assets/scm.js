@@ -169,6 +169,29 @@ export function count() {
   return seen.size;
 }
 
+// ---- a commit's row ----
+
+// initials is an author's badge: the first letters of their first and
+// last names ("Kanmi Oyebola" is KO), or a one-word name's first two
+// ("Sam" is SA).
+export function initials(name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  const s = words.length === 1 ? [...words[0]].slice(0, 2).join('') : [...words[0]][0] + [...words[words.length - 1]][0];
+  return s.toUpperCase();
+}
+
+// commitSubject is how a commit's row says its subject: a merge as the
+// branch it brought in, which is what tells merges apart.
+export function commitSubject(s) {
+  s = String(s || '');
+  let m = /^Merge pull request #\d+ from \S+?\/(\S+)/.exec(s);
+  if (m) return { merge: true, text: m[1] };
+  m = /^Merge (?:remote-tracking )?branch '([^']+)'/.exec(s);
+  if (m) return { merge: true, text: m[1] };
+  return { merge: false, text: s };
+}
+
 // ---- the rows ----
 
 // A row is {key, kind, ...}: a section's header ('section'), a changed
