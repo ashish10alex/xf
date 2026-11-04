@@ -98,3 +98,27 @@ test('the merge request rows come last; tab goes there and back, G stays in its 
   assert.equal(sc.G.cursor, 's:mr', 'j goes on into the region');
   F.v = null;
 });
+
+// text is what a vnode tree says, and kbds the keys it shows as <kbd>.
+const text = (n) => (n == null || typeof n === 'boolean' ? '' : typeof n !== 'object' ? String(n) : Array.isArray(n) ? n.map(text).join('') : text(n.props && n.props.children));
+const kbds = (n, out = []) => {
+  if (Array.isArray(n)) n.forEach((c) => kbds(c, out));
+  else if (n && typeof n === 'object' && n.props) { if (n.type === 'kbd') out.push(text(n)); kbds(n.props.children, out); }
+  return out;
+};
+
+// The pipeline's row says its number, as a stage's and a job's say their
+// names: its icon (and the tooltip) say how it stands.
+test('the pipeline row names the pipeline, not its status, and its key is a kbd', async () => {
+  const { ForgeRow } = await import('../assets/forge-view.js');
+  const p = { id: 7, status: 'failed', url: 'u', stages: [] };
+  const row = ForgeRow({ r: { key: 'f:pipe', kind: 'pipe', p }, cur: false, focused: false, onClick() {}, refEl() {} });
+  const name = [].concat(row.props.children).find((c) => c && c.props && c.props.class === 'scm-name');
+  assert.equal(text(name), 'pipeline #7');
+  assert.match(row.props.title, /^pipeline failed/);
+  assert.deepEqual(kbds(row), ['O']);
+  F.v = { ...view(null), mr: null };
+  const create = ForgeRow({ r: rows()[0], cur: false, focused: false, onClick() {}, refEl() {} });
+  assert.deepEqual(kbds(create), ['m']);
+  F.v = null;
+});

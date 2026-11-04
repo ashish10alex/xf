@@ -1646,7 +1646,11 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .forge-num { flex: none; color: var(--blue); }
 .forge-flow { flex: 0 10 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
 .forge-tag { flex: none; font-size: 10px; padding: 0 5px; border: 1px solid currentColor; border-radius: 8px; }
-.forge-key { flex: none; font-size: 11px; }
+/* A row's key shows as the hover buttons do: on hover, or on the row the
+   keys are on. */
+.forge-key { flex: none; font-size: 10px; display: none; }
+.scm-row:hover .forge-key, .scm-row.cur.focused .forge-key { display: inline-block; }
+@media (hover: none) { .scm-row.cur .forge-key { display: inline-block; } }
 .forge-ran { flex: none; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .forge-took { min-width: 6ch; text-align: right; }
 .forge-ran.shrink { flex: 0 10 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

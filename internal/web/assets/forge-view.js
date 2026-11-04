@@ -71,7 +71,7 @@ export function ForgeRow({ r, cur, focused, onClick, refEl }) {
       return html`<div class=${'scm-row note forge-note ' + r.tone} style="padding-left:3.5ch" title=${r.text}>${r.text}</div>`;
     case 'mrcreate':
       return html`<div class=${cls('forge-create' + (r.tone ? ' ' + r.tone : ''))} style="padding-left:3.5ch" onMouseDown=${down} ref=${refEl}>
-        <span class="scm-name">+ ${r.text}</span><span class="spacer"></span><span class="dim forge-key">m</span></div>`;
+        <span class="scm-name">+ ${r.text}</span><span class="spacer"></span><kbd class="forge-key">m</kbd></div>`;
     case 'mr': {
       const m = r.mr;
       const state = m.state !== 'open' ? m.state : m.draft ? 'draft' : '';
@@ -95,10 +95,10 @@ export function ForgeRow({ r, cur, focused, onClick, refEl }) {
       return html`<div class=${cls('forge-pipe')} style="padding-left:3.5ch" title=${'pipeline ' + p.status + (p.sha ? ' · ' + p.sha.slice(0, 8) : '') + when(p) + '\nO opens it'}
           onMouseDown=${down} ref=${refEl}>
         <${Status} s=${p.status} />
-        <span class="scm-name">pipeline ${p.id ? '#' + p.id + ' ' : ''}${p.status}</span>
+        <span class="scm-name">pipeline${p.id ? ' #' + p.id : ''}</span>
         <span class="spacer"></span>
         <span class="dim forge-ran shrink">${ran(p)}</span>
-        <span class="dim forge-key">O</span>
+        <kbd class="forge-key">O</kbd>
       </div>`;
     }
     case 'stage': {
