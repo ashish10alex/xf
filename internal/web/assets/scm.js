@@ -857,17 +857,17 @@ function commands() {
   if (!st || st.notGit) return [];
   const show = (f) => () => { if (!shown() && hooks.toggleSCM) hooks.toggleSCM(); f(); };
   const out = [
-    ['Git: commit', 'c', show(() => commit())],
+    ['Git: commit', '', show(() => commit())],
     ['Git: commit all (stage every change first)', '', show(() => commit({ all: true }))],
-    ['Git: amend the last commit', 'A', show(amend)],
-    ['Git: stage all', 'a', () => act('/api/scm/stage', { all: true })],
+    ['Git: amend the last commit', '', show(amend)],
+    ['Git: stage all', '', () => act('/api/scm/stage', { all: true })],
     ['Git: unstage all', '', () => act('/api/scm/unstage', { all: true })],
-    ['Git: push', 'P', push],
-    ['Git: pull (fast-forward only)', 'p', pull],
+    ['Git: push', '', push],
+    ['Git: pull (fast-forward only)', '', pull],
     ['Git: sync (pull, then push)', '', sync],
-    ['Git: fetch origin', 'f', fetch],
-    ['Git: stash every change', 's', show(askStash)],
-    ['Git: new branch', 'n', show(() => askBranch(null))],
+    ['Git: fetch origin', '', fetch],
+    ['Git: stash every change', '', show(askStash)],
+    ['Git: new branch', '', show(() => askBranch(null))],
     ['Git: show the git output', '', openOutput],
   ];
   if (st.op) out.unshift(['Git: ' + (st.op === 'merge' ? 'commit the merge' : 'continue the ' + st.op), '', show(continueOp)], ['Git: abort the ' + st.op, '', show(askAbort)]);

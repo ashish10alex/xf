@@ -14,8 +14,30 @@
 # @raycast.packageName xf
 # @raycast.description Bring the xf web window to the front, or start xf web --app
 
+# The xf binaries this command is for, separated by ":": it brings forward
+# only windows whose xf web runs one of them, and starts the first that
+# exists. Empty: any xf window, and the xf on your login shell's PATH. A
+# second command, for a nightly build say, can set it and run this script:
+#   XF_BINS=~/go/bin/xf exec "$(dirname "$0")/xf.sh"
+bins=${XF_BINS:-}
+
 log=~/Library/Logs/xf-raycast.log
-echo "--- $(date '+%F %T')" >> "$log"
+echo "--- $(date '+%F %T') bins=${bins:-any}" >> "$log"
+
+# ours: does the xf web listening on port run one of $bins?
+ours() {
+  [ -z "$bins" ] && return 0
+  local pid exe b
+  pid=$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1)
+  [ -n "$pid" ] || return 1
+  # A process's first txt file is its executable, with links resolved.
+  exe=$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+  IFS=: read -ra list <<< "$bins"
+  for b in "${list[@]}"; do
+    [ -e "$b" ] && [ "$(realpath "$b")" = "$exe" ] && return 0
+  done
+  return 1
+}
 
 # Chrome's windows, front to back, as "id<TAB>url<TAB>title" lines.
 windows=$(osascript 2>>"$log" <<'EOF'
@@ -49,6 +71,11 @@ while IFS=$'\t' read -r id url title; do
     echo "skip $url: xf web does not answer" >> "$log"
     continue
   fi
+  port=${url#http://127.0.0.1:}; port=${port%%/*}
+  if ! ours "$port"; then
+    echo "skip $url: not one of $bins" >> "$log"
+    continue
+  fi
   echo "focus $id $url" >> "$log"
   osascript -e "tell application \"Google Chrome\"" \
     -e "set index of window id $id to 1" \
@@ -62,9 +89,15 @@ done <<< "$windows"
 # xf, dataform and node (nvm, say), gcloud and dbt.
 shell_path=$(/bin/zsh -lic 'printf "\nXFPATH=%s\n" "$PATH"' 2>/dev/null | sed -n 's/^XFPATH=//p' | tail -1)
 [ -n "$shell_path" ] && export PATH="$shell_path"
-if ! command -v xf >/dev/null; then
-  echo "xf isn't on your shell's PATH"
-  exit 1
+xf=
+if [ -n "$bins" ]; then
+  IFS=: read -ra list <<< "$bins"
+  for b in "${list[@]}"; do
+    [ -x "$b" ] && { xf=$b; break; }
+  done
+  [ -n "$xf" ] || { echo "None of $bins exists"; exit 1; }
+else
+  xf=$(command -v xf) || { echo "xf isn't on your shell's PATH"; exit 1; }
 fi
-echo "start xf web" >> "$log"
-nohup xf web --app >> "$log" 2>&1 &
+echo "start $xf web" >> "$log"
+nohup "$xf" web --app >> "$log" 2>&1 &

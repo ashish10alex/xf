@@ -2013,12 +2013,12 @@ function commands() {
   if (S.caps.branches) {
     add('Git: switch branch', 'B', openBranches, 'or make one');
     add('Git: checkout branch', 'B', openBranches, 'or make one');
-    add('Git: open branch in a worktree', 'shift+enter in B', openBranches);
+    add('Git: open branch in a worktree', '', openBranches);
   }
   // A worktree can go from its own project (ADR 0032), once a dialog asks.
   const me = S.open.find((o) => o.key === S.key);
   if (me && me.worktree) add('Worktree: remove this worktree', '', () => askRemoveWorktreeHere({ ...me, path: me.root }), me.worktree);
-  if (S.caps.branches && S.caps.changed) add('Git: compare with branch (R, I and C)', 'b in R', openBase, 'now ' + S.boot.defaultBranch);
+  if (S.caps.branches && S.caps.changed) add('Git: compare with branch (R, I and C)', '', openBase, 'now ' + S.boot.defaultBranch);
   if (hooks.scmCommands) for (const [label, key, f] of hooks.scmCommands()) add(label, key, f);
   if (hooks.forgeCommands) for (const [label, key, f] of hooks.forgeCommands()) add(label, key, f);
   if (hooks.pythonCommands) for (const [label, key, f, state] of hooks.pythonCommands()) add(label, key, f, state);

@@ -68,3 +68,39 @@ test('commands done before come first, the last done first', () => {
   assert.deepEqual(titles, ['View: Log', 'Git: Pull', 'Run', 'Compile']);
   S.commandUses = was;
 });
+
+test('pane-local and overlay-local commands show no key badge in the command palette', async () => {
+  const { paletteList, openPalette, setPaletteQuery, cancelPalette } = await import('../assets/state.js');
+  const sc = await import('../assets/scm.js');
+  const fg = await import('../assets/forge.js');
+  const { BUF } = await import('../assets/buffers.js');
+  const { setVimMode } = await import('../assets/editor.js');
+
+  setVimMode(true);
+  S.caps = { ...(S.caps || {}), branches: true, changed: true };
+  S.boot = { ...(S.boot || {}), defaultBranch: 'main' };
+  sc.G.st = { branch: 'feat', head: 'abc', conflicts: [], staged: [], changes: [], stashes: [] };
+  fg.F.v = { state: 'ok', kind: 'gitlab', host: 'gitlab.example.com', path: 'g/p', branch: 'feat', base: 'main',
+    mr: { number: 42, title: 'Feat', state: 'open', source: 'feat', target: 'main' }, pipeline: { id: 1, status: 'success', url: 'u' }, checkedAt: 1 };
+  BUF.root = '';
+  BUF.list = [{ n: 1, file: 'definitions/orders.sqlx', action: '' }];
+
+  openPalette('>git');
+  const gitCmds = paletteList();
+  assert.ok(gitCmds.some((c) => c.title === 'Git: pull (fast-forward only)'));
+  assert.ok(gitCmds.some((c) => c.title === 'Git: open last pipeline'));
+  const withKeys = gitCmds.filter((c) => c.key).map((c) => [c.title, c.key]);
+  assert.deepEqual(withKeys, [
+    ['Git: switch branch', 'B'],
+    ['Git: checkout branch', 'B'],
+  ]);
+
+  setPaletteQuery('>buffers');
+  assert.ok(paletteList().some((c) => c.title === 'Buffers: show open buffers'));
+  assert.deepEqual(paletteList().filter((c) => c.key), []);
+
+  cancelPalette();
+  fg.F.v = null;
+  BUF.list = [];
+  setVimMode(false);
+});

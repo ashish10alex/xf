@@ -15,7 +15,6 @@
 
 import { S, post, redraw, hooks, say } from './state.js';
 import { SRC, save, openBuffer, altFileName } from './source.js';
-import { vimKey } from './editor.js';
 
 const maxBuffers = 200; // as the server keeps
 
@@ -280,5 +279,5 @@ hooks.openBuffers = openBuffers;
 
 // bufferCommands are the palette's: the list, with how many it has.
 hooks.bufferCommands = () => (BUF.list.length
-  ? [['Buffers: show open buffers', vimKey('vimBuffers'), openBuffers, BUF.list.length + ' open']]
+  ? [['Buffers: show open buffers', '', openBuffers, BUF.list.length + ' open']]
   : []);

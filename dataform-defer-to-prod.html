@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dataform Defer to Prod in xf Architecture</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Alpine.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            canvas: '#f8fafc',
+            surface: {
+              DEFAULT: '#ffffff',
+              subtle: '#f1f5f9',
+              hover: '#e2e8f0',
+            },
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #f8fafc;
+      background-image: radial-gradient(#cbd5e1 0.75px, transparent 0.75px);
+      background-size: 20px 20px;
+    }
+    .flow-line {
+      stroke-dasharray: 6;
+      animation: dash 20s linear infinite;
+    }
+    @keyframes dash {
+      to {
+        stroke-dashoffset: -1000;
+      }
+    }
+    .specular-border {
+      box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.9) inset, 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 10px 25px -5px rgba(0, 0, 0, 0.03);
+    }
+  </style>
+</head>
+<body class="font-sans text-slate-800 antialiased min-h-screen p-4 sm:p-6 lg:p-10" x-data="{
+  activeTab: 'flow',
+  activeScenario: 'dryrun',
+  selectedNode: 'stg_orders',
+  staleModal: false
+}">
+
+  <div class="max-w-6xl mx-auto space-y-6">
+
+    <!-- Header Banner -->
+    <header class="bg-white border border-slate-200/90 rounded-2xl p-6 lg:p-8 specular-border">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2.5 mb-2">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/60 font-mono">
+              <span class="w-1.5 h-1.5 rounded-full bg-indigo-600 animate-pulse"></span>
+              ADR-0031
+            </span>
+            <span class="text-xs font-mono font-medium text-slate-500">xf engine &bull; Dataform Deferral</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+              LIGHT MODE
+            </span>
+          </div>
+          <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+            How &ldquo;Defer to Prod&rdquo; Works in <span class="text-indigo-600">xf</span> for Dataform
+          </h1>
+          <p class="text-sm text-slate-600 mt-1 max-w-2xl leading-relaxed">
+            Dataform lacks native <code class="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded border border-slate-200">--defer</code> support. 
+            <strong>xf</strong> implements dual-path deferral: zero-cost <em>in-memory AST rewriting</em> for dry runs/diagnostics, and <em>BigQuery Proxy Views</em> for CLI/API execution.
+          </p>
+        </div>
+
+        <!-- Action / Status Pill -->
+        <div class="flex items-center gap-3 self-start md:self-auto bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs font-mono">
+          <div class="flex items-center gap-2">
+            <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
+            <span class="text-slate-600 font-medium">deferToProd:</span>
+            <span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">ACTIVE</span>
+          </div>
+          <span class="text-slate-300">|</span>
+          <div class="text-slate-500">
+            Target: <code class="font-bold text-slate-700">prodCompilerOptions</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="flex flex-wrap gap-2 mt-6 pt-5 border-t border-slate-100">
+        <button 
+          @click="activeTab = 'flow'" 
+          :class="activeTab === 'flow' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2">
+          <i data-lucide="git-fork" class="w-3.5 h-3.5"></i>
+          1. Architecture &amp; Dual-Path Flow
+        </button>
+        <button 
+          @click="activeTab = 'dryrun'" 
+          :class="activeTab === 'dryrun' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2">
+          <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+          2. Path A: Dry-Run In-Memory Rewrite
+        </button>
+        <button 
+          @click="activeTab = 'proxy'" 
+          :class="activeTab === 'proxy' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2">
+          <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+          3. Path B: BigQuery Proxy Views
+        </button>
+        <button 
+          @click="activeTab = 'safety'" 
+          :class="activeTab === 'safety' ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+          class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2">
+          <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i>
+          4. Safety Matrix &amp; Grilling Dialogs
+        </button>
+      </div>
+    </header>
+
+    <!-- TAB 1: Architecture & Dual-Path Flow -->
+    <div x-show="activeTab === 'flow'" class="space-y-6">
+
+      <!-- The Problem vs Solution Card -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-rose-50/70 border border-rose-200 rounded-xl p-4">
+          <div class="flex items-center gap-2 text-rose-800 font-bold text-sm mb-2">
+            <i data-lucide="x-circle" class="w-4 h-4 text-rose-600"></i>
+            Without Deferral (Native Dataform Pain)
+          </div>
+          <p class="text-xs text-rose-900/80 leading-relaxed">
+            In isolated dev datasets (<code class="font-mono bg-rose-100/80 px-1 py-0.5 rounded">dev_ashish.*</code>), running or validating a leaf model fails with <span class="font-semibold text-rose-700">&ldquo;Not found: Table dev_ashish.raw_events&rdquo;</span>. You are forced to waste time and BigQuery compute building all upstream tables in dev.
+          </p>
+        </div>
+
+        <div class="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4">
+          <div class="flex items-center gap-2 text-emerald-800 font-bold text-sm mb-2">
+            <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i>
+            With xf Defer to Prod (ADR 0031)
+          </div>
+          <p class="text-xs text-emerald-900/80 leading-relaxed">
+            Upstream models missing in dev are transparently redirected to their prod targets (<code class="font-mono bg-emerald-100/80 px-1 py-0.5 rounded">prod_dw.*</code>). Dev builds only your changed models, with zero DDL cost during dry-runs and automated lightweight proxy views during execution.
+          </p>
+        </div>
+      </div>
+
+      <!-- Main Visual Diagram Canvas -->
+      <div class="bg-white border border-slate-200 rounded-2xl p-6 lg:p-8 specular-border">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <i data-lucide="network" class="w-5 h-5 text-indigo-600"></i>
+              Dataform Deferral Pipeline Topology
+            </h2>
+            <p class="text-xs text-slate-500">Interactive DAG inspection: click any node to see how xf classifies and routes it</p>
+          </div>
+          <div class="flex items-center gap-2 text-xs font-mono">
+            <span class="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span> Built in Dev
+            </span>
+            <span class="inline-flex items-center gap-1 text-indigo-700 bg-indigo-50 px-2 py-1 rounded border border-indigo-200">
+              <span class="w-2 h-2 rounded-full bg-indigo-500"></span> Deferred to Prod
+            </span>
+            <span class="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+              <span class="w-2 h-2 rounded-full bg-amber-500"></span> Stale Deferral
+            </span>
+          </div>
+        </div>
+
+        <!-- SVG Diagram Flow -->
+        <div class="relative overflow-x-auto p-4 bg-slate-50/70 rounded-xl border border-slate-200">
+          <svg viewBox="0 0 920 380" class="w-full min-w-[800px] h-auto select-none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#94a3b8" />
+              </marker>
+              <marker id="arrow-indigo" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#6366f1" />
+              </marker>
+              <marker id="arrow-emerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981" />
+              </marker>
+            </defs>
+
+            <!-- Swimlanes / Layers -->
+            <rect x="20" y="20" width="240" height="340" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" />
+            <text x="35" y="48" font-family="'JetBrains Mono', monospace" font-size="11" font-weight="700" fill="#64748b">1. SOURCE &amp; UPSTREAM</text>
+
+            <rect x="300" y="20" width="300" height="340" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" />
+            <text x="315" y="48" font-family="'JetBrains Mono', monospace" font-size="11" font-weight="700" fill="#64748b">2. XF RESOLUTION ENGINE</text>
+
+            <rect x="640" y="20" width="260" height="340" rx="12" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" />
+            <text x="655" y="48" font-family="'JetBrains Mono', monospace" font-size="11" font-weight="700" fill="#64748b">3. TARGET EXECUTION</text>
+
+            <!-- Connecting Lines -->
+            <!-- raw_events to Engine -->
+            <path d="M 230 105 L 330 105" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow-indigo)" class="flow-line" />
+            <!-- dim_customers to Engine -->
+            <path d="M 230 195 L 330 195" stroke="#10b981" stroke-width="2" marker-end="url(#arrow-emerald)" />
+            <!-- stg_orders to Engine -->
+            <path d="M 230 285 L 330 285" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrow)" />
+
+            <!-- Engine to Paths -->
+            <!-- Path A: Dry run rewrite -->
+            <path d="M 570 125 C 600 125, 610 95, 660 95" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow-indigo)" />
+            <!-- Path B: Proxy Views -->
+            <path d="M 570 235 C 600 235, 610 265, 660 265" stroke="#059669" stroke-width="2" marker-end="url(#arrow-emerald)" />
+
+            <!-- NODES IN SWIMLANE 1: UPSTREAM -->
+            <!-- Node: raw_events (Not in dev, exists in prod) -->
+            <g class="cursor-pointer transition-transform hover:scale-102" @click="selectedNode = 'raw_events'">
+              <rect x="40" y="75" width="190" height="60" rx="8" fill="#f8fafc" stroke="#6366f1" stroke-width="2" />
+              <text x="52" y="98" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#0f172a">raw_events.sqlx</text>
+              <rect x="52" y="108" width="62" height="18" rx="4" fill="#e0e7ff" />
+              <text x="58" y="121" font-family="'JetBrains Mono', monospace" font-size="9.5" font-weight="600" fill="#4338ca">&rarr; prod</text>
+              <text x="122" y="121" font-family="'JetBrains Mono', monospace" font-size="9" fill="#64748b">Not in dev</text>
+            </g>
+
+            <!-- Node: dim_customers (Built in dev) -->
+            <g class="cursor-pointer transition-transform hover:scale-102" @click="selectedNode = 'dim_customers'">
+              <rect x="40" y="165" width="190" height="60" rx="8" fill="#f8fafc" stroke="#10b981" stroke-width="2" />
+              <text x="52" y="188" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#0f172a">dim_customers.sqlx</text>
+              <rect x="52" y="198" width="68" height="18" rx="4" fill="#d1fae5" />
+              <text x="58" y="211" font-family="'JetBrains Mono', monospace" font-size="9.5" font-weight="600" fill="#065f46">&check; dev</text>
+              <text x="126" y="211" font-family="'JetBrains Mono', monospace" font-size="9" fill="#059669">built 12m ago</text>
+            </g>
+
+            <!-- Node: stg_orders (Stale: changed on branch) -->
+            <g class="cursor-pointer transition-transform hover:scale-102" @click="selectedNode = 'stg_orders'">
+              <rect x="40" y="255" width="190" height="60" rx="8" fill="#fffbeb" stroke="#f59e0b" stroke-width="2" />
+              <text x="52" y="278" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#0f172a">stg_orders.sqlx</text>
+              <rect x="52" y="288" width="76" height="18" rx="4" fill="#fef3c7" />
+              <text x="56" y="301" font-family="'JetBrains Mono', monospace" font-size="9.5" font-weight="600" fill="#92400e">&Delta; stale</text>
+              <text x="136" y="301" font-family="'JetBrains Mono', monospace" font-size="9" fill="#b45309">branch diff</text>
+            </g>
+
+            <!-- NODES IN SWIMLANE 2: XF ENGINE LOGIC -->
+            <g>
+              <rect x="330" y="75" width="240" height="240" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+              
+              <!-- Engine Header -->
+              <rect x="330" y="75" width="240" height="32" rx="10" fill="#f1f5f9" />
+              <text x="345" y="96" font-family="'Plus Jakarta Sans', sans-serif" font-size="11" font-weight="700" fill="#334155">BigQuery Metadata &amp; Cache</text>
+
+              <!-- Step 1: Candidates -->
+              <text x="345" y="130" font-family="'JetBrains Mono', monospace" font-size="10.5" font-weight="600" fill="#4338ca">1. Candidates(g, selected)</text>
+              <text x="360" y="146" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#64748b">Upstream of selected models</text>
+
+              <!-- Step 2: BQ Lookup -->
+              <text x="345" y="175" font-family="'JetBrains Mono', monospace" font-size="10.5" font-weight="600" fill="#4338ca">2. Lookups.ListTablesLabelled()</text>
+              <text x="360" y="191" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#64748b">Check dev dataset (TTL 2min)</text>
+
+              <!-- Step 3: Prod Decision -->
+              <text x="345" y="220" font-family="'JetBrains Mono', monospace" font-size="10.5" font-weight="600" fill="#4338ca">3. Decide(devExists, prodStatus)</text>
+              <text x="360" y="236" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#64748b">dev &gt; prod &gt; unreadable</text>
+
+              <!-- Dual routing badge -->
+              <rect x="345" y="260" width="210" height="38" rx="6" fill="#f8fafc" stroke="#e2e8f0" />
+              <text x="355" y="276" font-family="'JetBrains Mono', monospace" font-size="9" font-weight="700" fill="#1e293b">DUAL PATH DISPATCHER</text>
+              <text x="355" y="290" font-family="'Plus Jakarta Sans', sans-serif" font-size="9" fill="#64748b">Dry-Run (AST) vs Execute (Proxy)</text>
+            </g>
+
+            <!-- NODES IN SWIMLANE 3: TARGET OUTPUTS -->
+            <!-- Path A box -->
+            <g class="cursor-pointer" @click="activeTab = 'dryrun'">
+              <rect x="660" y="65" width="220" height="90" rx="8" fill="#eef2ff" stroke="#6366f1" stroke-width="2" />
+              <text x="675" y="90" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#312e81">Path A: Dry-Run / LSP</text>
+              <text x="675" y="108" font-family="'JetBrains Mono', monospace" font-size="10" font-weight="600" fill="#4338ca">deferral.Rewrite(sql)</text>
+              <text x="675" y="125" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#475569">&bull; In-memory string replace</text>
+              <text x="675" y="140" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#475569">&bull; $0 BQ cost, 0ms DDL</text>
+            </g>
+
+            <!-- Path B box -->
+            <g class="cursor-pointer" @click="activeTab = 'proxy'">
+              <rect x="660" y="215" width="220" height="105" rx="8" fill="#ecfdf5" stroke="#10b981" stroke-width="2" />
+              <text x="675" y="240" font-family="'Plus Jakarta Sans', sans-serif" font-size="12" font-weight="700" fill="#064e3b">Path B: Real Runs</text>
+              <text x="675" y="258" font-family="'JetBrains Mono', monospace" font-size="10" font-weight="600" fill="#047857">EnsureProxies() in Dev</text>
+              <text x="675" y="275" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#475569">&bull; BQ Views: SELECT * FROM prod</text>
+              <text x="675" y="290" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#475569">&bull; dataform_tools_proxy: true</text>
+              <text x="675" y="305" font-family="'Plus Jakarta Sans', sans-serif" font-size="10" fill="#475569">&bull; Cleaned on real build or exit</text>
+            </g>
+          </svg>
+        </div>
+
+        <!-- Node Inspector Detail -->
+        <div class="mt-4 p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-slate-700 flex items-center gap-1.5">
+              <i data-lucide="info" class="w-4 h-4 text-indigo-500"></i>
+              Inspecting Node: <code class="font-mono text-indigo-600 font-bold" x-text="selectedNode"></code>
+            </span>
+            <span class="text-slate-400">Click a node in swimlane 1 to inspect state</span>
+          </div>
+
+          <template x-if="selectedNode === 'raw_events'">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">DEV STATUS</span>
+                <span class="font-semibold text-rose-600">Missing in dev_ashish</span>
+              </div>
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">PROD TARGET</span>
+                <span class="font-semibold text-slate-800 font-mono">company-prod.analytics.raw_events</span>
+              </div>
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">XF RESOLUTION</span>
+                <span class="font-semibold text-indigo-600">Rewrite query &amp; spawn Proxy View</span>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="selectedNode === 'dim_customers'">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">DEV STATUS</span>
+                <span class="font-semibold text-emerald-600">Present in dev_ashish (built 12m ago)</span>
+              </div>
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">ACTION TAKEN</span>
+                <span class="font-semibold text-slate-800">No deferral needed (BuiltInDev)</span>
+              </div>
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">QUERY ROUTE</span>
+                <span class="font-semibold text-emerald-600">Reads local dev table directly</span>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="selectedNode === 'stg_orders'">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">GIT STATUS</span>
+                <span class="font-semibold text-amber-600">Modified on branch vs origin/main</span>
+              </div>
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">RISK CLASSIFICATION</span>
+                <span class="font-semibold text-amber-700">Stale Deferral (Prod SQL != Branch SQL)</span>
+              </div>
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span class="text-slate-400 block font-mono text-[10px]">SAFETY BEHAVIOR</span>
+                <span class="font-semibold text-amber-800">Trigger Grilling Modal before run</span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Dry-Run In-Memory AST Rewrite -->
+    <div x-show="activeTab === 'dryrun'" class="space-y-6">
+      <div class="bg-white border border-slate-200 rounded-2xl p-6 lg:p-8 specular-border">
+        <div class="max-w-3xl mb-6">
+          <span class="px-2.5 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-mono font-semibold">
+            Path A: Dry-Run &amp; Editor Diagnostics
+          </span>
+          <h2 class="text-xl font-bold text-slate-900 mt-2">Zero-DDL In-Memory SQL Rewriting</h2>
+          <p class="text-sm text-slate-600 mt-1 leading-relaxed">
+            Dataform produces backtick-quoted table targets: <code class="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">`dev_project.dev_schema.table`</code>. 
+            When xf dry-runs a model or validates it for Neovim/VS Code LSP, <code class="font-mono text-xs text-indigo-700 font-bold">deferral.Rewrite()</code> swaps missing dev references with prod targets in-memory before sending the query to BigQuery with <code class="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">dryRun: true</code>.
+          </p>
+        </div>
+
+        <!-- Before / After Diff Viewer -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- Left: Compiled Dev SQL -->
+          <div class="border border-slate-200 rounded-xl overflow-hidden bg-slate-900 text-slate-100 font-mono text-xs">
+            <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 flex items-center justify-between text-slate-400">
+              <span class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                Standard Dataform Compiled SQL (Dev)
+              </span>
+              <span class="text-[10px] text-rose-400">FAILS BQ DRY-RUN</span>
+            </div>
+            <pre class="p-4 overflow-x-auto leading-relaxed text-slate-300"><code><span class="text-slate-500">-- Target: dev_ashish.fct_sales</span>
+SELECT 
+  s.order_id,
+  s.amount,
+  u.customer_name
+FROM 
+  <mark class="bg-rose-900/60 text-rose-200 px-1 rounded border border-rose-700">`dev_proj.dev_ashish.stg_orders`</mark> s
+JOIN 
+  <mark class="bg-rose-900/60 text-rose-200 px-1 rounded border border-rose-700">`dev_proj.dev_ashish.dim_customers`</mark> u
+  ON s.customer_id = u.id;</code></pre>
+            <div class="p-3 bg-rose-950/40 border-t border-rose-900/50 text-[11px] text-rose-300 flex items-start gap-2">
+              <i data-lucide="alert-octagon" class="w-4 h-4 text-rose-400 shrink-0 mt-0.5"></i>
+              <span><strong>BigQuery Error:</strong> Not found: Table dev_proj:dev_ashish.stg_orders was not found in location US</span>
+            </div>
+          </div>
+
+          <!-- Right: Rewritten Deferral SQL -->
+          <div class="border border-indigo-200 rounded-xl overflow-hidden bg-slate-900 text-slate-100 font-mono text-xs">
+            <div class="bg-indigo-950 px-4 py-2 border-b border-indigo-800 flex items-center justify-between text-indigo-300">
+              <span class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                xf Rewritten SQL via deferral.Rewrite()
+              </span>
+              <span class="text-[10px] text-emerald-400">SUCCEEDS (0 BYTES SCAN)</span>
+            </div>
+            <pre class="p-4 overflow-x-auto leading-relaxed text-slate-300"><code><span class="text-slate-500">-- Target: dev_ashish.fct_sales (Rewritten)</span>
+SELECT 
+  s.order_id,
+  s.amount,
+  u.customer_name
+FROM 
+  <mark class="bg-indigo-900/80 text-indigo-200 px-1 rounded border border-indigo-500">`prod_proj.analytics.stg_orders`</mark> s
+JOIN 
+  <mark class="bg-emerald-900/80 text-emerald-200 px-1 rounded border border-emerald-500">`dev_proj.dev_ashish.dim_customers`</mark> u
+  ON s.customer_id = u.id;</code></pre>
+            <div class="p-3 bg-emerald-950/40 border-t border-emerald-900/50 text-[11px] text-emerald-300 flex items-start gap-2">
+              <i data-lucide="check" class="w-4 h-4 text-emerald-400 shrink-0 mt-0.5"></i>
+              <span><strong>Valid Dry Run:</strong> Evaluated against prod schemas. Line offsets preserved 1:1 for precise diagnostic reporting.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3 Crucial Properties of Path A -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs mb-2">1</div>
+            <h4 class="font-bold text-sm text-slate-900">Line Preserving</h4>
+            <p class="text-xs text-slate-600 mt-1">
+              Newlines and whitespace are untouched. Any BigQuery syntax or column error points directly to the correct source line in your editor.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs mb-2">2</div>
+            <h4 class="font-bold text-sm text-slate-900">Exact Backtick Replacement</h4>
+            <p class="text-xs text-slate-600 mt-1">
+              Dataform outputs fully qualified <code class="font-mono text-[10px]">`db.schema.name`</code>. xf replaces only matching backtick pairs to avoid corrupting custom string literals.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs mb-2">3</div>
+            <h4 class="font-bold text-sm text-slate-900">Cached Lookup Index</h4>
+            <p class="text-xs text-slate-600 mt-1">
+              BigQuery table existence is cached for 2 minutes (<code class="font-mono text-[10px]">lookupTTL = 2 * time.Minute</code>), so typing and saving creates zero BigQuery API congestion.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: BigQuery Proxy Views for Execution -->
+    <div x-show="activeTab === 'proxy'" class="space-y-6">
+      <div class="bg-white border border-slate-200 rounded-2xl p-6 lg:p-8 specular-border">
+        <div class="max-w-3xl mb-6">
+          <span class="px-2.5 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-mono font-semibold">
+            Path B: CLI &amp; Cloud Dataform Execution
+          </span>
+          <h2 class="text-xl font-bold text-slate-900 mt-2">BigQuery Proxy Views in Dev Dataset</h2>
+          <p class="text-sm text-slate-600 mt-1 leading-relaxed">
+            When you trigger a real run (<code class="font-mono text-xs bg-slate-100 px-1 py-0.5 rounded">xf run</code> or Cloud Dataform API), Dataform compiles its own execution graph requiring tables to exist at their dev targets. 
+            Before running, xf invokes <code class="font-mono text-xs text-emerald-700 font-bold">EnsureProxies()</code> to create lightweight 1-line views in dev pointing to prod.
+          </p>
+        </div>
+
+        <!-- Execution Lifecycle Steps -->
+        <div class="space-y-4">
+          <!-- Step 1 -->
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col md:flex-row gap-4 items-start">
+            <div class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-mono text-xs font-bold shrink-0">
+              STEP 1
+            </div>
+            <div class="space-y-1">
+              <h4 class="text-sm font-bold text-slate-900">Pre-Run Reconciliation</h4>
+              <p class="text-xs text-slate-600">
+                xf identifies all upstream dependencies in the execution set. It checks dev: if a table is already built in dev, it is left untouched. If missing, it checks prod existence and permissions.
+              </p>
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="p-4 rounded-xl border border-emerald-200 bg-emerald-50/30 flex flex-col md:flex-row gap-4 items-start">
+            <div class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-mono text-xs font-bold shrink-0">
+              STEP 2
+            </div>
+            <div class="space-y-2 flex-1">
+              <h4 class="text-sm font-bold text-slate-900">Proxy View Creation with Shared Extension Label</h4>
+              <p class="text-xs text-slate-600">
+                For every deferred candidate, xf creates a BigQuery View in your dev dataset:
+              </p>
+              <div class="bg-slate-900 text-slate-200 p-3 rounded-lg font-mono text-xs">
+                <div><span class="text-slate-500">-- View created in dev_ashish:</span></div>
+                <div><span class="text-indigo-400">CREATE OR REPLACE VIEW</span> <span class="text-emerald-300">`dev_proj.dev_ashish.stg_orders`</span></div>
+                <div><span class="text-slate-400">OPTIONS(</span></div>
+                <div>&nbsp;&nbsp;labels = [(<span class="text-amber-300">&quot;dataform_tools_proxy&quot;</span>, <span class="text-emerald-300">&quot;true&quot;</span>)],</div>
+                <div>&nbsp;&nbsp;description = <span class="text-slate-400">&quot;Defer to prod proxy for prod_proj.analytics.stg_orders, created by xf&quot;</span></div>
+                <div><span class="text-slate-400">) AS</span></div>
+                <div><span class="text-indigo-400">SELECT * FROM</span> <span class="text-emerald-300">`prod_proj.analytics.stg_orders`</span>;</div>
+              </div>
+              <p class="text-[11px] text-emerald-800 font-medium">
+                &star; <strong>Interoperability:</strong> Uses the exact label (<code class="font-mono bg-emerald-100 px-1 py-0.5 rounded">dataform_tools_proxy</code>) as the official Google Dataform VS Code extension, so either tool can detect, reuse, or purge each other's proxies!
+              </p>
+            </div>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col md:flex-row gap-4 items-start">
+            <div class="px-3 py-1.5 rounded-lg bg-slate-700 text-white font-mono text-xs font-bold shrink-0">
+              STEP 3
+            </div>
+            <div class="space-y-1">
+              <h4 class="text-sm font-bold text-slate-900">Standard Dataform Runner Execution</h4>
+              <p class="text-xs text-slate-600">
+                Dataform executes the pipeline using its standard CLI or Cloud API. Because the dev targets exist as views, Dataform compiles cleanly and queries prod data via the dev views.
+              </p>
+            </div>
+          </div>
+
+          <!-- Step 4 -->
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col md:flex-row gap-4 items-start">
+            <div class="px-3 py-1.5 rounded-lg bg-slate-700 text-white font-mono text-xs font-bold shrink-0">
+              STEP 4
+            </div>
+            <div class="space-y-1">
+              <h4 class="text-sm font-bold text-slate-900">Replacement &amp; Clean Up</h4>
+              <p class="text-xs text-slate-600">
+                When you eventually build <code class="font-mono bg-slate-200 px-1 py-0.5 rounded">stg_orders</code> in dev, Dataform's <code class="font-mono">CREATE OR REPLACE TABLE</code> overwrites the proxy view with the real dev table. Alternatively, run <code class="font-mono text-indigo-600 font-bold">removeProxies</code> from the palette.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: Safety Matrix & Grilling Dialogs -->
+    <div x-show="activeTab === 'safety'" class="space-y-6">
+      <div class="bg-white border border-slate-200 rounded-2xl p-6 lg:p-8 specular-border">
+        <div class="max-w-3xl mb-6">
+          <span class="px-2.5 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200 text-xs font-mono font-semibold">
+            Edge Cases &amp; Safety Governance
+          </span>
+          <h2 class="text-xl font-bold text-slate-900 mt-2">Safety Verification &amp; Pre-Run Dialogs</h2>
+          <p class="text-sm text-slate-600 mt-1 leading-relaxed">
+            Blindly deferring can cause subtle data corruption if upstream logic changed on your branch. xf runs strict pre-flight checks before executing any deferred job.
+          </p>
+        </div>
+
+        <!-- Safety Table -->
+        <div class="overflow-x-auto rounded-xl border border-slate-200">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-slate-50 text-slate-500 font-mono border-b border-slate-200">
+                <th class="p-3 font-semibold">Scenario / Edge Case</th>
+                <th class="p-3 font-semibold">Detection Mechanism</th>
+                <th class="p-3 font-semibold">Risk</th>
+                <th class="p-3 font-semibold">xf Mitigation / Dialog Choice</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 text-slate-700">
+              <tr class="hover:bg-slate-50/80">
+                <td class="p-3 font-semibold text-slate-900 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                  Stale Deferral
+                </td>
+                <td class="p-3 font-mono text-slate-600">Upstream model &isin; ChangedActions</td>
+                <td class="p-3 text-amber-700">Prod data does not match the branch's new code logic.</td>
+                <td class="p-3">
+                  <span class="font-medium text-slate-900">Grills user with choices:</span>
+                  <div class="mt-1 space-y-0.5 text-[11px] text-slate-600">
+                    &bull; <strong>Build changed first:</strong> adds upstream models to dev run<br>
+                    &bull; <strong>Run with deps:</strong> full upstream cascade<br>
+                    &bull; <strong>Run anyway:</strong> accepts stale prod output
+                  </div>
+                </td>
+              </tr>
+
+              <tr class="hover:bg-slate-50/80">
+                <td class="p-3 font-semibold text-slate-900 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                  Missing in Both
+                </td>
+                <td class="p-3 font-mono text-slate-600">Dev = nil &amp; Prod = nil</td>
+                <td class="p-3 text-rose-700">Execution would fail immediately in BigQuery.</td>
+                <td class="p-3">
+                  <span class="text-rose-700 font-semibold">Halts run.</span> Prompts user to run with dependencies or check branch additions.
+                </td>
+              </tr>
+
+              <tr class="hover:bg-slate-50/80">
+                <td class="p-3 font-semibold text-slate-900 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                  Unreadable (403)
+                </td>
+                <td class="p-3 font-mono text-slate-600">Access Denied on Prod Table</td>
+                <td class="p-3 text-rose-700">User account has dev access but lacks prod IAM read access.</td>
+                <td class="p-3">
+                  Marks table as <code class="font-mono text-slate-800">Unreadable</code>. Stops run and prompts to build in dev or grant BigQuery dataViewer.
+                </td>
+              </tr>
+
+              <tr class="hover:bg-slate-50/80">
+                <td class="p-3 font-semibold text-slate-900 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+                  Routines (UDF / Procs)
+                </td>
+                <td class="p-3 font-mono text-slate-600">createsRoutine regex match</td>
+                <td class="p-3 text-indigo-700">BigQuery cannot create a View as a proxy for a procedure/function.</td>
+                <td class="p-3">
+                  <span class="text-indigo-700 font-medium">Automatic fallback:</span> Forces routine to be built in dev directly.
+                </td>
+              </tr>
+
+              <tr class="hover:bg-slate-50/80">
+                <td class="p-3 font-semibold text-slate-900 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                  Cloud Dataform API Run
+                </td>
+                <td class="p-3 font-mono text-slate-600">Run invoked via GCP API</td>
+                <td class="p-3 text-slate-700">Cloud Dataform runs as service account, not user's ADC.</td>
+                <td class="p-3">
+                  Prompts once per repo to confirm repository service account has BigQuery read rights on prod datasets.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Interactive Dialog Mockup -->
+        <div class="mt-6 border border-amber-200 bg-amber-50/40 rounded-xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+              <i data-lucide="help-circle" class="w-4 h-4 text-amber-600"></i>
+              Pre-Run Interactive Decision Dialog Simulation
+            </span>
+            <span class="text-[11px] font-mono bg-amber-100 text-amber-800 px-2 py-0.5 rounded border border-amber-200">deferAsk</span>
+          </div>
+
+          <div class="bg-white border border-amber-200/80 rounded-xl p-5 shadow-sm max-w-xl">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+              </div>
+              <div class="space-y-1">
+                <h4 class="font-bold text-slate-900 text-sm">Stale Deferrals Detected</h4>
+                <p class="text-xs text-slate-600">
+                  <code class="font-mono text-slate-800 font-semibold">definitions/stg_orders.sqlx</code> has uncommitted changes on this branch, but prod contains the old version.
+                </p>
+                <div class="pt-3 flex flex-wrap gap-2">
+                  <button class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors">
+                    Build changed models first (Recommended)
+                  </button>
+                  <button class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors">
+                    Run with all dependencies
+                  </button>
+                  <button class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-lg text-xs transition-colors">
+                    Run anyway with stale prod
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Footer Summary Info -->
+    <footer class="bg-white border border-slate-200 rounded-xl p-5 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-3 specular-border">
+      <div class="flex items-center gap-3">
+        <span class="font-mono text-slate-700 font-semibold">xf v1.0 &bull; Dataform Deferral</span>
+        <span>&bull;</span>
+        <span>Ref: <code class="font-mono">docs/adr/0031-xf-web-defers-to-prod.md</code></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span>Compatible with Google Dataform VS Code Extension</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>

@@ -5,7 +5,7 @@
 // making it again, so its unsaved text and undo history stay.
 
 import * as cm from './vendor/codemirror.mjs';
-import { createEditor, formatText, jumpToError, vimKey } from './editor.js';
+import { createEditor, formatText, jumpToError } from './editor.js';
 import { languageFor } from './sqlx.js';
 import { gitHunks, jumpToHunk, undoHunk, stageHunk } from './git-hunks.js';
 import { SRC, setSourceEditor, save, discard, onEdit, onMode, onLeave, sourceJumps, altFile, altFileName } from './source.js';
@@ -13,7 +13,6 @@ import { S, redraw, setFocus, hooks, say, openPalette, post } from './state.js';
 import { onContextMenu, onMenuKey, openAtCursor } from './source-menu.js';
 import { stepBuffer, openBuffers, bufferCommand, deleteCommand } from './buffers.js';
 import { goToFile, completeFileName } from './source-paths.js';
-import { vimOn } from './vim-mode.js';
 
 let made = null;
 
@@ -39,7 +38,7 @@ export function formatSource() {
 
 hooks.formatSource = formatSource;
 hooks.unformatable = unformatable;
-hooks.formatCommands = () => (unformatable() ? [] : [['Format: file', vimOn() ? ':format' : '', formatSource]]);
+hooks.formatCommands = () => (unformatable() ? [] : [['Format: file', '', formatSource]]);
 
 // sourceCommands are the palette's commands for what vim's keys and ex
 // commands do in the editor, so they can be done without vim too. Each
@@ -48,17 +47,17 @@ hooks.sourceCommands = () => {
   if (!made || !SRC.view) return [];
   const v = made.view;
   const out = [
-    ['Go to: next git change in file', vimKey('vimNextHunk'), () => jumpToHunk(v, 1, say)],
-    ['Go to: previous git change in file', vimKey('vimPrevHunk'), () => jumpToHunk(v, -1, say)],
-    ['Go to: next error in file', vimKey('vimNextError'), () => jumpToError(v, 1, say)],
-    ['Go to: previous error in file', vimKey('vimPrevError'), () => jumpToError(v, -1, say)],
-    ['Go to: file named under the cursor', vimOn() ? 'gf' : '', () => goToFile(v, false)],
+    ['Go to: next git change in file', '', () => jumpToHunk(v, 1, say)],
+    ['Go to: previous git change in file', '', () => jumpToHunk(v, -1, say)],
+    ['Go to: next error in file', '', () => jumpToError(v, 1, say)],
+    ['Go to: previous error in file', '', () => jumpToError(v, -1, say)],
+    ['Go to: file named under the cursor', '', () => goToFile(v, false)],
   ];
-  if (altFileName()) out.push(['Go to: the file before', vimOn() ? 'ctrl+^' : '', altFile, altFileName()]);
-  out.push(['Buffers: next buffer', vimKey('vimBufferNext'), () => stepBuffer(1)]);
-  out.push(['Buffers: previous buffer', vimKey('vimBufferPrev'), () => stepBuffer(-1)]);
-  out.push(['Buffers: remove the buffer shown', vimKey('vimBufferDelete'), () => deleteCommand('')]);
-  if (SRC.dirty) out.push(['File: discard unsaved changes', vimOn() ? ':e!' : '', discard, SRC.file]);
+  if (altFileName()) out.push(['Go to: the file before', '', altFile, altFileName()]);
+  out.push(['Buffers: next buffer', '', () => stepBuffer(1)]);
+  out.push(['Buffers: previous buffer', '', () => stepBuffer(-1)]);
+  out.push(['Buffers: remove the buffer shown', '', () => deleteCommand('')]);
+  if (SRC.dirty) out.push(['File: discard unsaved changes', '', discard, SRC.file]);
   return out;
 };
 

@@ -309,12 +309,12 @@ function commands() {
   const out = [];
   const v = F.v;
   if (v.state === 'connect' || v.state === 'token') out.push(['Git: connect ' + v.host + ' (Settings › Git hosting)', '', openHosts]);
-  if (!openOne() && !onBase()) out.push(['Git: create ' + w, 'm', () => create(false)]);
+  if (!openOne() && !onBase()) out.push(['Git: create ' + w, '', () => create(false)]);
   if (mr()) {
-    out.push(['Git: open ' + w, 'o', openMR]);
+    out.push(['Git: open ' + w, '', openMR]);
     out.push(['Git: copy ' + w + ' link', '', copyLink]);
   }
-  out.push(['Git: open last pipeline', 'O', openPipeline]);
+  out.push(['Git: open last pipeline', '', openPipeline]);
   out.push(['Git: refresh ' + w, '', refresh]);
   return out;
 }
