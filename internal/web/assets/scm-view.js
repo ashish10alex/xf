@@ -59,9 +59,13 @@ function FileRow({ r, cur, focused }) {
 function SectionRow({ r, cur, focused }) {
   const cls = 'scm-row section' + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '');
   const buttons = [];
-  if (r.id === 'changes' && r.count) {
-    buttons.push(html`<button title="discard all (x)" onMouseDown=${act(() => { G.cursor = r.key; sc.key('x'); })}>↶</button>`);
-    buttons.push(html`<button title="stage all (a)" onMouseDown=${act(() => sc.key('a'))}>+</button>`);
+  if (r.id === 'changes') {
+    // Stashing is here too, as Stashes isn't listed until there is one.
+    if (G.st && (G.st.staged.length || G.st.changes.length)) buttons.push(html`<button title="stash every change (s)" onMouseDown=${act(() => sc.key('s'))}>stash</button>`);
+    if (r.count) {
+      buttons.push(html`<button title="discard all (x)" onMouseDown=${act(() => { G.cursor = r.key; sc.key('x'); })}>↶</button>`);
+      buttons.push(html`<button title="stage all (a)" onMouseDown=${act(() => sc.key('a'))}>+</button>`);
+    }
   } else if (r.id === 'staged' && r.count) {
     buttons.push(html`<button title="unstage all (space)" onMouseDown=${act(() => { G.cursor = r.key; sc.key(' '); })}>−</button>`);
   } else if (r.id === 'stashes') {

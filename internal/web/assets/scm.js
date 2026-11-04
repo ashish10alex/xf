@@ -219,18 +219,23 @@ export function rows() {
   const st = G.st;
   if (!st || st.notGit) return [];
   const out = [];
+  // An empty section isn't listed, but Changes: it says when there is
+  // nothing to commit, and is where the cursor goes when nothing else is.
   const files = (id, label, list) => {
-    if (id === 'conflicts' && !list.length) return;
+    if (id !== 'changes' && !list.length) return;
     const shownList = list.filter(matches);
     out.push({ key: 's:' + id, kind: 'section', id, label, count: list.length, open: !!G.open[id] });
     if (!G.open[id]) return;
     for (const f of shownList) out.push(fileRow(id + ':' + f.path, 'file', f, { section: id }));
+    if (id === 'changes' && !list.length) {
+      out.push({ key: 'n:changes', kind: 'note', text: st.staged.length || st.conflicts.length ? 'no changes to stage' : 'nothing to commit, working tree clean' });
+    }
   };
   files('conflicts', 'Merge Changes', st.conflicts);
   files('staged', 'Staged Changes', st.staged);
   files('changes', 'Changes', st.changes);
-  out.push({ key: 's:stashes', kind: 'section', id: 'stashes', label: 'Stashes', count: st.stashes.length, open: !!G.open.stashes });
-  if (G.open.stashes) {
+  if (st.stashes.length) out.push({ key: 's:stashes', kind: 'section', id: 'stashes', label: 'Stashes', count: st.stashes.length, open: !!G.open.stashes });
+  if (st.stashes.length && G.open.stashes) {
     for (const s of st.stashes) {
       const k = 'st:' + s.index;
       out.push({ key: k, kind: 'stash', ...s, open: !!G.open[k] });

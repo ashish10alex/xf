@@ -6,7 +6,7 @@ status: accepted
 
 xf web gets a Source Control view, as VS Code's is, in the column on the far left that holds the file tree (ADR 0006). The column shows one of the two at a time: ctrl+g (ctrl on a Mac too, where cmd+g is the browser's find next) shows Source Control and gives it the keys, and pressed again while it shows hides the column; cmd+b (ctrl+b off a Mac) shows the column on the files, and hides it whichever view it shows. ctrl+g swaps the column to Source Control when the files show; cmd+b doesn't swap to the files, as in VS Code, where it closes the side bar whatever is in it. The column keeps the view it showed last, per project, with its width. ctrl+0 gives the column the keys, whichever view it shows. The column's header shows how many files have changed.
 
-The view lists the repository's changes in sections, VS Code's names: **Merge Changes** (only while files are in conflict), **Staged Changes**, **Changes** (git's unstaged and untracked files), **Stashes** and **Recent commits**, with the commit message box at the top. It lists the whole repository, as a commit commits the whole index: a project in a folder of a bigger repository sees the repository's other changes too, by path from the project, and a file outside the project shows its difference but can't be edited there.
+The view lists the repository's changes in sections, VS Code's names: **Merge Changes** (only while files are in conflict), **Staged Changes** (only while something is staged), **Changes** (git's unstaged and untracked files; always listed, saying "nothing to commit, working tree clean" when it is), **Stashes** (only while there is one) and **Recent commits**, with the commit message box at the top. It lists the whole repository, as a commit commits the whole index: a project in a folder of a bigger repository sees the repository's other changes too, by path from the project, and a file outside the project shows its difference but can't be edited there.
 
 The keys are lazygit's files panel's: `j`/`k` move, enter shows the difference, space stages or unstages (marks a conflict resolved), `a` stages all, `x` discards, `c` goes to the message box (cmd+enter or ctrl+enter commits from it), `A` amends, `P` pushes, `p` pulls, `f` fetches, `s` stashes, `n` makes a branch, `/` filters. In the Stashes section space applies, `p` pops and `d` drops; in Recent commits enter shows a commit's files, `y` copies its SHA and `n` makes a branch at it.
 
@@ -34,7 +34,7 @@ Recent commits starts open, listing the last 10 commits of HEAD, with their shor
 
 `n` makes a branch and switches to it (`git switch -c`), from HEAD with the working changes carried along, or from the commit the cursor is on in Recent commits; git decides whether the working changes allow it, as with the branch switcher.
 
-`s` stashes everything, the new files too (`git stash push -u`), with a message if one is typed. The Stashes section lists the stashes, each opening to its files and their differences; drop asks first, naming the stash.
+`s` stashes everything, the new files too (`git stash push -u`), with a message if one is typed; so does the Changes header's *stash* button, as Stashes isn't listed until there is a stash. The Stashes section lists the stashes, each opening to its files and their differences; drop asks first, naming the stash.
 
 ## Merges, rebases, cherry-picks
 
