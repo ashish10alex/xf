@@ -58,11 +58,24 @@ func TestAppBrowser(t *testing.T) {
 
 func TestAppWindowCommand(t *testing.T) {
 	url := "http://127.0.0.1:5000/?project=a"
-	if got := appWindowCommand("darwin", "/Applications/Google Chrome.app", url).Args; !slices.Equal(got, []string{"open", "-na", "/Applications/Google Chrome.app", "--args", "--app=" + url}) {
+	if got := appWindowCommand("darwin", "/Applications/Google Chrome.app", "", url).Args; !slices.Equal(got, []string{"open", "-na", "/Applications/Google Chrome.app", "--args", "--app=" + url}) {
 		t.Errorf("Mac .app = %q", got)
 	}
-	if got := appWindowCommand("windows", `C:\e\msedge.exe`, url).Args; !slices.Equal(got, []string{`C:\e\msedge.exe`, "--app=" + url}) {
+	if got := appWindowCommand("windows", `C:\e\msedge.exe`, "", url).Args; !slices.Equal(got, []string{`C:\e\msedge.exe`, "--app=" + url}) {
 		t.Errorf("Windows = %q", got)
+	}
+	if got := appWindowCommand("darwin", "/Applications/Google Chrome.app", "Profile 1", url).Args; !slices.Equal(got, []string{"open", "-na", "/Applications/Google Chrome.app", "--args", "--profile-directory=Profile 1", "--app=" + url}) {
+		t.Errorf("Mac .app with a profile = %q", got)
+	}
+}
+
+func TestLinkCommand(t *testing.T) {
+	url := "https://gitlab.com/a/b/-/merge_requests/1"
+	if got := linkCommand("darwin", "/Applications/Google Chrome.app", "Profile 1", url).Args; !slices.Equal(got, []string{"open", "-na", "/Applications/Google Chrome.app", "--args", "--profile-directory=Profile 1", url}) {
+		t.Errorf("Mac .app = %q", got)
+	}
+	if got := linkCommand("linux", "/usr/bin/chromium", "Default", url).Args; !slices.Equal(got, []string{"/usr/bin/chromium", "--profile-directory=Default", url}) {
+		t.Errorf("Linux = %q", got)
 	}
 }
 
@@ -85,7 +98,8 @@ func TestWebBrowser(t *testing.T) {
 		if err := fs.Parse(args); err != nil {
 			t.Fatal(err)
 		}
-		return webBrowser(sf, app)
+		b, _ := webBrowser(sf, app)
+		return b
 	}
 	if b := get(`{}`, false); b != "" {
 		t.Errorf("nothing set = %q, want the system's browser", b)
@@ -104,6 +118,14 @@ func TestWebBrowser(t *testing.T) {
 	}
 	if b := get(`{"webBrowser": "~/bin/chrome"}`, false); b != filepath.Join(home, "bin", "chrome") {
 		t.Errorf("~ in the file = %q", b)
+	}
+	if err := os.WriteFile(userFile, []byte(`{"webBrowserProfile": "Profile 1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := flag.NewFlagSet("xf web", flag.ContinueOnError)
+	sf := addSettingFlags(fs, config.Keys...)
+	if _, p := webBrowser(sf, true); p != "Profile 1" {
+		t.Errorf("profile from the file = %q", p)
 	}
 }
 

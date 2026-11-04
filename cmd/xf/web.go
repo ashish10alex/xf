@@ -147,7 +147,9 @@ func startWeb(pf projectFlags, sf *settingFlags, o webStart) error {
 	cfg.AutoExit = webAutoExit(sf)
 	cfg.Log = func(line string) { fmt.Fprintln(os.Stderr, cmdName+":", line) }
 	cfg.Forge = webForge(sf)
-	cfg.OpenURL = browserOpener()
+	browser, profile := webBrowser(sf, o.app)
+	open, link, note := pageOpener(browser, profile)
+	cfg.OpenURL = link
 	if dir := sessionDir(); dir != "" {
 		// Beside the sessions: ~/.local/state/xf/web-page.log.
 		cfg.PageLog = filepath.Join(filepath.Dir(dir), "web-page.log")
@@ -192,7 +194,6 @@ func startWeb(pf projectFlags, sf *settingFlags, o webStart) error {
 	url := srv.URL(l)
 	fmt.Fprintln(os.Stderr, cmdName+":", url)
 	fmt.Fprintln(os.Stderr, cmdName+": ctrl+c quits")
-	open, note := pageOpener(webBrowser(sf, o.app))
 	if note != "" && !o.noOpen {
 		fmt.Fprintln(os.Stderr, cmdName+":", note)
 	}
@@ -249,8 +250,9 @@ func webForge(sf *settingFlags) *web.Forge {
 
 // webBrowser is what xf web opens its page in: --web-browser, else the
 // user's config file, else the system's browser. --app makes the default
-// an app window; a browser the setting names is kept.
-func webBrowser(sf *settingFlags, app bool) string {
+// an app window; a browser the setting names is kept. profile is the
+// browser's profile to open it in, "" for the one last used.
+func webBrowser(sf *settingFlags, app bool) (browser, profile string) {
 	l, err := sf.load("")
 	if err != nil {
 		l = config.Loaded{Sources: map[string]string{}}
@@ -260,7 +262,7 @@ func webBrowser(sf *settingFlags, app bool) string {
 	if app && (b == "" || b == config.BrowserDefault) {
 		b = config.BrowserApp
 	}
-	return b
+	return b, l.WebBrowserProfile
 }
 
 // openWebProject connects to the engine of the project at root and makes

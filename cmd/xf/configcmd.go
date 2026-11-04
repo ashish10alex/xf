@@ -369,6 +369,8 @@ func defaultSetting(key string, l config.Loaded, root string) (value, from strin
 		return config.OpenSameTab, "default"
 	case config.KeyWebBrowser:
 		return config.BrowserDefault, "default: the system's browser"
+	case config.KeyWebBrowserProfile:
+		return "(none)", "default: the profile the browser last used"
 	case config.KeyDefaultBranch:
 		return config.DefaultBranch, "default"
 	case config.KeyTheme:

@@ -163,50 +163,79 @@ func (e browserEnv) find(p string) string {
 }
 
 // appWindowCommand is the command that opens url in an app window of
-// browser: on a Mac an .app is opened with open, which hands the flag to
-// the browser already running.
-func appWindowCommand(goos, browser, url string) *exec.Cmd {
-	if goos == "darwin" && strings.HasSuffix(strings.TrimSuffix(browser, "/"), ".app") {
-		return exec.Command("open", "-na", browser, "--args", "--app="+url)
+// browser, in profile when it names one.
+func appWindowCommand(goos, browser, profile, url string) *exec.Cmd {
+	return browserCommand(goos, browser, profileArgs(profile, "--app="+url))
+}
+
+// linkCommand is the command that opens a link the app window asks for in
+// profile of browser: a tab of that profile's last window, or a new window
+// when it has none.
+func linkCommand(goos, browser, profile, url string) *exec.Cmd {
+	return browserCommand(goos, browser, profileArgs(profile, url))
+}
+
+func profileArgs(profile string, args ...string) []string {
+	if profile == "" {
+		return args
 	}
-	return exec.Command(browser, "--app="+url)
+	return append([]string{"--profile-directory=" + profile}, args...)
+}
+
+// browserCommand runs browser with args: on a Mac an .app is opened with
+// open, which hands them to the browser already running.
+func browserCommand(goos, browser string, args []string) *exec.Cmd {
+	if goos == "darwin" && strings.HasSuffix(strings.TrimSuffix(browser, "/"), ".app") {
+		return exec.Command("open", append([]string{"-na", browser, "--args"}, args...)...)
+	}
+	return exec.Command(browser, args...)
 }
 
 // pageOpener opens xf web's page: in an app window of the browser
 // webBrowser names, or the system's browser. note says why it fell back to
 // the system's browser, if it did; open is nil when there is no way to
-// open one at all. Its errors are whole messages, ready to print.
-func pageOpener(webBrowser string) (open func(url string) error, note string) {
+// open one at all. Its errors are whole messages, ready to print. link
+// opens the links the app window asks for: in profile of its browser when
+// profile names one, else with the system's opener, which Chrome hands to
+// the profile last used (a new window when that profile has none).
+func pageOpener(webBrowser, profile string) (open, link func(url string) error, note string) {
 	env := systemBrowserEnv()
 	var notes []string
 	if env.noInterop && webBrowser == config.BrowserApp {
 		notes = append(notes, "Windows's Chrome and Edge are skipped: "+wslInteropFix)
 	}
 	tab := browserOpener()
+	link = tab
 	if browser := appBrowser(webBrowser, env); browser != "" {
+		if profile != "" {
+			link = func(url string) error {
+				_, err := startDetached(linkCommand(runtime.GOOS, browser, profile, url))
+				return err
+			}
+		}
 		start := func(url string) error {
 			// The browser outlives xf web, and ctrl+c here mustn't reach it.
-			_, err := startDetached(appWindowCommand(runtime.GOOS, browser, url))
+			_, err := startDetached(appWindowCommand(runtime.GOOS, browser, profile, url))
 			if err != nil && env.wsl && errors.Is(err, syscall.ENOEXEC) {
 				// A Windows browser named by path, which WSL can't run.
 				err = fmt.Errorf("%w\n%s", err, wslInteropFix)
 			}
 			return err
 		}
-		return appWindowOrTab(start, tab), strings.Join(notes, "\n")
+		return appWindowOrTab(start, tab), link, strings.Join(notes, "\n")
 	}
 	if n := notFoundNote(webBrowser, env.noInterop); n != "" {
 		notes = append(notes, n)
 	}
 	if tab == nil {
-		return nil, strings.Join(notes, "\n")
+		return nil, link, strings.Join(notes, "\n")
 	}
 	return func(url string) error {
 		if err := tab(url); err != nil {
 			return fmt.Errorf("could not open the browser: %w", err)
 		}
 		return nil
-	}, strings.Join(notes, "\n")
+	}, link, strings.Join(notes, "\n")
 }
 
 // notFoundNote says that no browser webBrowser names was found for an app

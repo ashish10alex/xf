@@ -119,6 +119,11 @@ const (
 	// name to open the app window in. An app window gets ctrl+n, which a
 	// tab off a Mac never does. It is the user's to set.
 	KeyWebBrowser = "webBrowser"
+	// KeyWebBrowserProfile is the Chromium profile directory, e.g.
+	// "Profile 1", that xf web's app window opens in, and its links with
+	// it; empty (the default) leaves it to the browser, which picks the
+	// profile last used. It is the user's to set.
+	KeyWebBrowserProfile = "webBrowserProfile"
 	// KeyForgePollSeconds is how often xf web asks GitLab or GitHub again
 	// while the branch's pipeline runs, in seconds, at least
 	// MinForgePollSeconds (ADR 0020). It is the user's to set.
@@ -263,6 +268,7 @@ var Titles = map[string]string{
 	KeyWebAutoExitSeconds:   "Auto-exit delay",
 	KeyWebOpenProjectIn:     "Open projects in",
 	KeyWebBrowser:           "Browser",
+	KeyWebBrowserProfile:    "Browser profile",
 	KeyForgePollSeconds:     "Pipeline check interval",
 	KeyVimMode:              "Vim mode",
 	KeyVimNextHunk:          "Next git change",
@@ -322,6 +328,7 @@ var Defaults = func() map[string]string {
 		KeyWebAutoExitSeconds:   strconv.Itoa(DefaultWebAutoExitSeconds) + " (off with --allow-host)",
 		KeyWebOpenProjectIn:     OpenSameTab,
 		KeyWebBrowser:           BrowserDefault,
+		KeyWebBrowserProfile:    NoDefault + " (the profile last used)",
 		KeyForgePollSeconds:     strconv.Itoa(DefaultForgePollSeconds),
 		KeyVimMode:              "false",
 	}
@@ -333,11 +340,11 @@ var Defaults = func() map[string]string {
 }()
 
 // Keys lists every key in the order they are documented.
-var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyForgePollSeconds,
+var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
-var userKeys = []string{KeyTheme, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyForgePollSeconds,
+var userKeys = []string{KeyTheme, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // Flags maps each key to the flag that sets it; the vim keys, the
@@ -365,6 +372,7 @@ var Flags = map[string]string{
 	KeySourceAutosaveMs:    "source-autosave-ms",
 	KeyWebAutoExitSeconds:  "web-auto-exit-seconds",
 	KeyWebBrowser:          "web-browser",
+	KeyWebBrowserProfile:   "web-browser-profile",
 }
 
 // OpenSameTab and OpenNewTab are webOpenProjectIn's values.
@@ -454,6 +462,8 @@ type Settings struct {
 	WebOpenProjectIn string
 	// WebBrowser is "default", "app" or a Chromium browser's path or name
 	WebBrowser string
+	// WebBrowserProfile is a Chromium profile directory, or empty
+	WebBrowserProfile string
 	// ForgePollSeconds is seconds, as a whole number
 	ForgePollSeconds string
 	// VimNextHunk and the rest are key sequences as vim writes them
@@ -536,6 +546,8 @@ func (s *Settings) field(key string) *string {
 		return &s.WebOpenProjectIn
 	case KeyWebBrowser:
 		return &s.WebBrowser
+	case KeyWebBrowserProfile:
+		return &s.WebBrowserProfile
 	case KeyVimNextHunk:
 		return &s.VimNextHunk
 	case KeyVimPrevHunk:

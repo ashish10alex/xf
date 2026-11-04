@@ -65,6 +65,7 @@ var settingMetas = map[string]settingMeta{
 	config.KeyWebAutoExitSeconds:   {"Editor & look", "number", nil, true},
 	config.KeyWebOpenProjectIn:     {"Editor & look", "choice", []string{config.OpenSameTab, config.OpenNewTab}, true},
 	config.KeyWebBrowser:           {"Editor & look", "text", nil, true},
+	config.KeyWebBrowserProfile:    {"Editor & look", "text", nil, true},
 	config.KeyForgePollSeconds:     {"Git hosting", "number", nil, true},
 	config.KeyScratchWarnGB:        {"Scratch & source", "number", nil, true},
 	config.KeyScratchConfirmGB:     {"Scratch & source", "number", nil, true},
