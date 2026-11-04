@@ -483,8 +483,12 @@ function SQLPane() {
     else if (v.sqlNote) bits.push(v.sqlNote);
     if (!S.cols.shown) { const note = vim.searchNote(S.buf); if (note) bits.push(note); }
   }
+  // Which SQL an incremental table shows: its incremental run or its full
+  // rebuild. The shown one is underlined like a tab; a click picks one.
+  const side = (incr, label) => html`<span class=${'tab' + (S.incremental === incr ? ' on' : '')}
+    onMouseDown=${(e) => { e.stopPropagation(); if (S.incremental !== incr) st.toggleIncremental(); redraw(); }}>${label}</span>`;
   const inc = v && v.hasIncremental
-    ? html` <button class="chip" onMouseDown=${(e) => { e.stopPropagation(); st.toggleIncremental(); redraw(); }}>${S.incremental ? '[incremental]' : '[full]'}</button>` : null;
+    ? html`<span class="variant" title="SQL for an incremental run or a full rebuild (i)"><span class="dim"> · </span>${side(true, 'incremental')}<span class="dim"> / </span>${side(false, 'full')}</span>` : null;
   return html`<${Pane} id="sql" focused=${S.focus === 'sql' || S.focus === 'lineage'} cls="sql-pane"
       busy=${compilingOver() && !errs ? '' : null} old=${errs ? '' : oldness()}
       title=${html`${title}${bits.length ? html`<span class="dim"> · ${bits.join(' · ')}</span>` : ''}${lin ? null : inc}${S.zoomed ? html`<span class="dim"> · zoom (esc)</span>` : ''}`}

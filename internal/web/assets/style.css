@@ -184,7 +184,6 @@ body.resizing { cursor: row-resize; user-select: none; }
 .pane-name { overflow: hidden; text-overflow: ellipsis; }
 .pane-title .tab { cursor: pointer; background: transparent; padding: 0; color: var(--dim); }
 .pane-title .tab.on { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
-.pane-title .chip { cursor: pointer; border: 0; background: var(--bg); color: var(--purple); padding: 0 4px; font: inherit; }
 .pane-title .caret { cursor: pointer; }
 .pane-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 6px 0 4px; }
 .pane-note {
