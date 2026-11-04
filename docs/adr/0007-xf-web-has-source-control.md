@@ -30,7 +30,7 @@ One git command that changes something runs at a time per project. While a long 
 
 ## History, branches and stashes
 
-Recent commits starts open, listing the last 10 commits of HEAD, with their short SHA, subject, author and age, those not yet pushed marked ↑; more loads the next 10. A commit opens to its files, and a file to its difference with the commit's first parent. Nothing reverts, resets or checks out a commit from here.
+Recent commits starts open, listing the last 10 commits of HEAD, with their subject, author's initials and age, those not yet pushed marked ↑ (the short SHA is in the row's tooltip, and `y` copies the SHA); more loads the next 10. A commit opens to its files, and a file to its difference with the commit's first parent. Nothing reverts, resets or checks out a commit from here.
 
 `n` makes a branch and switches to it (`git switch -c`), from HEAD with the working changes carried along, or from the commit the cursor is on in Recent commits; git decides whether the working changes allow it, as with the branch switcher.
 
