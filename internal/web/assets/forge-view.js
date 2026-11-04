@@ -78,10 +78,10 @@ export function ForgeRow({ r, cur, focused, onClick, refEl }) {
       return html`<div class=${cls('forge-mr')} style="padding-left:3.5ch" title=${fg.mrName(m) + ' ' + m.title + '\n' + m.source + ' → ' + m.target + '\no opens it'}
           onMouseDown=${down} ref=${refEl}>
         <span class="forge-num">${fg.mrName(m)}</span>
-        <span class="scm-name">${m.title}</span>
+        <span class="scm-name">${fg.shownTitle(m)}</span>
         <span class="spacer"></span>
         ${state && html`<span class=${'forge-tag ' + (m.state === 'merged' ? 'ok' : m.state === 'closed' ? 'error' : 'dim')}>${state}</span>`}
-        <span class="dim forge-flow">${m.source} → ${m.target}</span>
+        <span class="dim forge-flow">→ ${m.target}</span>
       </div>`;
     }
     case 'mrbase':

@@ -211,10 +211,8 @@ func ghBlocker(s string) string {
 		return "blocked by the branch's rules"
 	case "unstable":
 		return "checks aren't passing"
-	case "draft":
-		return "is a draft"
 	}
-	return "" // clean, has_hooks, unknown
+	return "" // clean, has_hooks, unknown; draft, which MR.Draft says
 }
 
 type ghRun struct {

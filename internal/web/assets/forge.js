@@ -43,6 +43,10 @@ export const word = () => (github() ? 'PR' : 'MR');
 export const longWord = () => (github() ? 'pull request' : 'merge request');
 export const sigil = () => (github() ? '#' : '!');
 export const mrName = (m) => sigil() + m.number;
+
+// shownTitle is a merge request's title as its row says it: a draft's
+// without the "Draft:" (or [Draft], (Draft), WIP:) its draft pill says.
+export const shownTitle = (m) => (m.draft ? m.title.replace(/^\s*(?:\[draft\]|\(draft\)|draft:|wip:)[\s:]*/i, '') || m.title : m.title);
 const hostName = () => (F.v && F.v.host) || 'the host';
 
 export const going = (s) => s === 'pending' || s === 'running';

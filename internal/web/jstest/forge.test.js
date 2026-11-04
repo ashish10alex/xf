@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { F, rows, pill, key } from '../assets/forge.js';
+import { F, rows, pill, key, shownTitle } from '../assets/forge.js';
 
 const view = (pipeline, mr) => ({ state: 'ok', kind: 'gitlab', host: 'gitlab.example.com', path: 'g/p', branch: 'feat', base: 'develop',
   mr: mr || { number: 42, title: 'Feat', state: 'open', source: 'feat', target: 'develop', approvals: 0, required: 1, unresolved: 0, blockers: null },
@@ -33,6 +33,25 @@ test('a trigger job lists the stages and jobs of the pipeline it started', () =>
   F.open['f:st:triggers'] = true;
   assert.deepEqual(shown(), ['stage triggers 0', 'job upload 0']);
   F.open = {};
+  F.v = null;
+});
+
+// A draft says so once: its pill, not also a "Draft:" in its title or a
+// blocker below it.
+test('a draft\'s row drops the title\'s draft marker', () => {
+  for (const t of ['Draft: Feat', 'draft:Feat', '[Draft] Feat', '(Draft) Feat', 'WIP: Feat', 'Draft:: Feat']) {
+    assert.equal(shownTitle({ title: t, draft: true }), 'Feat', t);
+  }
+  assert.equal(shownTitle({ title: 'Draft: Feat', draft: false }), 'Draft: Feat', 'only a draft\'s');
+  assert.equal(shownTitle({ title: 'Drafting the plan', draft: true }), 'Drafting the plan');
+  assert.equal(shownTitle({ title: 'Draft:', draft: true }), 'Draft:', 'never empty');
+});
+
+test('a draft\'s notes list its blockers, and no draft blocker', () => {
+  F.v = view(null, { number: 42, title: 'Draft: Feat', state: 'open', draft: true, source: 'feat', target: 'develop', approvals: 0, required: 1, unresolved: 0, blockers: ['needs a rebase'] });
+  const notes = rows().filter((r) => r.kind === 'mrnote').map((r) => r.text);
+  assert.deepEqual(notes, ['0/1 approvals · 0 unresolved', '⚠ needs a rebase', 'no pipeline']);
+  assert.equal(pill().text, '!42 draft');
   F.v = null;
 });
 

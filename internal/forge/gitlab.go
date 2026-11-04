@@ -209,6 +209,8 @@ func glBlocker(s string) string {
 	switch s {
 	case "", "mergeable", "checking", "unchecked", "approvals_syncing", "preparing", "not_open":
 		return ""
+	case "draft_status":
+		return "" // MR.Draft says it, as its state
 	case "conflict":
 		return "has conflicts"
 	case "need_rebase":
@@ -219,8 +221,6 @@ func glBlocker(s string) string {
 		return "the pipeline is still running"
 	case "discussions_not_resolved":
 		return "threads aren't resolved"
-	case "draft_status":
-		return "is a draft"
 	case "not_approved":
 		return "isn't approved"
 	case "requested_changes":

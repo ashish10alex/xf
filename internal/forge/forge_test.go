@@ -251,6 +251,34 @@ func TestGitLabDownstream(t *testing.T) {
 	}
 }
 
+// A draft says so once, as its state: GitLab's draft_status (and
+// GitHub's draft mergeable_state) is no blocker as well.
+func TestDraftIsNoBlocker(t *testing.T) {
+	p := "/api/v4/projects/g%2Fp"
+	srv := fake(t, "PRIVATE-TOKEN", "tok", map[string]any{
+		"GET " + p + "/merge_requests?per_page=20&source_branch=feat&state=opened": []map[string]any{
+			{"iid": 8, "title": "Draft: Into main", "state": "opened", "draft": true, "target_branch": "main", "source_branch": "feat", "project_id": 1, "source_project_id": 1},
+		},
+		"GET " + p + "/merge_requests/8": map[string]any{
+			"iid": 8, "title": "Draft: Into main", "state": "opened", "draft": true, "target_branch": "main", "source_branch": "feat",
+			"web_url": "https://gl/g/p/-/merge_requests/8", "detailed_merge_status": "draft_status",
+		},
+		"GET " + p + "/merge_requests/8/approvals":                          map[string]any{"approved_by": []any{}, "approvals_required": 0},
+		"GET " + p + "/merge_requests/8/discussions":                        []any{},
+		"GET " + p + "/pipelines?order_by=id&per_page=1&ref=feat&sort=desc": []any{},
+	})
+	f, err := New(GitLab, "tok", nil).Find(context.Background(), RepoAt(GitLab, srv.URL, "g/p"), "feat", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := f.MR; m == nil || !m.Draft || len(m.Blockers) != 0 {
+		t.Fatalf("a draft, with no blocker: %+v", m)
+	}
+	if w := ghBlocker("draft"); w != "" {
+		t.Errorf("GitHub's draft: %q", w)
+	}
+}
+
 func TestGitLabNoMR(t *testing.T) {
 	p := "/api/v4/projects/g%2Fp"
 	srv := fake(t, "PRIVATE-TOKEN", "tok", map[string]any{
