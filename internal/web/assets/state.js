@@ -11,7 +11,7 @@ import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranch
 import { answerProd, askDefer, changedKey, checkKey, deferAskKey, deferOn, onProgress, openChanged, openCost, openImpact, openTags, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleDefer, toggleTag } from './checks.js';
 import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showErrorsTab, sqlTabOn } from './errors-tab.js';
 import { clearHistory, closeWatch, hasTabs, jobsTableKey, logKey, nextTab, openKept, openURL, openWatch } from './log-tabs.js';
-import { askRemoveWorktreeHere, cycleProject, nextOpenProject, openByName, pickerKey, readOpenWorktrees, setPickerQuery, switchProject } from './picker.js';
+import { askRemoveWorktreeHere, cycleProject, nextOpenProject, openByName, pickerKey, readOpenWorktrees, setPickerQuery, stopFind, switchProject } from './picker.js';
 import { columnsKey, searchSQLFromPalette, sqlKey } from './sql-pane.js';
 import { unsavedIn, noteVimMode } from './vim-mode.js';
 
@@ -25,6 +25,12 @@ export const S = {
   // paths are the picker's rows while its query is a path (~/… or /…),
   // which opens a project xf has not opened before; null otherwise.
   paths: null,
+  // find is the picker's folder search (picker.js), null when none shows;
+  // canFind says this xf web can add the projects it finds.
+  find: null, canFind: false,
+  // pickerNew are the roots the picker just added, marked new until its
+  // query changes.
+  pickerNew: null,
   boot: null, caps: {}, state: null,
   sel: null,        // the selected action's ID
   anchor: null,     // the action whose siblings the Actions pane lists
@@ -257,6 +263,30 @@ async function request(method, path, body, key = S.key) {
   }
   return data;
 }
+// getLines asks for path's lines of JSON and gives each to each as it
+// comes; it ends after the last. With body, it posts body.
+export async function getLines(path, each, signal, body) {
+  const headers = body ? { 'Content-Type': 'application/json' } : {};
+  if (S.key) headers['X-Xf-Project'] = S.key;
+  const res = await fetch(path, { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin', signal });
+  if (!res.ok) throw new Error((await res.text()).trim() || res.statusText);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) each(JSON.parse(line));
+    }
+    if (done) break;
+  }
+  if (buf.trim()) each(JSON.parse(buf));
+}
+
 export const get = (path) => call('GET', path);
 export const post = (path, body) => call('POST', path, body || {});
 // getAs and postAs ask of the open project key rather than this tab's,
@@ -476,6 +506,7 @@ export async function start() {
     const b = await get(bootPath(want));
     applyTheme(b.theme, b.themes, b.themeOwn);
     S.openIn = b.openIn || 'same-tab';
+    S.canFind = !!b.find;
     S.open = b.open || [];
     if (b.project) {
       holdFirstDraw();
@@ -2206,6 +2237,7 @@ export function openProjects() {
   S.overlay = 'projects';
   S.pickerConfirm = null;
   S.paths = null;
+  stopFind(true);
   S.pickerBranches = null;
   setPickerQuery('');
   get('/api/picker/branches').then((m) => { S.pickerBranches = m; redraw(); }).catch(() => { S.pickerBranches = {}; redraw(); });
@@ -2662,5 +2694,5 @@ export { answerDefer, deferOn, toggleDefer } from './checks.js';
 export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, toggleTag } from './checks.js';
 export { actOnErrorRow, errorGroups, errorKinds, errorRows, errorsTabShown, pickSQLTab, runFix, runLogFix, showErrorsTab, sqlTabOn } from './errors-tab.js';
 export { clearHistory, closeWatch, JOB_COLS, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
-export { pickProject, pickerKey, setPickerQuery } from './picker.js';
+export { addFound, leaveFind, pickProject, pickerKey, setPickerQuery, toggleFound } from './picker.js';
 export { endSQLSearch, setSQLSearchQuery } from './sql-pane.js';

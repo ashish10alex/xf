@@ -74,6 +74,11 @@ type Config struct {
 	// closes it and goes back to the picker; without it, q quits.
 	Projects func() []session.Project
 	Open     func(p session.Project) (*Project, error)
+	// Add remembers the project at root as tool's for the picker to
+	// list, not opened yet, as xf search does (session.Add): added is
+	// false for one xf knows already. nil leaves the picker's folder
+	// search out (findprojects.go).
+	Add func(root, tool string) (added bool, err error)
 	// Token is the secret a request must carry when Hosts are given or a
 	// proxy forwards it; "" makes one.
 	Token string
@@ -420,6 +425,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/picker/branches", s.pickerBranches)
 	mux.HandleFunc("GET /api/picker/info", s.pickerInfo)
 	mux.HandleFunc("GET /api/picker/auth", s.pickerAuth)
+	mux.HandleFunc("POST /api/picker/find", s.findProjects)
+	mux.HandleFunc("POST /api/picker/add", s.addProjects)
 	mux.HandleFunc("POST /api/credentials", s.checkCredentials)
 	mux.HandleFunc("POST /api/quit", s.quit)
 	mux.HandleFunc("POST /api/close", s.closeOpen)
@@ -579,6 +586,9 @@ type bootView struct {
 	Themes []webtheme.Theme `json:"themes"`
 	// ThemeOwn are the theme keys the project's own config file sets.
 	ThemeOwn []string `json:"themeOwn,omitempty"`
+	// Find says the picker can search a folder for projects and add
+	// them (Config.Add).
+	Find bool `json:"find,omitempty"`
 }
 
 type pickerProject struct {
@@ -605,7 +615,7 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 		op, err := s.ensure(key)
 		if err == nil {
 			s.touch(op)
-			writeJSON(w, bootView{Project: op.p.boot(), Key: op.key, Theme: s.theme(op.p.deps.Root), ThemeOwn: themeOwn(op.p.deps.Root), Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries()})
+			writeJSON(w, bootView{Project: op.p.boot(), Key: op.key, Theme: s.theme(op.p.deps.Root), ThemeOwn: themeOwn(op.p.deps.Root), Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil})
 			return
 		}
 		missing = err.Error()
@@ -620,7 +630,7 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	home, _ := os.UserHomeDir()
 	if frontend.IsPathQuery(q) {
-		writeJSON(w, bootView{Picker: out, Paths: frontend.PathRows(home, q, projects), Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries()})
+		writeJSON(w, bootView{Picker: out, Paths: frontend.PathRows(home, q, projects), Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil})
 		return
 	}
 	isOpen := map[string]bool{}
@@ -641,7 +651,7 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 			When: frontend.RelTime(now, pr.LastVisited), Key: s.keyOf(pr.Root, projects, open), Open: isOpen[project.RealPath(pr.Root)],
 			Unsaved: s.unsavedOf(pr.Root, ""), worktreeOf: wv})
 	}
-	writeJSON(w, bootView{Picker: out, Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries()})
+	writeJSON(w, bootView{Picker: out, Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil})
 }
 
 // openIn is where a project picked from a project's page opens:

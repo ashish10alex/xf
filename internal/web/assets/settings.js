@@ -9,7 +9,7 @@
 // project reopens, which a banner offers. The gear at the top and , open
 // it; ctrl+q leaves it.
 
-import { S, get, post, redraw, hooks, fitFocus, pane2Default, say } from './state.js';
+import { S, get, getLines, post, redraw, hooks, fitFocus, pane2Default, say } from './state.js';
 import { setVimKeys, setVimMode, setWrap } from './editor.js';
 
 export const SECTIONS = ['Running', 'Tool', 'Editor & look', 'Scratch & source', 'Git hosting'];
@@ -129,29 +129,6 @@ async function readInfo(again) {
   }
 }
 
-// getLines asks for path's lines of JSON and gives each to each as it
-// comes; it ends after the last.
-async function getLines(path, each, signal) {
-  const headers = {};
-  if (S.key) headers['X-Xf-Project'] = S.key;
-  const res = await fetch(path, { headers, credentials: 'same-origin', signal });
-  if (!res.ok) throw new Error((await res.text()).trim() || res.statusText);
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (value) buf += dec.decode(value, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (line) each(JSON.parse(line));
-    }
-    if (done) break;
-  }
-  if (buf.trim()) each(JSON.parse(buf));
-}
 
 // closeSettings leaves the page; with a JSON draft it asks first, and
 // force leaves without asking (the drafts were saved or discarded).

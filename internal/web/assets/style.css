@@ -825,10 +825,10 @@ mark.cur { background: var(--amber); color: var(--bg); }
    they share a second line under the name. */
 .pick-meta { display: contents; }
 @media (max-width: 560px) {
-  .pick-row:not(.path-row) { grid-template-columns: 2ch minmax(0, 1fr) auto !important; grid-template-areas: "lead name when" ". meta meta"; row-gap: 0; padding: 3px 10px; }
-  .pick-row:not(.path-row) > .lead { grid-area: lead; }
-  .pick-row:not(.path-row) > .pick-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pick-row:not(.path-row) > .pick-when { grid-area: when; }
+  .pick-row:not(.path-row):not(.find-row) { grid-template-columns: 2ch minmax(0, 1fr) auto !important; grid-template-areas: "lead name when" ". meta meta"; row-gap: 0; padding: 3px 10px; }
+  .pick-row:not(.path-row):not(.find-row) > .lead { grid-area: lead; }
+  .pick-row:not(.path-row):not(.find-row) > .pick-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pick-row:not(.path-row):not(.find-row) > .pick-when { grid-area: when; }
   .pick-meta { grid-area: meta; display: flex; gap: 10px; min-width: 0; font-size: 0.9em; }
   .pick-meta .pick-branch { flex: none; max-width: 40%; }
   .pick-meta .pick-root { flex: 1; min-width: 0; }
@@ -915,6 +915,32 @@ mark.cur { background: var(--amber); color: var(--bg); }
 .proj-btn { padding: 0; }
 .path-label { white-space: nowrap; }
 .picker p code { color: var(--fg); }
+.pick-new { color: var(--purple); font-weight: 600; }
+/* Finding the projects in a folder (picker.js): the folder typed is the
+   row that starts it, and the projects found list with a tick each. */
+.find-go { color: var(--focus); }
+.find-row-go .pick-root { color: var(--fg); }
+.find-link { color: var(--focus); font: inherit; }
+.find-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 14px 8px; }
+.find-empty p { margin: 0; }
+.find-btn { font: inherit; }
+.find-list .find-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-progress { height: 2px; margin: -4px 0 4px; }
+.find-progress.on { background: linear-gradient(90deg, var(--blue), var(--purple), var(--pink), var(--amber), var(--green), var(--blue));
+  background-size: 200% 100%; animation: ramp 1.6s linear infinite; }
+.find-row { align-items: center; }
+.find-row.known { cursor: default; }
+.find-row.known .pick-name { color: var(--dim); font-weight: 400; }
+.find-tick { display: inline-flex; align-items: center; justify-content: center; width: 2ch; height: 1.15em; border: 1px solid var(--dim);
+  border-radius: 3px; font-size: 0.85em; line-height: 1; color: var(--dim); }
+.find-tick.on { background: var(--focus); border-color: var(--focus); color: var(--bg); font-weight: 700; }
+.find-row.known .find-tick { border-style: dashed; opacity: 0.6; }
+.find-actions { position: sticky; bottom: -6px; display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-top: 6px;
+  border-top: 1px solid var(--rule); background: var(--panel); }
+@media (max-width: 560px) {
+  .find-row { grid-template-columns: 2ch 3ch minmax(0, 1fr) auto !important; }
+  .find-row > .pick-root, .find-row > .pick-when { display: none; }
+}
 .auth-warn { display: flex; align-items: flex-start; gap: 12px; padding: 8px 12px; margin: 0 0 12px; border: 1px solid var(--amber); border-radius: 6px;
   background: color-mix(in srgb, var(--amber) 10%, transparent); }
 .auth-line { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 2px; flex: 1; min-width: 0; }

@@ -2080,7 +2080,7 @@ function Picker({ overlay }) {
   const list = html`<div class="picker-list">
         <div class="query">
           <span class="prompt">></span>
-          <input value=${S.pickerQuery} placeholder=${S.pickerTotal ? 'search projects by name, path or tool, or type a path: ~/…' : 'type a path to a project: ~/…'}
+          <input value=${S.pickerQuery} placeholder=${S.pickerTotal ? 'search projects by name, path or tool, or type a path: ~/…' : S.canFind ? 'type a folder to find the projects in it, or a project\'s path: ~/…' : 'type a path to a project: ~/…'}
             spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
             ref=${(e) => e && document.activeElement !== e && e.focus()}
             onInput=${(e) => st.setPickerQuery(e.currentTarget.value)}
@@ -2096,7 +2096,9 @@ function Picker({ overlay }) {
           ${!S.paths && html`<span class="dim count">${S.picker.length}/${S.pickerTotal}</span>`}
         </div>
         ${S.paths ? html`<${PathRows} />` : html`
-        ${!S.picker.length && html`<div class="dim pad">${S.pickerTotal ? 'no project matches' + (S.pickerQuery ? ' · esc clears the search' : '') : 'no projects yet · type a path, e.g. ~/repos/…'}</div>`}
+        ${!S.picker.length && (S.pickerTotal || !S.canFind
+          ? html`<div class="dim pad">${S.pickerTotal ? 'no project matches' + (S.pickerQuery ? ' · esc clears the search' : '') : 'no projects yet · type a path, e.g. ~/repos/…'}</div>`
+          : html`<div class="find-empty"><p>No projects yet.</p><${FindButton} /><p class="dim">or type the path to a Dataform or dbt project above</p></div>`)}
         ${S.picker.map((p, i) => html`<div class=${'pick-row' + (i === S.pickerCursor ? ' sel' : '') + (afterOpen(i) ? ' after-open' : '')} style=${cols}
           ref=${(e) => { if (e && i === S.pickerCursor) scrollNearest(e); }}
           onMouseMove=${() => { if (S.pickerCursor !== i) { S.pickerCursor = i; redraw(); } }}
@@ -2105,14 +2107,23 @@ function Picker({ overlay }) {
         <span class=${'pick-name' + (p.child ? ' pick-child' : '') + (p.found ? ' dim' : '')} title=${p.name}>${underline(nameOf(p), words)}</span><span class="pick-meta"><span class="pick-branch" title=${branchOf(p)}>${branchOf(p)}</span><span class=${'kind-word ' + (p.backend === 'dbt' ? 'k-inc' : 'k-tbl')}>${underline(p.backend, words)}</span>
         <span class="dim pick-root" title=${p.root}>${underline(p.path, words)}</span></span><span class="dim pick-when"><${Badges} p=${p} />${p.when}</span></div>`)}`}
       </div>`;
+  const f = S.find;
   // shift+del removes a worktree (ADR 0032).
   const cur = S.picker[S.pickerCursor];
   const rm = cur && cur.worktree ? [['shift+del', 'remove worktree']] : [];
-  const keys = overlay
-    ? (S.paths ? [['enter', where(newTab)], ['shift+enter', where(!newTab)], ['tab', 'complete'], ['ctrl+y', 'copy path'], ['esc', 'close']]
+  // On a folder that is no project, enter finds the projects in it.
+  const pathRow = S.paths && S.paths[S.pickerCursor];
+  const findHere = S.canFind && pathRow && !pathRow.backend && pathRow.search;
+  const pathOpen = (here, there) => (findHere ? [['enter', 'find projects in it']] : [['enter', here], ['shift+enter', there]]);
+  const keys = f
+    ? (f.searching ? [['enter', 'add those found so far'], ['space', 'tick'], ['↑/↓', 'move'], ['esc', 'stop searching']]
+      : [['enter', 'add the ticked'], ['space', 'tick'], ['ctrl+a', 'all or none'], ['↑/↓', 'move'], ['esc', 'back']])
+    : overlay
+    ? (S.paths ? [...pathOpen(where(newTab), where(!newTab)), ['tab', 'complete'], ['ctrl+y', 'copy path'], ['esc', 'close']]
       : [['enter', where(newTab)], ['shift+enter', where(!newTab)], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['del', delWord()], ...rm, ['esc', 'close']])
-    : S.paths ? [['enter', 'open'], ['shift+enter', 'new tab'], ['tab', 'complete'], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['esc', 'clear'], ['ctrl+c', 'quit']]
+    : S.paths ? [...pathOpen('open', 'new tab'), ['tab', 'complete'], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['esc', 'clear'], ['ctrl+c', 'quit']]
       : [['enter', 'open'], ['shift+enter', 'new tab'], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['del', delWord()], ...rm, ['esc', 'clear search'], ['ctrl+c', 'quit']];
+  const body = f ? html`<${FindList} />` : list;
   const sure = S.pickerConfirm;
   const footer = sure && sure.remove && sure.dirty
     ? html`<div class="footer warn">the worktree ${sure.name}: ${sure.dirty}. <kbd>y</kbd> removes it anyway, losing them; any other key keeps it</div>`
@@ -2125,18 +2136,24 @@ function Picker({ overlay }) {
     return html`<div class="overlay-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) { S.overlay = null; redraw(); } }}>
       <div class="picker picker-over">
         <h1>switch or add a project<span class="dim">${'\u00a0· ' + (newTab ? 'in a new tab' : 'in this tab')}</span></h1>
-        ${list}${footer}
+        ${body}${footer}
       </div>
     </div>`;
   }
   return html`<div class="app picker-page">
     <div class="picker">
       <h1><span class="badge">XF</span> pick a project<span class="spacer"></span><${WindowsPill} /><${ThemeButton} /><${GearButton} /></h1>
-      <p class="dim">${S.pickerTotal
+      <p class="dim">${f
+        ? html`Ticked projects join this list, ready to open; xf doesn't open them yet.`
+        : S.pickerTotal && S.canFind
+        ? html`These are the projects xf has opened or found. Type a path (<code>~/…</code> or <code>/…</code>) to open another, or <${FindButton} link=${true} />.`
+        : S.pickerTotal
         ? html`These are the projects xf has opened or <code>xf search</code> found; type a path (<code>~/…</code> or <code>/…</code>) to open another.`
+        : S.canFind
+        ? html`xf hasn't opened a project yet. Type a folder, such as <code>~/repos</code>, to find the Dataform and dbt projects in it.`
         : html`xf hasn't opened a project yet. Type the path to a Dataform or dbt project: <code>~/…</code> or <code>/…</code>.`}</p>
       <${AuthWarning} />
-      ${list}${footer}
+      ${body}${footer}
     </div>
   </div>`;
 }
@@ -2182,13 +2199,14 @@ function Badges({ p }) {
   const o = S.open.find((x) => x.key === p.key);
   const unsaved = (o ? o.unsaved : p.unsaved) || [];
   const bits = [];
+  if (S.pickerNew && S.pickerNew.has(p.root)) bits.push(html`<span class="pick-new">new</span>`);
   if (p.open) bits.push(html`<span class="pick-open">${openWord(p)}</span>`);
   if (o && o.compiling) bits.push(html`<span class="warn">compiling…</span>`);
   if (o && o.running) bits.push(html`<span class="warn">running…</span>`);
   if (o && o.errors) bits.push(html`<span class="error">${o.errors} error${o.errors === 1 ? '' : 's'}</span>`);
   else if (o && o.dryRunErrors) bits.push(html`<span class="error">${o.dryRunErrors} dry run error${o.dryRunErrors === 1 ? '' : 's'}</span>`);
   if (unsaved.length) bits.push(html`<span class="warn" title=${unsaved.join('\n')}>● unsaved</span>`);
-  return bits.map((b) => html`${b} · `);
+  return bits.map((b, i) => html`${b}${i < bits.length - 1 || p.when ? ' · ' : ''}`);
 }
 
 function openWord(p) {
@@ -2227,16 +2245,73 @@ function AuthWarning() {
 
 // PathRows are the picker's rows while its query is a path: the folder
 // typed, then the folders it completes to, each labelled with the tool
-// whose project it is the root of.
+// whose project it is the root of. The folder typed, when it is no
+// project, is the row that finds the projects in it.
 function PathRows() {
-  return S.paths.map((r, i) => html`<div class=${'pick-row path-row' + (i === S.pickerCursor ? ' sel' : '') + (r.more ? ' more' : '')}
-    ref=${(e) => { if (e && i === S.pickerCursor) scrollNearest(e); }}
+  return S.paths.map((r, i) => {
+    const sel = i === S.pickerCursor;
+    const find = S.canFind && r.search && !r.backend;
+    const label = find && !r.folder
+      ? html`<span class="find-go">⌕ find projects in it</span>`
+      : html`${r.backend && html`<span class=${'kind-word ' + (r.backend === 'dbt' ? 'k-inc' : 'k-tbl')}>${r.backend}</span>`}${r.note && html` <span class="dim">${r.note}</span>`}${find && sel && html`<span class="dim">enter finds projects in it · tab goes in</span>`}`;
+    return html`<div class=${'pick-row path-row' + (sel ? ' sel' : '') + (r.more ? ' more' : '') + (find && !r.folder ? ' find-row-go' : '')}
+    ref=${(e) => { if (e && sel) scrollNearest(e); }}
     onMouseMove=${() => { if (S.pickerCursor !== i) { S.pickerCursor = i; redraw(); } }}
     onClick=${(e) => st.pickProject(i, true, e.shiftKey)}>
-    <span class="lead">${i === S.pickerCursor ? '▸' : ''}</span>
-    <span class=${'pick-root' + (r.backend ? '' : ' dim')} title=${r.root || ''}>${r.path}</span>
-    <span class="path-label">${r.backend && html`<span class=${'kind-word ' + (r.backend === 'dbt' ? 'k-inc' : 'k-tbl')}>${r.backend}</span>`}${r.note && html` <span class="dim">${r.note}</span>`}</span>
-  </div>`);
+    <span class="lead">${sel ? '▸' : ''}</span>
+    <span class=${'pick-root' + (r.backend || find ? '' : ' dim')} title=${r.root || ''}>${r.path}</span>
+    <span class="path-label">${label}</span>
+  </div>`;
+  });
+}
+
+// FindButton starts finding projects: it types ~/ in the picker, which
+// lists the home folder's folders to pick one from, the home folder
+// itself first.
+function FindButton({ link }) {
+  const go = (e) => { e.preventDefault(); st.setPickerQuery('~/'); };
+  return link
+    ? html`<button class="link find-link" onMouseDown=${go}>find the projects in a folder</button>`
+    : html`<button class="run-btn find-btn" onMouseDown=${go}>⌕ Find projects in a folder…</button>`;
+}
+
+// FindList is the picker while it finds the projects in a folder: those
+// found so far, each ticked to add unless the picker lists it already,
+// and the buttons that add them or go back.
+function FindList() {
+  const f = S.find;
+  const fresh = f.rows.filter((r) => !r.known);
+  const ticked = fresh.filter((r) => r.on).length;
+  const known = f.rows.length - fresh.length;
+  const nameW = Math.min(36, Math.max(12, ...f.rows.map((r) => r.name.length))) + 1;
+  const cols = `grid-template-columns:2ch 3ch ${nameW}ch 9ch minmax(0,1fr) auto`;
+  const count = f.rows.length + ' found' + (f.searching ? ' so far' : '') + (known ? ' · ' + known + ' listed already' : '');
+  const empty = f.error ? '' : f.searching ? 'looking in every folder below ' + f.shown + '…' : 'no Dataform or dbt projects in ' + f.shown;
+  return html`<div class="picker-list find-list">
+      <div class="query">
+        <span class="prompt">⌕</span>
+        <span class="find-title" title=${f.shown}>${f.searching ? 'finding projects in ' : 'projects in '}<b>${f.shown}</b></span>
+        <span class="dim count">${count}</span>
+      </div>
+      <div class=${'find-progress' + (f.searching ? ' on' : '')}></div>
+      ${f.error && html`<div class="error pad">${f.error}</div>`}
+      ${!f.rows.length && empty && html`<div class="dim pad">${empty}</div>`}
+      ${f.rows.map((r, i) => html`<div class=${'pick-row find-row' + (i === f.cursor ? ' sel' : '') + (r.known ? ' known' : '')} style=${cols}
+        ref=${(e) => { if (e && i === f.cursor) scrollNearest(e); }}
+        onMouseMove=${() => { if (f.cursor !== i) { f.cursor = i; redraw(); } }}
+        onClick=${() => { f.cursor = i; st.toggleFound(i); redraw(); }}>
+        <span class="lead">${i === f.cursor ? '▸' : ''}</span>
+        <span class=${'find-tick' + (r.on ? ' on' : '')} role="checkbox" aria-checked=${r.on ? 'true' : 'false'} aria-disabled=${r.known ? 'true' : 'false'}>${r.known ? '·' : r.on ? '✓' : ''}</span>
+        <span class="pick-name" title=${r.name}>${r.name}</span>
+        <span class=${'kind-word ' + (r.backend === 'dbt' ? 'k-inc' : 'k-tbl')}>${r.backend}</span>
+        <span class="dim pick-root" title=${r.root}>${r.rel === '.' ? r.path : r.rel}</span>
+        <span class="dim pick-when">${r.known ? 'listed already' : ''}</span>
+      </div>`)}
+      <div class="find-actions">
+        <button class="run-btn" disabled=${!ticked || f.adding} onMouseDown=${(e) => { e.preventDefault(); st.addFound(); }}>${f.adding ? 'adding…' : 'Add ' + ticked + ' project' + (ticked === 1 ? '' : 's')}</button>
+        <button class="plain" onMouseDown=${(e) => { e.preventDefault(); st.leaveFind(); redraw(); }}>${f.searching ? 'Stop searching' : 'Back'}</button>
+      </div>
+    </div>`;
 }
 
 st.hooks.projectsOverlay = () => html`<${Picker} overlay=${true} />`;

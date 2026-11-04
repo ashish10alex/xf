@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/frontend"
-	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/session"
 )
 
@@ -60,24 +60,8 @@ func runSearch(args []string) error {
 // projects, listing a project found from more than one of them once.
 func searchProjects(home string, dirs []string, want string) ([]backend.Found, error) {
 	var out []backend.Found
-	seen := map[string]bool{}
-	for _, d := range dirs {
-		abs, err := filepath.Abs(frontend.ExpandPath(home, d))
-		if err != nil {
-			return nil, err
-		}
-		found, err := backend.Search(abs, want)
-		if err != nil {
-			return nil, err
-		}
-		for _, f := range found {
-			if real := project.RealPath(f.Root); !seen[real] {
-				seen[real] = true
-				out = append(out, f)
-			}
-		}
-	}
-	return out, nil
+	err := frontend.SearchProjects(context.Background(), home, dirs, want, func(f backend.Found) { out = append(out, f) })
+	return out, err
 }
 
 // addFound adds the projects found to the sessions in dir and prints each,

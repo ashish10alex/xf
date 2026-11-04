@@ -39,6 +39,9 @@ type PathRow struct {
 	// no project says.
 	Note string `json:"note,omitempty"`
 	Why  string `json:"why,omitempty"`
+	// Search is a folder that is no project, which xf search could find
+	// projects in.
+	Search bool `json:"search,omitempty"`
 }
 
 // IsPathQuery says whether a picker's query is a path: absolute, or from
@@ -166,6 +169,7 @@ func folderRows(root, path string, folder bool, known map[string]string) []PathR
 	}
 	_, err = backend.Detect(root, "")
 	row.Why = err.Error()
+	row.Search = true
 	if i := strings.Index(row.Why, "; run xf"); i >= 0 {
 		row.Why = row.Why[:i] // the hint is for the command line
 	}

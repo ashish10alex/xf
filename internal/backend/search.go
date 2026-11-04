@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -27,22 +28,33 @@ var skipDirs = map[string]bool{"node_modules": true, "dbt_packages": true, "targ
 // folders inside a project are skipped, and so are folders that cannot be
 // read.
 func Search(dir, want string) ([]Found, error) {
+	var out []Found
+	err := SearchEach(context.Background(), dir, want, func(f Found) { out = append(out, f) })
+	return out, err
+}
+
+// SearchEach is Search giving each project to each as the walk finds it,
+// so a long walk can show what it has found so far. It stops with ctx's
+// error once ctx is done.
+func SearchEach(ctx context.Context, dir, want string, each func(Found)) error {
 	if want != "" {
 		if _, ok := markers[want]; !ok {
-			return nil, fmt.Errorf("unknown backend %q: want %s", want, strings.Join(Names, " or "))
+			return fmt.Errorf("unknown backend %q: want %s", want, strings.Join(Names, " or "))
 		}
 	}
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if info, err := os.Stat(real); err != nil {
-		return nil, err
+		return err
 	} else if !info.IsDir() {
-		return nil, fmt.Errorf("%s is not a folder", dir)
+		return fmt.Errorf("%s is not a folder", dir)
 	}
-	var out []Found
-	err = filepath.WalkDir(real, func(path string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(real, func(path string, d fs.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			if path == real {
 				return err
@@ -65,10 +77,9 @@ func Search(dir, want string) ([]Found, error) {
 		if rel, err := filepath.Rel(real, path); err == nil && rel != "." {
 			root = filepath.Join(dir, rel)
 		}
-		out = append(out, Found{Root: root, Backend: name})
+		each(Found{Root: root, Backend: name})
 		return filepath.SkipDir
 	})
-	return out, err
 }
 
 // toolOf is the tool whose project dir is the root of: want's, or the

@@ -1,7 +1,7 @@
 // The project picker: its search, a path that opens a project xf has
 // not opened yet, and opening a project here or in a new tab.
 
-import { S, arrangePicker, closeListed, copy, get, goToProject, hooks, post, projectURL, quit, redraw, removeListedWorktree, say } from './state.js';
+import { S, arrangePicker, closeListed, copy, get, getLines, goToProject, hooks, post, projectURL, quit, redraw, removeListedWorktree, say } from './state.js';
 
 // pickerKey is the picker's keys. Letters go to its search, so the list
 // moves with ↑/↓ and ctrl+n/ctrl+p, ctrl+y copies the row's full path,
@@ -15,6 +15,7 @@ export function pickerKey(k) {
     if (k === 'y') { if (c.remove) removeListedWorktree(c); else closeListed(c); }
     return true;
   }
+  if (S.find) return findKey(k);
   const n = (S.paths || S.picker).length;
   if (S.paths) {
     S.flash = '';
@@ -46,6 +47,7 @@ let pickerSeq = 0;
 export async function setPickerQuery(q) {
   S.pickerQuery = q;
   S.pickerCursor = 0;
+  S.pickerNew = null;
   redraw();
   const seq = ++pickerSeq;
   try {
@@ -70,6 +72,7 @@ async function pickPath(i, clicked, flip) {
   if (!r || r.more) return;
   if (!r.backend) {
     if (clicked && r.folder) { setPickerQuery(r.path + pathSep()); return; }
+    if (r.search && S.canFind) { startFind(r.path); return; }
     say(r.why || 'not a Dataform or dbt project');
     return;
   }
@@ -147,6 +150,112 @@ function completePath() {
 function pathSep() {
   const q = S.pickerQuery;
   return q.includes('\\') && !q.includes('/') ? '\\' : '/';
+}
+
+// ---- finding the projects in a folder ----
+// enter on a folder that is no project searches it, and the folders
+// below it, for Dataform and dbt projects, as xf search does. They list
+// as they are found, each ticked unless the picker lists it already;
+// enter adds the ticked ones to the picker, not opened yet.
+
+let findAsk = null;
+
+// startFind searches the folder path, as typed (~/…, /…).
+export function startFind(path) {
+  stopFind(true);
+  const ask = findAsk = new AbortController();
+  const f = S.find = { path, shown: path.replace(/(.)[\\/]+$/, '$1'), rows: [], cursor: 0, searching: true, error: '' };
+  S.flash = '';
+  redraw();
+  const done = () => { if (ask === findAsk) { findAsk = null; f.searching = false; redraw(); } };
+  getLines('/api/picker/find', (l) => {
+    if (ask !== findAsk) return;
+    if (l.found) f.rows.push({ ...l.found, on: !l.found.known });
+    if (l.error) f.error = l.error;
+    redraw();
+  }, ask.signal, { path }).then(done, (e) => {
+    if (ask === findAsk) f.error = e.message;
+    done();
+  });
+}
+
+// stopFind stops the search, keeping what it found; with close it leaves
+// it, back to the folder typed.
+export function stopFind(close) {
+  if (findAsk) { findAsk.abort(); findAsk = null; }
+  if (S.find) S.find.searching = false;
+  if (close) S.find = null;
+}
+
+// findKey is the search's keys: ↑/↓ move, space ticks, ctrl+a ticks all
+// or none, enter adds the ticked, esc stops a search going, then goes
+// back to the folder typed.
+function findKey(k) {
+  const f = S.find;
+  const n = f.rows.length;
+  switch (k) {
+    case 'down': f.cursor = Math.min(f.cursor + 1, Math.max(n - 1, 0)); break;
+    case 'up': f.cursor = Math.max(f.cursor - 1, 0); break;
+    case 'pgdown': f.cursor = Math.min(f.cursor + 10, Math.max(n - 1, 0)); break;
+    case 'pgup': f.cursor = Math.max(f.cursor - 10, 0); break;
+    case 'space': toggleFound(f.cursor); break;
+    case 'ctrl+a': toggleAllFound(); break;
+    case 'enter': addFound(); break;
+    case 'esc': leaveFind(); break;
+    case 'ctrl+c': stopFind(true); if (S.overlay === 'projects') S.overlay = null; else quit(); break;
+  }
+  return true; // nothing else is typed while it shows
+}
+
+// leaveFind is esc: it stops a search going, or goes back to the folder
+// typed.
+export function leaveFind() {
+  if (S.find && S.find.searching) stopFind(false);
+  else stopFind(true);
+}
+
+// toggleFound ticks or unticks the project found at i.
+export function toggleFound(i) {
+  const r = S.find && S.find.rows[i];
+  if (!r) return;
+  if (r.known) { say(r.name + ' is listed already'); return; }
+  r.on = !r.on;
+}
+
+// toggleAllFound ticks every project found, or none when all are.
+function toggleAllFound() {
+  const fresh = S.find.rows.filter((r) => !r.known);
+  const all = fresh.every((r) => r.on);
+  for (const r of fresh) r.on = !all;
+}
+
+// addFound adds the ticked projects to the picker, and goes back to it
+// with them marked new and the cursor on the first. A search going stops
+// at what it has found.
+export async function addFound() {
+  const f = S.find;
+  if (!f || f.adding) return;
+  stopFind(false);
+  const keep = f.rows.filter((r) => r.on && !r.known);
+  if (!keep.length) {
+    say(!f.rows.length ? 'no projects to add' : f.rows.every((r) => r.known) ? 'the picker lists every project found already' : 'none ticked: space ticks a project');
+    return;
+  }
+  f.adding = true;
+  redraw();
+  try {
+    const { added } = await post('/api/picker/add', { projects: keep.map((r) => ({ root: r.root, backend: r.backend })) });
+    S.find = null;
+    await setPickerQuery('');
+    const roots = new Set(keep.map((r) => r.root));
+    S.pickerNew = roots;
+    const i = S.picker.findIndex((p) => roots.has(p.root));
+    if (i >= 0) S.pickerCursor = i;
+    say('added ' + added + ' project' + (added === 1 ? '' : 's') + ' from ' + f.shown);
+  } catch (e) {
+    f.adding = false;
+    say(e.message);
+  }
 }
 
 export async function pickProject(i, clicked, flip) {

@@ -124,6 +124,13 @@ func startWeb(pf projectFlags, sf *settingFlags, o webStart) error {
 		TermEnv:  nvimTermEnv,
 		Projects: rememberedProjects,
 		Open:     func(p session.Project) (*web.Project, error) { return openWebProject(sf, p.Root, p.Backend) },
+		Add: func(root, tool string) (bool, error) {
+			dir := sessionDir()
+			if dir == "" {
+				return false, errors.New("no home folder to keep the projects in")
+			}
+			return session.Add(dir, root, tool)
+		},
 		Branch: func(ctx context.Context, root string) (string, error) {
 			return gitbranch.Repo{Dir: root}.Current(ctx)
 		},
