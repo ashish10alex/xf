@@ -675,7 +675,7 @@ func (p *projectState) scmCommit(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if !req.Amend && len(st.Staged) == 0 {
 			if len(st.Changes) > 0 {
-				return "", errors.New("nothing staged: stage files first (space), or use commit all")
+				return "", errors.New("nothing staged: stage files first (space), or use Commit all")
 			}
 			return "", errors.New("nothing to commit")
 		}

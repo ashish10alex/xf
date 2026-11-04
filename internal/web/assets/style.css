@@ -715,6 +715,7 @@ kbd.tap:hover { border-color: var(--focus); }
 .names { margin: 4px 0; padding-left: 4ch; color: var(--fg); font-weight: 600; }
 .buttons { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
 .plain { border: 1px solid var(--rule); background: transparent; border-radius: 4px; padding: 1px 8px; cursor: pointer; color: var(--dim); }
+.plain:disabled { opacity: 0.5; cursor: default; }
 
 .palette .query, .overlay .query { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
 .prompt { color: var(--focus); font-weight: 700; }
@@ -1605,6 +1606,8 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .scm-commit-buttons { display: flex; align-items: center; gap: 6px; }
 .scm-commit-buttons .run-btn:focus { background: var(--focus); color: var(--bg); }
 .scm-commit-buttons .plain:focus { outline: none; border-color: var(--focus); color: var(--fg); }
+/* Dimmed on a clean tree: no hover lights them up. */
+.scm-commit-buttons .run-btn:disabled:hover { background: var(--focus-glow); color: var(--fg); }
 .scm-row {
   display: flex; align-items: center; gap: 0.6ch; padding-right: 8px;
   height: var(--lh); white-space: nowrap; cursor: pointer;

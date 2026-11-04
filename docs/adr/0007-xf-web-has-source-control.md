@@ -18,7 +18,7 @@ Enter on a changed file shows its difference in the source pane, inline unless t
 
 ## Committing
 
-A commit commits what is staged, with the box's message; with nothing staged it is refused with a hint, and "commit all" (a command, never automatic) stages every change, the new files too, before it commits. The repository's hooks run as they do in a shell; when one fails its output is in the git output (below). The message box is a small editor with vim keys, faint rulers at 50 and 72 columns and the subject in amber past 72, and its draft is kept per project until it is committed. `A` puts HEAD's message in the box to amend it, and is refused once HEAD has been pushed (it is in its upstream), since xf never force-pushes.
+A commit commits what is staged, with the box's message; with nothing staged it is refused with a hint, and "Commit all" (a command, never automatic) stages every change, the new files too, before it commits. On a clean tree, with nothing to amend or merge, both buttons are dimmed and do nothing. The repository's hooks run as they do in a shell; when one fails its output is in the git output (below). The message box is a small editor with vim keys, faint rulers at 50 and 72 columns and the subject in amber past 72, and its draft is kept per project until it is committed. `A` puts HEAD's message in the box to amend it, and is refused once HEAD has been pushed (it is in its upstream), since xf never force-pushes.
 
 Discarding asks first, naming the file or how many. A file git doesn't track goes to the system's trash, as the tree's delete does; for a tracked file, a copy of it as it is goes to the trash first and then git puts back the index's version, so a discard can always be undone.
 

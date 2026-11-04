@@ -159,7 +159,7 @@ function boxEditor() {
     placeholder: 'message (' + sc.commitKey + ' commits)',
     keys: [
       // tab goes on to the box's first button, where enter presses it.
-      { key: 'Tab', run: (v) => { const b = v.dom.closest('.scm-commit')?.querySelector('.scm-commit-buttons button'); if (!b) return false; b.focus(); return true; }, preventDefault: true },
+      { key: 'Tab', run: (v) => { const b = v.dom.closest('.scm-commit')?.querySelector('.scm-commit-buttons button:not(:disabled)'); if (!b) return false; b.focus(); return true; }, preventDefault: true },
       { key: 'Mod-Enter', run: () => { sc.commit(); return true; }, preventDefault: true },
       { key: 'Ctrl-Enter', run: () => { sc.commit(); return true; }, preventDefault: true },
     ],
@@ -207,6 +207,7 @@ function buttonKeys(e) {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault();
     e.stopPropagation();
+    if (e.target.disabled) return;
     e.target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
   } else if (e.key === 'Tab') {
     e.stopPropagation();
@@ -237,13 +238,14 @@ function CommitBox() {
   let main = 'Commit', title = 'commit what is staged (' + sc.commitKey + ')';
   if (G.amend) { main = 'Amend'; title = 'amend HEAD with what is staged and this message (' + sc.commitKey + ')'; }
   if (op === 'merge') { main = 'Commit merge'; title = 'finish the merge, with git\'s message when the box is empty (' + sc.commitKey + ')'; }
+  const can = sc.commitState();
   return html`<div class="scm-commit">
     <div class=${'scm-box' + (G.amend ? ' amending' : '')} ref=${ref}></div>
     <div class="scm-commit-buttons" onKeyDown=${buttonKeys}>
       ${op && op !== 'merge'
         ? html`<button class="run-btn" title=${'continue the ' + op} onMouseDown=${act(sc.continueOp)}>Continue ${op}</button>`
-        : html`<button class="run-btn" title=${title} onMouseDown=${act(() => sc.commit())}>${main}</button>`}
-      ${!op && html`<button class="plain" title="stage every change, the new files too, then commit" onMouseDown=${act(() => sc.commit({ all: true }))}>commit all</button>`}
+        : html`<button class="run-btn" disabled=${!can.commit} title=${can.commit ? title : 'nothing to commit'} onMouseDown=${act(() => sc.commit())}>${main}</button>`}
+      ${!op && html`<button class="plain" disabled=${!can.all} title=${can.all ? 'stage every change, the new files too, then commit' : 'nothing to commit'} onMouseDown=${act(() => sc.commit({ all: true }))}>Commit all</button>`}
       ${G.amend && html`<span class="warn">amending HEAD</span>`}
     </div>
   </div>`;
@@ -275,7 +277,7 @@ function Prompt() {
   if (p.kind === 'commitAll') {
     return html`<div class="tree-prompt confirm">
       <div>nothing staged: stage <b>every change (${p.count} file${p.count === 1 ? '' : 's'})</b> and commit?</div>
-      <div class="dim">the new files too, as commit all does</div>
+      <div class="dim">the new files too, as Commit all does</div>
       <${Confirm} yes="stage and commit" no="not now" onKey=${sc.key} />
     </div>`;
   }

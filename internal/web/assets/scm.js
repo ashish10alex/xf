@@ -443,8 +443,18 @@ export function focusBox() {
   box.ed.focus();
 }
 
+// commitState says which of the box's buttons have something to do:
+// commit with anything staged or changed (it asks to stage the changes),
+// when amending, or to finish a merge; commit all with anything staged or
+// changed, or when amending. On a clean tree neither has.
+export function commitState(st = G.st, amending = G.amend) {
+  const any = !!st && (st.staged.length > 0 || st.changes.length > 0);
+  return { commit: !!st && st.op === 'merge' || amending || any, all: amending || any };
+}
+
 export async function commit(opts = {}) {
   const ed = box.ed;
+  if (G.st && !commitState()[opts.all ? 'all' : 'commit']) { say('nothing to commit, working tree clean'); return; }
   const message = ed ? ed.doc() : draft;
   const merging = G.st && G.st.op === 'merge';
   if (!message.trim() && !merging) { say('no commit message: type one in the box (c)'); focusBox(); return; }
