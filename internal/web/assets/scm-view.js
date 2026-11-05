@@ -108,7 +108,6 @@ function CommitRow({ r, cur, focused }) {
     <span class="tree-caret">${r.open ? '▾' : '▸'}</span>
     ${r.unpushed ? html`<span class="scm-ahead" title="not pushed">↑</span>` : ''}
     <span class="scm-name">${subj.merge && html`<span class="dim scm-merge">⑂ </span>`}${subj.text}</span>
-    <span class="spacer"></span>
     <span class="dim scm-author" title=${r.author}>${sc.initials(r.author)}</span>
     <span class="dim">${r.age}</span>
   </div>`;
