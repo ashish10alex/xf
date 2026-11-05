@@ -32,3 +32,14 @@ With defer to prod on, an upstream table that isn't built in dev is read from pr
 - **dbt** does it itself: xf parses the merge-base with `dbtProdTarget` and gives that manifest to its compiles and to runs as `--defer --defer-state`. xf writes no views.
 
 Pane 2 lists what the action's upstream tables are read from, and in the source pane each `ref()` is followed by `→ prod`, `✓ dev · built 3h ago` or a `⚠` that says why it can't be read from prod; hovering the label, or the `ref()` itself, shows a card that says why, names both tables and links to the one read (the `ref()`'s card shows prod's columns when prod is read), and a click on the label opens that table in BigQuery. The run preview says how many upstream tables a run reads from prod, and the run history keeps which.
+
+## Run from the command line, and defer to prod there
+
+`xf run` is `dataform run` (in a dbt project, `dbt build`, as xf web runs) with the tool's own flags, as given: `xf run --actions dev_fct_orders --include-deps`, or `xf run -s +fct_orders`. xf adds what its own runs add (the name settings, or the dbt target) unless your flags give them, and keeps the run in the run history, where xf web shows it. The tool's output goes to stdout and xf's own lines to stderr. In Dataform, `--actions` takes names as compiled, with any table prefix, as `dataform run` does; xf says when one matches nothing.
+
+- `--defer` defers to prod for this run alone, as described above, whatever xf web's switch says (and without changing it). It needs `prodCompilerOptions` or `dbtProdTarget`, and refuses flags that change the compile (`--vars`, `--schema-suffix`, `--target` …): set those in the config instead.
+- What xf web asks before a run, `xf run` refuses with exit code 3, saying which flag decides it: `--defer-build-changed` builds tables read from prod that your branch changes first, in the same run (dbt too), and `--defer-allow-stale` runs all the same. Without `--defer`, proxy views left by an earlier run stop it too, until you pass `--defer`, `--include-deps` or `--allow-proxy-views`.
+- `--dry-run` runs nothing and writes nothing: it dry runs the SQL of what the run builds (reading prod, with `--defer`) and prints the plan, as JSON with `--json`. A table the run builds first isn't counted as a failure.
+- `--defer-remove-views` removes the project's proxy views (with a selection, those upstream of it); with `--dry-run` it lists them.
+
+Exit codes: the tool's own for a run; 1 when a dry run failed; 3 when the run needs a decision; 4 when xf couldn't check it. `xf run --help` lists the flags. [`skills/xf-run`](../skills/xf-run/SKILL.md) teaches a coding agent to dry run first, show you the plan and ask before it runs; install it as [the checks skill](checks.md#agent-skill-for-cost-and-impact) is installed.

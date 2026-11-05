@@ -84,6 +84,25 @@ func EnsureProxies(ctx context.Context, w Writer, entries []Entry) (ProxyResult,
 	return r, nil
 }
 
+// MissingDevDatasets are the dev datasets ("project.dataset") of entries
+// that don't exist. xf never makes a dataset, so no Proxy View can go in
+// one of them.
+func MissingDevDatasets(ctx context.Context, w Writer, entries []Entry) map[string]bool {
+	out := map[string]bool{}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		key := e.Dev.Database + "." + e.Dev.Schema
+		if seen[key] || e.Routine {
+			continue
+		}
+		seen[key] = true
+		if _, err := w.ListTablesLabelled(ctx, e.Dev.Database, e.Dev.Schema); bigquery.IsNotFound(err) {
+			out[key] = true
+		}
+	}
+	return out
+}
+
 // RemoveProxies removes the Proxy Views in the datasets of g's actions,
 // and only those: a view without the label is never touched. It returns
 // the views it removed; with remove false it only finds them.

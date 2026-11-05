@@ -15,6 +15,13 @@ import (
 // its tags when it has any.
 func RunArgs(o project.RunOptions) []string {
 	args := []string{"run"}
+	if o.Args != nil {
+		args = append(args, o.Args...)
+		if o.JobPrefix != "" && !cmdrun.GivesFlag(o.Args, "--job-prefix") {
+			args = append(args, "--job-prefix", o.JobPrefix)
+		}
+		return args
+	}
 	if len(o.Tags) > 0 {
 		args = append(append(args, "--tags"), o.Tags...)
 	} else {
@@ -67,7 +74,14 @@ func (b Backend) RunCommand(root string, o project.RunOptions) string {
 // runArgs are RunArgs with b's Names, so a run builds the tables its
 // compile names.
 func (b Backend) runArgs(o project.RunOptions) []string {
-	return append(RunArgs(o), b.Names.Args()...)
+	args := RunArgs(o)
+	for _, a := range b.Names.Args() {
+		name, _, _ := strings.Cut(a, "=")
+		if !cmdrun.GivesFlag(o.Args, name) {
+			args = append(args, a)
+		}
+	}
+	return args
 }
 
 // StartRun runs `dataform run` in root with b's Names (see StartRun).

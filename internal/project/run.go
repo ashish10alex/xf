@@ -26,6 +26,11 @@ type RunOptions struct {
 	// DeferState is where a dbt run's --defer-state reads prod's manifest
 	// (ADR 0031); "" doesn't defer.
 	DeferState string
+	// Args are the tool's own run arguments as xf run was given them (ADR
+	// 0038): when set, they select the run in place of Actions, Tags,
+	// IncludeDeps, IncludeDependents and FullRefresh, which then only say
+	// what it builds. xf adds what its own runs add, unless Args give it.
+	Args []string
 	// Color asks the tool for colour even though its output is a pipe,
 	// and keeps the colour codes (SGR sequences) in the run's Lines for a
 	// reader that shows them; other escape sequences are still removed.

@@ -46,6 +46,11 @@ type DeferralRequest struct {
 	Proxies bool `json:"proxies,omitempty"`
 	// Fresh drops what is known of which tables exist first, as a run does.
 	Fresh bool `json:"fresh,omitempty"`
+	// On turns defer to prod on or off for this request alone, as xf run's
+	// --defer does (ADR 0038); nil follows the project's switch, which it
+	// leaves as it is. A dbt project's compile follows the switch alone,
+	// so a dbt Deferral that differs from it is nil, with DbtState.
+	On *bool `json:"on,omitempty"`
 }
 
 // DeferralResult is the answer to a DeferralRequest.
@@ -111,9 +116,13 @@ func (e *Engine) Deferral(ctx context.Context, req DeferralRequest) (*DeferralRe
 	if req.Fresh {
 		e.cfg.Defer.Forget()
 	}
+	on := s.Defer
+	if req.On != nil {
+		on = *req.On
+	}
 	var changed func(project.ActionID) bool
 	res := s.Changes
-	if s.Defer && res == nil && req.DefaultBranch != "" && e.cfg.Changes != nil {
+	if on && res == nil && req.DefaultBranch != "" && e.cfg.Changes != nil {
 		creq := changes.Request{DefaultBranch: req.DefaultBranch, Compile: true}
 		if req.Fresh {
 			wctx, cancel := context.WithTimeout(ctx, deferStaleWait)
@@ -134,10 +143,10 @@ func (e *Engine) Deferral(ctx context.Context, req DeferralRequest) (*DeferralRe
 		}
 		changed = func(id project.ActionID) bool { return ids[id] }
 	}
-	if !s.Defer && !req.Proxies {
+	if !on && !req.Proxies {
 		return &DeferralResult{}, nil
 	}
-	out, err := e.cfg.Defer.Deferral(ctx, req, s.Graph, changed, s.Defer)
+	out, err := e.cfg.Defer.Deferral(ctx, req, s.Graph, changed, on)
 	if err != nil {
 		return nil, err
 	}

@@ -71,7 +71,7 @@ Prefer the terminal? `xf` opens the same panes as a TUI, and `xf --nvim` opens n
 - [xf web](docs/xf-web.md): the browser UI, with the source editor, file tree, source control, search, Scratch queries, the dependency inspector and settings.
 - [The TUI](docs/tui.md): the terminal UI, its keys, and the project list.
 - [neovim](docs/neovim.md): `xf --nvim`, the plugin and the language server.
-- [Running and branches](docs/running.md): Run Changed, tag runs, switching branch and deferring to prod.
+- [Running and branches](docs/running.md): Run Changed, tag runs, switching branch, deferring to prod, and `xf run` with `--defer` from the command line, with its agent skill.
 - [Checking a branch](docs/checks.md): column impact (`xf impact`) and query cost (`xf cost`), in xf and in CI, and the agent skill for both.
 - [dbt projects](docs/dbt.md): what works in a dbt project and how it differs.
 - [Settings and API runs](docs/settings.md): the config files, running through the Dataform API, and which Google account xf uses.

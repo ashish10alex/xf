@@ -14,6 +14,14 @@ import (
 // (IncludeDependents), with the backend's target. With Tags it selects
 // tag:<tag> for each instead, which dbt unions.
 func (b *Backend) RunArgs(o project.RunOptions) []string {
+	if o.Args != nil {
+		args := append([]string{"build"}, o.Args...)
+		args = append(args, DeferArgs(o.DeferState)...)
+		if b.Target != "" && !cmdrun.GivesFlag(o.Args, "--target", "-t") {
+			args = append(args, "--target", b.Target)
+		}
+		return args
+	}
 	args := []string{"build", "--select"}
 	names := o.Names
 	if len(o.Tags) > 0 {
@@ -52,7 +60,7 @@ func (b *Backend) RunCommand(root string, o project.RunOptions) string {
 // from the terminal would: run_results.json and --state comparisons want
 // it there.
 func (b *Backend) StartRun(ctx context.Context, root string, o project.RunOptions) (*project.Run, error) {
-	if len(o.Tags) == 0 && (len(o.Names) == 0 || len(o.Names) != len(o.Actions)) {
+	if o.Args == nil && len(o.Tags) == 0 && (len(o.Names) == 0 || len(o.Names) != len(o.Actions)) {
 		return nil, errors.New("dbt can't select these actions: they have no dbt name")
 	}
 	return cmdrun.Start(ctx, b.Bin, "dbt", root, b.RunArgs(o), o.Color)

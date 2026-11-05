@@ -41,6 +41,19 @@ func TestRunOptionsArgs(t *testing.T) {
 	}
 }
 
+func TestXfRunArgsGoAsGiven(t *testing.T) {
+	b := Backend{Names: Names{SchemaSuffix: "dev", TablePrefix: "ax"}}
+	o := project.RunOptions{Actions: []project.ActionID{"p.s.t"}, Args: []string{"--actions", "t", "--tags", "x", "--table-prefix=mine"}, JobPrefix: "xf-1"}
+	want := []string{"run", "--actions", "t", "--tags", "x", "--table-prefix=mine", "--job-prefix", "xf-1", "--schema-suffix=dev"}
+	if got := b.runArgs(o); !slices.Equal(got, want) {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	o.Args = []string{"--job-prefix", "agent"}
+	if got := b.runArgs(o); slices.Contains(got, "xf-1") {
+		t.Errorf("the run's own --job-prefix stands: %q", got)
+	}
+}
+
 type runOutcome struct {
 	lines []string
 	res   project.RunResult

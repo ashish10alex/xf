@@ -156,6 +156,11 @@ func (d *dbtDeferrer) Deferral(ctx context.Context, req engine.DeferralRequest, 
 		return nil, err
 	}
 	if d.b.DeferState() != state {
+		if req.On != nil {
+			// On for this request alone (xf run --defer): the engine's
+			// compile doesn't defer, so the asker compiles with the state.
+			return &engine.DeferralResult{DbtState: state}, nil
+		}
 		// Turned on before the manifest was ready, or the merge-base moved:
 		// compile again with it, and the clients ask again.
 		d.switched(true)

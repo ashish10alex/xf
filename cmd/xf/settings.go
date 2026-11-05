@@ -306,7 +306,9 @@ usage:
                               Markdown for a pull request (--fail-on to gate CI)
   xf cost [flags]            print what the branch's changed actions would scan in
                               BigQuery and what that costs (--fail-over to gate CI)
-  xf lsp                     language server for editors (LSP on stdin and stdout)
+  xf run [flags]             dataform run (dbt build) with its own flags; --defer reads
+                              upstream tables not built in dev from prod, --dry-run plans
+  xf lsp                    language server for editors (LSP on stdin and stdout)
   xf serve [--dir dir]       the engine xf and xf lsp share; started for you and
                               stopped a few seconds after the last of them leaves
   xf stop                    stop your xf engines and list the xf processes still

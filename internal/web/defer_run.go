@@ -6,7 +6,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
@@ -43,14 +42,14 @@ const (
 	deferDeps = "deps"
 	// deferChanged adds the Stale Deferrals to the run, built in dev
 	// before what reads them.
-	deferChanged = "changed"
+	deferChanged = frontend.DeferAnswerChanged
 	// deferStale runs with Stale Deferrals all the same.
-	deferStale = "stale"
+	deferStale = frontend.DeferAnswerStale
 	// deferLeftover runs with defer off though Proxy Views read prod.
-	deferLeftover = "leftover"
+	deferLeftover = frontend.DeferAnswerLeftover
 	// deferAPI and deferAPIAlways let a deferred API run read prod as the
 	// repository's service account, once or from now on.
-	deferAPI       = "api"
+	deferAPI       = frontend.DeferAnswerAPI
 	deferAPIAlways = "apiAlways"
 	// deferWithout runs without defer to prod when it can't be worked out.
 	deferWithout = "without"
@@ -125,89 +124,66 @@ func (p *projectState) deferPlanFor(ctx context.Context, req runRequest, runSet 
 		return nil, &deferAsk{Title: "Defer to prod can't be worked out for this run.", Detail: []string{err.Error()},
 			Choices: []deferChoice{{deferWithout, "Run without it"}}}
 	}
-	if !on {
-		if len(res.Proxies) > 0 && !ok[deferLeftover] {
-			n := len(res.Proxies)
-			return nil, &deferAsk{
-				Title:   fmt.Sprintf("Defer to prod is off, but %s from an earlier deferred run, so this run would read prod for %s.", plural(n, "upstream proxy view"), map[bool]string{true: "it", false: "them"}[n == 1]),
-				Detail:  targetIDs(res.Proxies),
-				Note:    "Running with dependencies builds them in dev, replacing the proxy views. The palette's \"Defer to prod: remove proxy views\" removes them.",
-				Choices: append(depsChoice(req), deferChoice{deferLeftover, "Run anyway"}),
-			}
-		}
-		return &deferPlan{}, nil
-	}
-	d := res.Deferral
-	if d == nil {
-		return &deferPlan{}, nil
-	}
-
-	// A view can't stand in for a function or procedure, and building one
-	// is cheap, so the run builds the missing ones in dev.
-	var routines []project.ActionID
-	for _, e := range d.Entries {
-		if e.Routine {
-			routines = append(routines, e.Dev.ID())
-		}
-	}
-	if len(routines) > 0 && req.Kind != "tags" {
-		r := withActions(req, runSet, routines...)
-		r.DeferOK = req.DeferOK
-		return &deferPlan{retry: r}, nil
-	}
-
-	var deferred []deferral.Entry
-	for _, e := range d.Entries {
-		if e.Read() {
-			deferred = append(deferred, e)
-		}
-	}
-	missing := p.missingDevDatasets(ctx, deferred)
-	if blocked := frontend.DeferBlocked(d, missing); len(blocked) > 0 {
+	answers := setOf(req.DeferOK)
+	answers[frontend.DeferAnswerAPI] = ok[deferAPI] || ok[deferAPIAlways]
+	check := frontend.CheckDeferredRun(frontend.DeferRun{
+		On: on, Deferral: res.Deferral, Proxies: res.Proxies,
+		MissingDatasets: func(entries []deferral.Entry) map[string]bool { return p.missingDevDatasets(ctx, entries) },
+		Tags:            req.Kind == "tags", API: req.Toggles.API, APIApproved: approved, Answers: answers,
+	})
+	switch check.Stop {
+	case frontend.DeferStopLeftover:
+		n := len(check.Proxies)
 		return nil, &deferAsk{
-			Title:   fmt.Sprintf("Can't defer %s to prod, so this run would fail.", plural(len(blocked), "upstream table")),
-			Detail:  blocked,
+			Title:   fmt.Sprintf("Defer to prod is off, but %s from an earlier deferred run, so this run would read prod for %s.", plural(n, "upstream proxy view"), map[bool]string{true: "it", false: "them"}[n == 1]),
+			Detail:  check.Detail,
+			Note:    "Running with dependencies builds them in dev, replacing the proxy views. The palette's \"Defer to prod: remove proxy views\" removes them.",
+			Choices: append(depsChoice(req), deferChoice{deferLeftover, "Run anyway"}),
+		}
+	case frontend.DeferStopBlocked:
+		return nil, &deferAsk{
+			Title:   fmt.Sprintf("Can't defer %s to prod, so this run would fail.", plural(len(check.Detail), "upstream table")),
+			Detail:  check.Detail,
 			Note:    "xf never makes a dev dataset. Running with dependencies builds these in dev.",
 			Choices: depsChoice(req),
 		}
-	}
-	if stale := frontend.DeferStale(d); len(stale) > 0 && !ok[deferStale] {
-		if ok[deferChanged] {
-			var ids []project.ActionID
-			for _, e := range deferred {
-				if e.Stale {
-					ids = append(ids, e.Dev.ID())
-				}
-			}
-			r := withActions(req, runSet, ids...)
-			r.DeferOK = append(slices.DeleteFunc(slices.Clone(req.DeferOK), func(s string) bool { return s == deferChanged }), deferStale)
-			return &deferPlan{retry: r}, nil
-		}
+	case frontend.DeferStopStale:
 		var choices []deferChoice
 		if req.Kind != "tags" && !req.Toggles.Deps {
 			choices = append(choices, deferChoice{deferChanged, "Build changed upstream first"})
 		}
 		choices = append(append(choices, depsChoice(req)...), deferChoice{deferStale, "Run anyway"})
 		return nil, &deferAsk{
-			Title:   fmt.Sprintf("%s read from prod changed on this branch, so the run would use the prod version.", plural(len(stale), "upstream table")),
-			Detail:  stale,
+			Title:   fmt.Sprintf("%s read from prod changed on this branch, so the run would use the prod version.", plural(len(check.Detail), "upstream table")),
+			Detail:  check.Detail,
 			Note:    "Build changed upstream first adds only these to the run, built in dev before the actions that read them.",
 			Choices: choices,
 		}
-	}
-	if len(deferred) > 0 && req.Toggles.API && !approved && !ok[deferAPI] && !ok[deferAPIAlways] {
+	case frontend.DeferStopAPI:
 		return nil, &deferAsk{
-			Title:   fmt.Sprintf("This run reads %s from prod through proxy views. It runs as the repository's service account (or Dataform's default service agent), which needs BigQuery Data Viewer on:", plural(len(deferred), "upstream table")),
-			Detail:  frontend.DeferProdDatasets(d),
+			Title:   fmt.Sprintf("This run reads %s from prod through proxy views. It runs as the repository's service account (or Dataform's default service agent), which needs BigQuery Data Viewer on:", plural(res.Deferral.Deferred(), "upstream table")),
+			Detail:  check.Detail,
 			Choices: []deferChoice{{deferAPI, "Run"}, {deferAPIAlways, "Run and don't ask again"}},
 		}
+	}
+	if len(check.Add) > 0 {
+		r := withActions(req, runSet, check.Add...)
+		r.DeferOK = req.DeferOK
+		if !check.AddRoutines {
+			r.DeferOK = append(slices.DeleteFunc(slices.Clone(req.DeferOK), func(s string) bool { return s == deferChanged }), deferStale)
+		}
+		return &deferPlan{retry: r}, nil
+	}
+	if !on || res.Deferral == nil {
+		return &deferPlan{}, nil
 	}
 	if ok[deferAPIAlways] {
 		p.mu.Lock()
 		p.sess.DeferAPIApproved = true
 		p.mu.Unlock()
 	}
-	plan := &deferPlan{entries: deferred, pairs: frontend.DeferredPairs(d)}
+	d := res.Deferral
+	plan := &deferPlan{entries: check.Entries, pairs: frontend.DeferredPairs(d)}
 	if line := frontend.DeferRunLine(d); line != "" {
 		plan.lines = append(plan.lines, logLine{Text: "defer to prod: " + line, Tone: "dim"})
 		for _, pair := range plan.pairs {
@@ -245,18 +221,7 @@ func (p *projectState) missingDevDatasets(ctx context.Context, entries []deferra
 	if err != nil {
 		return out
 	}
-	seen := map[string]bool{}
-	for _, e := range entries {
-		key := e.Dev.Database + "." + e.Dev.Schema
-		if seen[key] || e.Routine {
-			continue
-		}
-		seen[key] = true
-		if _, err := w.ListTablesLabelled(ctx, e.Dev.Database, e.Dev.Schema); bigquery.IsNotFound(err) {
-			out[key] = true
-		}
-	}
-	return out
+	return deferral.MissingDevDatasets(ctx, w, entries)
 }
 
 // makeProxies makes the plan's Proxy Views before the run starts, saying

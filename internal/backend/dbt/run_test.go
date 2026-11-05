@@ -29,6 +29,10 @@ func TestRunArgs(t *testing.T) {
 			"dbt build --select shop.a+ shop.v.b.v2+"},
 		{"tags", "ci", project.RunOptions{Tags: []string{"daily", "hourly"}, IncludeDeps: true},
 			"dbt build --select +tag:daily +tag:hourly --target ci"},
+		{"xf run's args, deferred", "ci", project.RunOptions{Args: []string{"-s", "orders+", "--threads", "4"}, DeferState: "/st"},
+			"dbt build -s orders+ --threads 4 --defer --defer-state /st --target ci"},
+		{"xf run's args give the target", "ci", project.RunOptions{Args: []string{"-t", "other"}},
+			"dbt build -t other"},
 	}
 	// The dbt on PATH is the one run, so the command names it as dbt.
 	bin := testutil.FakeCLI(t, "dbt")

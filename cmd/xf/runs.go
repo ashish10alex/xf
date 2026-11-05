@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ashish10alex/xf/internal/backend/cmdrun"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
 	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/dataformapi"
@@ -83,7 +84,9 @@ func addRunJobs(deps *frontend.Deps, root string, b dataform.Backend, client *re
 	var mu sync.Mutex
 	next := runhistory.NewID()
 	prefixed := func(o project.RunOptions, id string) project.RunOptions {
-		if prefixes.Load() {
+		// xf run's own --job-prefix stands: its jobs are then followed by
+		// the targets they write alone.
+		if prefixes.Load() && !cmdrun.GivesFlag(o.Args, "--job-prefix") {
 			o.JobPrefix = "xf-" + id
 		}
 		return o

@@ -77,6 +77,35 @@ func TestSetDeferTellsClientsAndSaves(t *testing.T) {
 	}
 }
 
+func TestDeferralOnForOneRequest(t *testing.T) {
+	g := project.NewGraph([]*project.Action{{ID: "d.s.t", Target: project.Target{Database: "d", Schema: "s", Name: "t"}, Kind: project.KindTable}})
+	fd := &fakeDeferrer{}
+	saved := 0
+	e := New(Config{Compile: func(context.Context) (*project.Graph, error) { return g, nil }, Defer: fd, SaveDefer: func(bool) { saved++ }})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := e.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	<-e.FirstCompile()
+	on, off := true, false
+	res, err := e.Deferral(ctx, DeferralRequest{Actions: []project.ActionID{"d.s.t"}, On: &on})
+	if err != nil || res.Deferral == nil || fd.ons[len(fd.ons)-1] != true {
+		t.Errorf("on for the request: %+v %v", res, err)
+	}
+	if e.State().Defer || saved != 0 {
+		t.Errorf("the switch is left off and not saved: %v %d", e.State().Defer, saved)
+	}
+	e.SetDefer(true)
+	res, err = e.Deferral(ctx, DeferralRequest{Actions: []project.ActionID{"d.s.t"}, On: &off})
+	if err != nil || res.Deferral != nil {
+		t.Errorf("off for the request, though the switch is on: %+v %v", res, err)
+	}
+	if !e.State().Defer {
+		t.Error("the switch stays on")
+	}
+}
+
 func TestDeferralWithoutDeferrer(t *testing.T) {
 	e := New(Config{})
 	if _, err := e.Deferral(context.Background(), DeferralRequest{}); !errors.Is(err, ErrNoDefer) {
