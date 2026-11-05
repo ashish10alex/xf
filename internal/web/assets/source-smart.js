@@ -26,11 +26,11 @@
 // the pane shows one), and the compile's errors beside them.
 
 import * as cm from './vendor/codemirror.mjs';
-import { S, get, post, redraw, hooks, setFocus, say } from './state.js';
+import { S, get, post, redraw, hooks, setFocus, say, onMac } from './state.js';
 import { SRC, sourceEditor, goToPlace, isLibraryFile } from './source.js';
 import { wordMarks } from './diff.js';
 import { jumpWithin } from './editor.js';
-import { tableCard, cardDOM, keyedCard, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts } from './scratch-complete.js';
+import { tableCard, cardDOM, keyedCard, keyOnFocus, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts } from './scratch-complete.js';
 import { loadFunctions, functionOptions, valueOptions, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 import { sqlText, inJavaScript } from './sqlx.js';
 import { pathSource, unlessPaths, pathExtensions } from './source-paths.js';
@@ -102,6 +102,11 @@ const cardField = cm.StateField.define({
     return v ? { pos: v.pos, end: v.end, above: true, create: () => ({ dom: v.make() }) } : null;
   }),
 });
+const closeCard = (view) => () => { if (view.state.field(cardField, false)) view.dispatch({ effects: setCard.of(null) }); };
+
+// pinHover is a card the mouse showed, which a click in it makes K's,
+// with K's keys (f filters its columns, …).
+const pinHover = (view, pos, end, dom) => keyOnFocus(dom, (d) => view.dispatch({ effects: [cm.closeHoverTooltips, setCard.of({ pos, end, make: () => keyedCard(d, view, closeCard(view)) })] }));
 
 // noSchema is why a ref's table has no schema to show: an operation
 // without hasOutput, an ephemeral model and the like build no table.
@@ -224,8 +229,7 @@ async function cardAtCursor(view) {
   if (isPy()) { if (hooks.pythonCard) hooks.pythonCard(view); return; }
   if (view.state.field(cardField, false)) { view.dispatch({ effects: setCard.of(null) }); return; }
   const head = view.state.selection.main.head;
-  const close = () => { if (view.state.field(cardField, false)) view.dispatch({ effects: setCard.of(null) }); };
-  const keyed = (make) => () => keyedCard(make(), view, close);
+  const keyed = (make) => () => keyedCard(make(), view, closeCard(view));
   const fn = functionAt(view.state, head, sqlOf);
   if (fn) { view.dispatch({ effects: setCard.of({ pos: fn.from, end: fn.to, make: keyed(() => functionCard(fn.fn)) }) }); return; }
   const ask = includeAt(view.state, head);
@@ -245,14 +249,14 @@ const hover = cm.hoverTooltip(async (view, pos, side) => {
   const lab = side > 0 && labelAt(view.state, pos);
   if (lab) return { pos, above: true, create: () => ({ dom: deferCard(lab) }) };
   const fn = functionAt(view.state, pos, sqlOf);
-  if (fn) return { pos: fn.from, end: fn.to, above: true, create: () => ({ dom: functionCard(fn.fn) }) };
+  if (fn) return { pos: fn.from, end: fn.to, above: true, create: () => ({ dom: pinHover(view, fn.from, fn.to, functionCard(fn.fn)) }) };
   const ask = includeAt(view.state, pos);
   if (ask) {
     const inc = await ask;
-    return inc ? { pos: inc.from, end: inc.to, above: true, create: () => ({ dom: includeCard(inc) }) } : null;
+    return inc ? { pos: inc.from, end: inc.to, above: true, create: () => ({ dom: pinHover(view, inc.from, inc.to, includeCard(inc)) }) } : null;
   }
   const r = await refAt(view.state, pos);
-  return r.hit ? { pos: r.hit.from, end: r.hit.to, above: true, create: () => ({ dom: r.make() }) } : null;
+  return r.hit ? { pos: r.hit.from, end: r.hit.to, above: true, create: () => ({ dom: pinHover(view, r.hit.from, r.hit.to, r.make()) }) } : null;
 }, { hoverTime: 350 });
 
 // ---- go to definition ----
@@ -662,6 +666,18 @@ hooks.sourceExtensions = () => (loadFunctions(), [
     keydown(e, view) {
       if (e.key === 'Escape' && view.state.field(cardField, false)) view.dispatch({ effects: setCard.of(null) });
       return false;
+    },
+    // cmd+click (ctrl+click off a Mac) is gd where the click is, as in
+    // VS Code, rather than CodeMirror's second cursor.
+    mousedown(e, view) {
+      if (e.button !== 0 || e.shiftKey || e.altKey || !(onMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return false;
+      const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (pos === null) return false;
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: pos } });
+      view.focus();
+      goToDefinition(view);
+      return true;
     },
   }),
 ]);

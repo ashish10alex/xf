@@ -499,11 +499,11 @@ export function cardDOM(card) {
   const actions = el('div', 'sc-card-actions');
   const openBtn = el('button', 'sc-card-link sc-card-open', '↗\u00a0bigquery');
   const nameBtn = el('button', 'sc-card-link sc-card-copyname', '⧉\u00a0name');
-  openBtn.title = 'Open in BigQuery (u, on a card K showed)';
-  nameBtn.title = 'Copy `' + full + '` (y, on a card K showed)';
+  openBtn.title = 'Open in BigQuery (u, on a card K showed or you clicked in)';
+  nameBtn.title = 'Copy `' + full + '` (y, on a card K showed or you clicked in)';
   actions.append(openBtn, el('span', 'sc-card-sep', ' · '), nameBtn);
   const search = el('button', 'sc-card-link', '⌕\u00a0filter');
-  search.title = 'Filter the columns (f, on a card K showed)';
+  search.title = 'Filter the columns (f, on a card K showed or you clicked in)';
   const copyBtn = el('button', 'sc-card-link', '⧉\u00a0columns');
   if (cols.length) actions.append(el('span', 'sc-card-sep', ' │ '), search, el('span', 'sc-card-sep', ' · '), copyBtn);
   bar.append(actions);
@@ -608,7 +608,7 @@ export function cardDOM(card) {
     search.classList.add('sc-card-filter');
     search.addEventListener('click', () => {
       if (find.hidden) pin(true);
-      else if (document.activeElement === find) root.focus(); // a card K showed keeps the keys
+      else if (document.activeElement === find) root.focus(); // a keyed card keeps the keys
       find.hidden = !find.hidden;
       if (!find.hidden) find.focus();
       else { find.value = ''; find.dispatchEvent(new Event('input')); pin(false); }
@@ -672,6 +672,29 @@ export function keyedCard(dom, view, close) {
   return dom;
 }
 
+// keyOnFocus lets a card the mouse showed have the keys too: a click in
+// it hands it to keep, which puts it in K's place (the same DOM), keyed,
+// kept until esc, q, K or a click elsewhere. That waits for the click to
+// end, as the card moving under the mouse would lose it (⌕ filter's), and
+// the focus goes back where the click put it.
+export function keyOnFocus(dom, keep) {
+  dom.tabIndex = -1;
+  let pressed = false;
+  const pin = () => {
+    if (dom.classList.contains('sc-card-keyed') || !dom.isConnected || !dom.contains(document.activeElement)) return;
+    const was = document.activeElement;
+    keep(dom);
+    // After keyedCard's own focus of the card.
+    setTimeout(() => { if (was !== dom && dom.contains(was)) was.focus({ preventScroll: true }); }, 0);
+  };
+  dom.addEventListener('mousedown', () => {
+    pressed = true;
+    window.addEventListener('mouseup', () => setTimeout(() => { pressed = false; pin(); }, 0), { once: true, capture: true });
+  });
+  dom.addEventListener('focusin', () => { if (!pressed) pin(); });
+  return dom;
+}
+
 // refAt is the table the text names at pos, with its parsed reference.
 function refAt(view, pos) {
   const ref = parseRefs(view.state.doc.toString()).find((r) => pos >= r.start && pos <= r.end);
@@ -683,11 +706,11 @@ const hover = cm.hoverTooltip(async (view, pos) => {
   const hit = refAt(view, pos);
   if (!hit) {
     const fn = functionAt(view.state, pos);
-    return fn ? { pos: fn.from, end: fn.to, above: true, create: () => ({ dom: functionCard(fn.fn) }) } : null;
+    return fn ? { pos: fn.from, end: fn.to, above: true, create: () => ({ dom: pinHover(view, fn.from, fn.to, functionCard(fn.fn)) }) } : null;
   }
   const card = await tableCard(hit.t, true);
   if (!card) return null;
-  return { pos: hit.ref.start, end: hit.ref.end, above: true, create: () => ({ dom: cardDOM(card) }) };
+  return { pos: hit.ref.start, end: hit.ref.end, above: true, create: () => ({ dom: pinHover(view, hit.ref.start, hit.ref.end, cardDOM(card)) }) };
 }, { hoverTime: 350 });
 
 // The card K shows, kept until the cursor moves, the text changes or esc.
@@ -703,14 +726,17 @@ const cardField = cm.StateField.define({
     return v ? { pos: v.pos, end: v.end, above: true, create: () => ({ dom: v.make() }) } : null;
   }),
 });
+const closeCard = (view) => () => { if (view.state.field(cardField, false)) view.dispatch({ effects: setCard.of(null) }); };
+
+// pinHover is a card the mouse showed, which a click in it makes K's.
+const pinHover = (view, pos, end, dom) => keyOnFocus(dom, (d) => view.dispatch({ effects: [cm.closeHoverTooltips, setCard.of({ pos, end, make: () => keyedCard(d, view, closeCard(view)) })] }));
 
 // hoverAtCursor is vim's K: the card of the table or function the cursor is
 // on, or off again when it is showing. It says whether there was one to show.
 export async function hoverAtCursor(view) {
   if (view.state.field(cardField, false)) { view.dispatch({ effects: setCard.of(null) }); return true; }
   const head = view.state.selection.main.head;
-  const close = () => { if (view.state.field(cardField, false)) view.dispatch({ effects: setCard.of(null) }); };
-  const keyed = (make) => () => keyedCard(make(), view, close);
+  const keyed = (make) => () => keyedCard(make(), view, closeCard(view));
   const hit = refAt(view, head);
   if (!hit) {
     const fn = functionAt(view.state, head);
