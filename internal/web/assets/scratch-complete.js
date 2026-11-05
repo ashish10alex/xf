@@ -557,20 +557,37 @@ export function cardDOM(card) {
     find.hidden = true;
     root.append(find);
     const table = el('div', 'sc-card-table');
-    const rows = cols.map((f) => {
-      const row = el('div', 'sc-card-row');
-      const colDesc = f.description || modelDoc[f.name] || '';
-      const descSpan = el('span', 'sc-card-coldesc', colDesc);
-      if (colDesc) descSpan.title = colDesc;
-      row.append(el('span', 'sc-card-colname', f.name), el('span', 'sc-card-coltype', typeText(f)), descSpan);
-      table.append(row);
-      return [f, row];
-    });
+    // A record's fields follow it, indented, each with its type, as the
+    // BigQuery console lists them; their own fields further in.
+    const rows = [];
+    const addRows = (fields, depth, parent) => {
+      for (const f of fields) {
+        const row = el('div', depth ? 'sc-card-row sc-card-sub' : 'sc-card-row');
+        const colDesc = f.description || (depth ? '' : modelDoc[f.name]) || '';
+        const descSpan = el('span', 'sc-card-coldesc', colDesc);
+        if (colDesc) descSpan.title = colDesc;
+        const name = el('span', 'sc-card-colname', f.name);
+        if (depth) name.style.paddingLeft = 2 * depth + 'ch';
+        row.append(name, el('span', 'sc-card-coltype', typeText(f)), descSpan);
+        table.append(row);
+        const r = { row, parent, text: (f.name + '\n' + colDesc).toLowerCase() };
+        rows.push(r);
+        if (f.fields && f.fields.length) addRows(f.fields, depth + 1, r);
+      }
+    };
+    addRows(cols, 0, null);
     root.append(table);
+    // A row shows when it matches, or a field in it does (so the path to a
+    // field stays), or the record it is in does (so a record shows whole).
     find.addEventListener('input', () => {
       const q = find.value.trim().toLowerCase();
-      for (const [f, row] of rows) {
-        row.hidden = !!q && !(f.name.toLowerCase().includes(q) || (row.lastChild.textContent || '').toLowerCase().includes(q));
+      const hit = new Set(rows.filter((r) => !q || r.text.includes(q)));
+      const onPath = new Set();
+      for (const r of hit) for (let a = r.parent; a && !onPath.has(a); a = a.parent) onPath.add(a);
+      for (const r of rows) {
+        let shown = hit.has(r) || onPath.has(r);
+        for (let a = r.parent; !shown && a; a = a.parent) shown = hit.has(a);
+        r.row.hidden = !shown;
       }
     });
     find.addEventListener('keydown', (e) => e.stopPropagation()); // typing here is not the editor's
