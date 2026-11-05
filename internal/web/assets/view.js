@@ -989,7 +989,7 @@ function Footer() {
     return html`<div class="footer"><${Keys} list=${[[st.paletteKey, 'find'], [st.commandsKey, 'commands'],
       [st.onMac ? '⌘z' : 'alt+z', S.zoomed ? 'unzoom' : 'zoom'], [st.logTabLabel, 'next tab'], ['ctrl+j', 'hide'], ['ctrl+1', 'source']]} /></div>`;
   }
-  list = [[st.paletteKey, 'find'], ...find, ...list, ['z', S.zoomed ? 'unzoom' : 'zoom'], ['r', 'run'], ['?', 'help'], ...(['actions', 'lineage', 'run', 'sql'].includes(S.focus) && !S.zoomed ? [['esc', 'projects']] : [])];
+  list = [[st.paletteKey, 'find'], ...find, ...list, ['z', S.zoomed ? 'unzoom' : 'zoom'], ['r', 'run'], ['?', 'help'], ...(['actions', 'lineage', 'run', 'defer', 'sql'].includes(S.focus) && !S.zoomed ? [['esc', 'projects']] : [])];
   return html`<div class="footer"><${Keys} list=${list} /></div>`;
 }
 
@@ -2003,14 +2003,16 @@ function DeferSection() {
     </div>`);
   }
   const n = rows.filter((r) => r.tone === 'prod' || r.label.startsWith('⚠ prod')).length;
-  return html`<section class="pane defer-pane">
-    <header class="pane-title"><span class="pane-name">defer to prod${n ? html`<span class="dim"> · ${n} read from prod</span>` : ''}${d.stale ? html`<span class="warn"> · changed on this branch</span>` : ''}</span></header>
+  // A click gives it the keys, so z zooms it.
+  return html`<section class=${'pane defer-pane' + (S.focus === 'defer' ? ' focused' : '')} data-pane="defer"
+      onMouseDown=${() => { st.setFocus('defer'); redraw(); }}>
+    <header class="pane-title"><span class="pane-name">defer to prod${n ? html`<span class="dim"> · ${n} read from prod</span>` : ''}${d.stale ? html`<span class="warn"> · changed on this branch</span>` : ''}${S.zoomed && S.focus === 'defer' ? html`<span class="dim"> · zoom (esc)</span>` : ''}</span></header>
     <div class="pane-body defer-body">${body}</div>
   </section>`;
 }
 
 function RightPane({ children }) {
-  const rightFocused = S.focus === 'actions' || S.focus === 'lineage' || S.focus === 'run' || S.focus === 'sql';
+  const rightFocused = ['actions', 'lineage', 'run', 'defer', 'sql'].includes(S.focus);
   return html`<section class=${'pane right-pane' + (rightFocused ? ' right-focused' : '')} data-pane="right"
       onMouseDown=${(e) => { if (e.target === e.currentTarget) { st.setFocus('sql'); redraw(); } }}>
     <header class="pane-title">
@@ -2026,7 +2028,7 @@ function RightPane({ children }) {
 function Project() {
   const panes = {
     actions: html`<${ActionsPane} fill=${S.zoomed} />`, lineage: html`<${SQLPane} />`, run: html`<${RunPane} />`,
-    sql: html`<${SQLPane} />`, log: html`<${LogPane} />`, source: html`<${SourcePane} />`,
+    sql: html`<${SQLPane} />`, log: html`<${LogPane} />`, source: html`<${SourcePane} />`, defer: html`<${DeferSection} />`,
   };
   const preview = st.previewShown();
   if (preview) panes.sql = html`<${PreviewPane} />`;
@@ -2034,7 +2036,7 @@ function Project() {
     ${panes.actions}
     <${Splitter} id="actions" />
     <${TargetSection} />
-    <${DeferSection} />
+    ${panes.defer}
     ${S.caps.run && !(S.view && S.view.external) && panes.run}
     ${panes.sql}
   <//>`;

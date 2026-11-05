@@ -472,11 +472,12 @@ function takeRestoring(st) {
 
 // restoreFocus gives back the pane that had the keys, and the zoom.
 function restoreFocus(v) {
-  const panes = ['source', 'tree', 'sql', 'actions', 'lineage', 'run', 'log'];
+  const panes = ['source', 'tree', 'sql', 'actions', 'lineage', 'run', 'defer', 'log'];
   if (!panes.includes(v.focus) || v.focus === S.focus) { S.zoomed = !!v.zoomed; return; }
   if (v.focus === 'source' && !sourceShown()) return;
   if (v.focus === 'log' && !S.showLog) return;
   if (v.focus === 'run' && !S.caps.run) return;
+  if (v.focus === 'defer' && !(S.view && S.view.defer)) return;
   if (rightPanes.includes(v.focus) && !rightShown()) return;
   if (v.focus === 'tree') { if (hooks.treeShown && hooks.treeShown()) S.focus = 'tree'; return; }
   setFocus(v.focus);
@@ -900,6 +901,7 @@ async function fetchView(reset, fallback) {
     if (v.id !== id) renamed(id, v.id);
     externalTab(S.view, v);
     if (v.external && S.focus === 'run') S.focus = 'actions'; // a declaration has no run pane
+    if (!v.defer && S.focus === 'defer') { S.focus = 'sql'; S.zoomed = false; } // defer to prod went off
     S.view = v;
     if (S.anchor !== v.anchor) S.anchor = v.anchor;
     vim.setText(S.buf, v.sql.plain, reset || !sameAction);
@@ -1217,7 +1219,7 @@ function openTable(ref) {
 // ---- panes ----
 
 // rightPanes are the panes inside pane 2, the right-hand column.
-const rightPanes = ['actions', 'lineage', 'run', 'sql'];
+const rightPanes = ['actions', 'lineage', 'run', 'defer', 'sql'];
 
 export function setFocus(p) {
   // A hidden pane 2 comes back only with its own key.

@@ -285,6 +285,7 @@ body.resizing { cursor: row-resize; user-select: none; }
 /* rows keep their height (pane-body is a flex column, and a row with overflow
    hidden would shrink to fit), so a long list scrolls: about 6 rows show */
 .defer-body { padding: 2px 10px 6px; max-height: calc(6.5 * var(--lh)); overflow-y: auto; }
+.body.zoomed .defer-body { max-height: none; }
 .defer-row { flex: 0 0 auto; line-height: var(--lh); display: flex; gap: 1ch; align-items: baseline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .defer-row a, .defer-row .mono { overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
 .defer-label { flex: 0 0 auto; }
