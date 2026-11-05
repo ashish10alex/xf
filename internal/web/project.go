@@ -948,10 +948,10 @@ func (p *projectState) action(w http.ResponseWriter, r *http.Request) {
 	if auth {
 		v.Auth = "dry runs need Google credentials: " + bigquery.AuthHint + ", then c"
 	}
-	for _, d := range g.Dependencies(a.ID) {
+	for _, d := range byLineageKind(g.Dependencies(a.ID)) {
 		v.Lineage.Up = append(v.Lineage.Up, refOf(d))
 	}
-	for _, d := range g.Dependents(a.ID) {
+	for _, d := range byLineageKind(g.Dependents(a.ID)) {
 		v.Lineage.Down = append(v.Lineage.Down, refOf(d))
 	}
 	v.Lineage.Up, v.Lineage.Down = nonNil(v.Lineage.Up), nonNil(v.Lineage.Down)
@@ -997,6 +997,33 @@ func (p *projectState) actionPlace(a *project.Action) placeView {
 		v.Col = unitsAt(lines[loc.Line], min(loc.Col, len(lines[loc.Line])))
 	}
 	return v
+}
+
+// lineageOrder is the order of kinds in the Lineage tab: views, then
+// tables, then the rest, with the assertions and tests that check them
+// last. A kind not listed goes after the listed ones but before those.
+var lineageOrder = []project.ActionKind{
+	project.KindView, project.KindMaterializedView,
+	project.KindTable, project.KindIncremental,
+}
+
+func lineageRank(k project.ActionKind) int {
+	if i := slices.Index(lineageOrder, k); i >= 0 {
+		return i
+	}
+	if k == project.KindAssertion || k == project.KindTest {
+		return int(project.KindUnknown) + len(lineageOrder) + 1
+	}
+	return len(lineageOrder) + int(k)
+}
+
+// byLineageKind sorts a Lineage tab section by lineageOrder, keeping the
+// graph's schema.name order within a kind.
+func byLineageKind(actions []*project.Action) []*project.Action {
+	slices.SortStableFunc(actions, func(x, y *project.Action) int {
+		return cmp.Compare(lineageRank(x.Kind), lineageRank(y.Kind))
+	})
+	return actions
 }
 
 func nonNil[T any](s []T) []T {
