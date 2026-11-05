@@ -24,9 +24,9 @@ type DeferHint struct {
 }
 
 // DeferHints are the hints of a's upstream tables under d (d.For(a)), by
-// the dependency's ID, in dependency order: the tables read from prod or
-// that can't be, those built in dev, and declarations, which read the
-// same table in dev and prod. now ages the dev tables.
+// the dependency's ID: first the tables read from prod or that can't be,
+// then those built in dev and declarations, which read the same table in
+// dev and prod; each in dependency order. now ages the dev tables.
 func DeferHints(g *project.Graph, a *project.Action, d *deferral.Deferral, now time.Time) ([]project.ActionID, map[project.ActionID]DeferHint) {
 	hints := map[project.ActionID]DeferHint{}
 	if d != nil {
@@ -37,7 +37,7 @@ func DeferHints(g *project.Graph, a *project.Action, d *deferral.Deferral, now t
 			hints[b.Dev.ID()] = builtInDevHint(b, now)
 		}
 	}
-	var order []project.ActionID
+	var prod, dev []project.ActionID
 	for _, t := range a.DependencyTargets {
 		id := t.ID()
 		if _, ok := hints[id]; !ok {
@@ -48,9 +48,13 @@ func DeferHints(g *project.Graph, a *project.Action, d *deferral.Deferral, now t
 				continue
 			}
 		}
-		order = append(order, id)
+		if hints[id].Tone == "dev" {
+			dev = append(dev, id)
+		} else {
+			prod = append(prod, id)
+		}
 	}
-	return order, hints
+	return append(prod, dev...), hints
 }
 
 func entryHint(e deferral.Entry) DeferHint {
