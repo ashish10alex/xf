@@ -103,10 +103,10 @@ func TestWorktreeOpenListRemove(t *testing.T) {
 	// .xf/worktrees and opens its project, with node_modules linked.
 	var a worktreeAnswer
 	postJSON(t, c, ts.URL+"/api/worktree/open", map[string]string{"name": "feature/x"}, &a)
-	if !a.OK || a.Key != "proj@feature-x" || !strings.Contains(a.Message, "made a worktree") {
+	if !a.OK || a.Key != "proj@xf_feature-x" || !strings.Contains(a.Message, "made a worktree") {
 		t.Fatalf("open: %+v", a)
 	}
-	wt := filepath.Join(filepath.Dir(main), ".xf", "worktrees", "feature-x", "proj")
+	wt := filepath.Join(filepath.Dir(main), ".xf", "worktrees", "xf_feature-x", "proj")
 	if _, err := os.Stat(filepath.Join(wt, "node_modules", "@dataform", "core", "x.js")); err != nil {
 		t.Errorf("node_modules isn't linked: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestWorktreeOpenListRemove(t *testing.T) {
 	var again worktreeAnswer
 	req := map[string]string{"name": "feature/x"}
 	postKeyed(t, c, ts.URL+"/api/worktree/open", "proj", req, &again)
-	if !again.OK || again.Key != "proj@feature-x" || !strings.Contains(again.Message, "checked out in") {
+	if !again.OK || again.Key != "proj@xf_feature-x" || !strings.Contains(again.Message, "checked out in") {
 		t.Errorf("open again: %+v", again)
 	}
 	var cur worktreeAnswer
@@ -130,18 +130,18 @@ func TestWorktreeOpenListRemove(t *testing.T) {
 	getJSON(t, c, ts.URL+"/api/boot", &list)
 	var row *pickerProject
 	for i, p := range list.Picker {
-		if p.Key == "proj@feature-x" {
+		if p.Key == "proj@xf_feature-x" {
 			row = &list.Picker[i]
 		} else if p.Key != "proj" {
 			t.Errorf("unexpected row %+v", p)
 		}
 	}
-	if row == nil || row.Name != "proj@feature-x" || row.Worktree != "feature-x" || !row.Own || !samePath(row.Main, main) {
+	if row == nil || row.Name != "proj@xf_feature-x" || row.Worktree != "xf_feature-x" || !row.Own || !samePath(row.Main, main) {
 		t.Fatalf("the worktree's row: %+v", row)
 	}
 	var b bootView
-	getJSON(t, c, ts.URL+"/api/boot?project=proj@feature-x", &b)
-	if b.Project == nil || b.Project.Name != "proj@feature-x" {
+	getJSON(t, c, ts.URL+"/api/boot?project=proj@xf_feature-x", &b)
+	if b.Project == nil || b.Project.Name != "proj@xf_feature-x" {
 		t.Fatalf("boot of the worktree: %+v", b)
 	}
 
@@ -154,7 +154,7 @@ func TestWorktreeOpenListRemove(t *testing.T) {
 		t.Errorf("found worktrees: %+v", found)
 	}
 	// The projects tab lists, under the open proj, its worktrees that
-	// aren't open: agent's, not feature-x's.
+	// aren't open: agent's, not xf_feature-x's.
 	var unopened map[string][]foundWorktree
 	getJSON(t, c, ts.URL+"/api/worktrees", &unopened)
 	if fs := unopened[main]; len(unopened) != 1 || len(fs) != 1 || fs[0].Name != "proj@agent" || fs[0].Main != main {
@@ -213,16 +213,22 @@ func TestWorktreeNewBranch(t *testing.T) {
 		t.Errorf("without new: %+v", a)
 	}
 	postJSON(t, c, ts.URL+"/api/worktree/open", map[string]any{"name": "ash/try", "new": true}, &a)
-	if !a.OK || a.Key != "proj@ash-try" || !strings.Contains(a.Message, "made the branch ash/try") {
+	if !a.OK || a.Key != "proj@xf_ash-try" || !strings.Contains(a.Message, "made the branch ash/try") {
 		t.Fatalf("new: %+v", a)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(main), ".xf", "worktrees", "ash-try", "proj", "definitions", "a.sqlx")); err != nil {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(main), ".xf", "worktrees", "xf_ash-try", "proj", "definitions", "a.sqlx")); err != nil {
 		t.Errorf("the new worktree has no project: %v", err)
+	}
+	// A worktree the person named is in xf_ and that name.
+	var named worktreeAnswer
+	postKeyed(t, c, ts.URL+"/api/worktree/open", "proj", map[string]any{"name": "ash/two", "new": true, "folder": "review 2"}, &named)
+	if !named.OK || named.Key != "proj@xf_review-2" || !strings.Contains(named.Message, "xf_review-2") {
+		t.Errorf("named: %+v", named)
 	}
 	// An existing name with new opens that branch, as without.
 	var again worktreeAnswer
 	postKeyed(t, c, ts.URL+"/api/worktree/open", "proj", map[string]any{"name": "ash/try", "new": true}, &again)
-	if !again.OK || again.Key != "proj@ash-try" || !strings.Contains(again.Message, "checked out in") {
+	if !again.OK || again.Key != "proj@xf_ash-try" || !strings.Contains(again.Message, "checked out in") {
 		t.Errorf("new on a branch that is there: %+v", again)
 	}
 }
@@ -237,7 +243,7 @@ func TestWorktreeRemoveOutlivesThePage(t *testing.T) {
 	if !a.OK {
 		t.Fatalf("open: %+v", a)
 	}
-	wt := filepath.Join(filepath.Dir(main), ".xf", "worktrees", "feature-x", "proj")
+	wt := filepath.Join(filepath.Dir(main), ".xf", "worktrees", "xf_feature-x", "proj")
 	page := openEvents(t, c, ts.URL, a.Key)
 	ctx, leave := context.WithCancel(context.Background())
 	done := make(chan struct{})

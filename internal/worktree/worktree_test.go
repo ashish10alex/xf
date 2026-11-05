@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,6 +95,21 @@ func TestSlug(t *testing.T) {
 	}
 }
 
+func TestFolder(t *testing.T) {
+	for in, want := range map[string]string{
+		"feature/x":  "xf_feature-x",
+		"xf_review":  "xf_review",
+		"xf_":        "xf_worktree",
+		"xf_ two":    "xf_two",
+		"my review!": "xf_my-review",
+		"":           "xf_worktree",
+	} {
+		if got := Folder(in); got != want {
+			t.Errorf("Folder(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestParseList(t *testing.T) {
 	out := "worktree /r\nHEAD aaa\nbranch refs/heads/main\n\n" +
 		"worktree /r/.xf/worktrees/x\nHEAD bbb\nbranch refs/heads/feature/x\n\n" +
@@ -115,11 +131,11 @@ func TestAddLinkRemove(t *testing.T) {
 	if _, ok := Of(filepath.Join(clone, "proj")); ok {
 		t.Fatal("the main checkout is a worktree")
 	}
-	top, err := Add(ctx, filepath.Join(clone, "proj"), "feature/x", Local)
+	top, err := Add(ctx, filepath.Join(clone, "proj"), "feature/x", "", Local)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(clone, ".xf", "worktrees", "feature-x"); !samePath(top, want) {
+	if want := filepath.Join(clone, ".xf", "worktrees", "xf_feature-x"); !samePath(top, want) {
 		t.Errorf("top = %s, want %s", top, want)
 	}
 	if b, _ := os.ReadFile(filepath.Join(clone, ".xf", "worktrees", ".gitignore")); !strings.Contains(string(b), "*") {
@@ -129,7 +145,7 @@ func TestAddLinkRemove(t *testing.T) {
 	if !ok {
 		t.Fatal("Of: not a worktree")
 	}
-	if i.Name != "feature-x" || i.Rel != "proj" || !i.Own() || !samePath(i.MainRoot(), filepath.Join(clone, "proj")) {
+	if i.Name != "xf_feature-x" || i.Rel != "proj" || !i.Own() || !samePath(i.MainRoot(), filepath.Join(clone, "proj")) {
 		t.Errorf("Of = %+v (own %v, main root %s)", i, i.Own(), i.MainRoot())
 	}
 	// The worktrees folder ignores itself: the clone shows only its .xf.
@@ -229,7 +245,7 @@ func TestLinkReplacesNodeModulesLink(t *testing.T) {
 	}
 	clone := fixture(t)
 	ctx := context.Background()
-	top, err := Add(ctx, filepath.Join(clone, "proj"), "feature/x", Local)
+	top, err := Add(ctx, filepath.Join(clone, "proj"), "feature/x", "", Local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,10 +270,74 @@ func TestLinkReplacesNodeModulesLink(t *testing.T) {
 	}
 }
 
+// A worktree's config is a copy of the main checkout's, its own: a
+// setting saved in one doesn't reach the other. A link an older xf made
+// to the main checkout's becomes one too.
+func TestOwnConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the config is a plain copy there")
+	}
+	clone := fixture(t)
+	ctx := context.Background()
+	top, err := Add(ctx, filepath.Join(clone, "proj"), "feature/x", "", Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i, _ := Of(filepath.Join(top, "proj"))
+	mainConfig, wtConfig := filepath.Join(clone, "proj", Config), filepath.Join(i.Root(), Config)
+	// An older xf's link to the main checkout's.
+	if err := os.MkdirAll(filepath.Dir(wtConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An older xf linked it as Link does, to the main checkout git names.
+	if err := os.Symlink(filepath.Join(i.MainRoot(), Config), wtConfig); err != nil {
+		t.Fatal(err)
+	}
+	if linked, err := Link(ctx, i, "dataform"); err != nil || !slices.Contains(linked, Config) {
+		t.Fatalf("Link = %v, %v", linked, err)
+	}
+	if l, err := os.Readlink(wtConfig); err != nil || l != i.OwnConfig() {
+		t.Fatalf("the config links to %q, %v; want %s", l, err, i.OwnConfig())
+	}
+	if !strings.HasPrefix(i.OwnConfig(), i.GitDir) {
+		t.Errorf("the own config %s isn't in %s", i.OwnConfig(), i.GitDir)
+	}
+	// A write through the link is the worktree's alone.
+	write(t, wtConfig, `{"tablePrefix":"wt"}`)
+	if b, _ := os.ReadFile(mainConfig); string(b) != `{"webTheme":"x"}` {
+		t.Errorf("the main checkout's config is %q", b)
+	}
+	write(t, mainConfig, `{"tablePrefix":"main"}`)
+	if b, _ := os.ReadFile(wtConfig); string(b) != `{"tablePrefix":"wt"}` {
+		t.Errorf("the worktree's config is %q", b)
+	}
+	// It survives a removal git refuses: Unlink, then Link again.
+	if gone := Unlink(i, "dataform"); !slices.Contains(gone, Config) {
+		t.Errorf("Unlink took %v", gone)
+	}
+	if _, n, _ := Dirty(ctx, i, 5); n != 0 {
+		t.Errorf("unlinked, still dirty: %d", n)
+	}
+	if _, err := Link(ctx, i, "dataform"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(wtConfig); string(b) != `{"tablePrefix":"wt"}` {
+		t.Errorf("linked again, the worktree's config is %q", b)
+	}
+	// Removing the worktree takes it.
+	Unlink(i, "dataform")
+	if err := Remove(ctx, i, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(i.OwnConfig()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the own config outlived the worktree: %v", err)
+	}
+}
+
 func TestAddRemoteAndTaken(t *testing.T) {
 	clone := fixture(t)
 	ctx := context.Background()
-	top, err := Add(ctx, clone, "colleague", Remote)
+	top, err := Add(ctx, clone, "colleague", "", Remote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +345,7 @@ func TestAddRemoteAndTaken(t *testing.T) {
 		t.Errorf("colleague tracks %s", up)
 	}
 	// Made from inside a worktree, the next goes in the main checkout's.
-	top2, err := Add(ctx, top, "feature/x", Local)
+	top2, err := Add(ctx, top, "feature/x", "", Local)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,31 +353,36 @@ func TestAddRemoteAndTaken(t *testing.T) {
 		t.Errorf("%s is not beside %s", top2, top)
 	}
 	// main is checked out in the clone: git refuses it.
-	if _, err := Add(ctx, clone, "main", Local); err == nil {
+	if _, err := Add(ctx, clone, "main", "", Local); err == nil {
 		t.Error("Add made a second checkout of main")
 	}
 	// A folder that's taken gets -2.
-	if err := os.MkdirAll(filepath.Join(clone, ".xf", "worktrees", "b"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(clone, ".xf", "worktrees", "xf_b"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	gitIn(t, clone, "branch", "b")
-	top3, err := Add(ctx, clone, "b", Local)
-	if err != nil || filepath.Base(top3) != "b-2" {
+	top3, err := Add(ctx, clone, "b", "", Local)
+	if err != nil || filepath.Base(top3) != "xf_b-2" {
 		t.Errorf("Add b = %s, %v", top3, err)
 	}
 	// A new branch is made from the HEAD of the checkout asked from.
-	top4, err := Add(ctx, top, "ash/new", New)
-	if err != nil || filepath.Base(top4) != "ash-new" {
+	top4, err := Add(ctx, top, "ash/new", "", New)
+	if err != nil || filepath.Base(top4) != "xf_ash-new" {
 		t.Fatalf("Add new = %s, %v", top4, err)
 	}
 	if got, want := gitIn(t, clone, "rev-parse", "ash/new"), gitIn(t, top, "rev-parse", "HEAD"); got != want {
 		t.Errorf("ash/new is at %s, want colleague's HEAD %s", got, want)
 	}
-	if _, err := Add(ctx, clone, "ash/new", New); err == nil || !strings.Contains(err.Error(), "already exists") {
+	// A name the person gave is the folder, with xf_ once.
+	gitIn(t, clone, "branch", "c")
+	if top5, err := Add(ctx, clone, "c", "xf_my review", Local); err != nil || filepath.Base(top5) != "xf_my-review" {
+		t.Errorf("Add c named = %s, %v", top5, err)
+	}
+	if _, err := Add(ctx, clone, "ash/new", "", New); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("a second new ash/new: %v", err)
 	}
 	l, err := List(ctx, clone)
-	if err != nil || len(l) != 5 || !l[0].Main {
+	if err != nil || len(l) != 6 || !l[0].Main {
 		t.Fatalf("List = %+v, %v", l, err)
 	}
 }

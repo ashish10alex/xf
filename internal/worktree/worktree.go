@@ -37,6 +37,9 @@ type Info struct {
 	MainTop string
 	// Rel is the project's path from either top, "." at the top.
 	Rel string
+	// GitDir is the worktree's folder in the main checkout's
+	// .git/worktrees, which git removes with it.
+	GitDir string
 }
 
 // Root is the project's folder in the worktree.
@@ -109,7 +112,7 @@ func fromGitFile(top, root string) (Info, bool) {
 	if err != nil {
 		return Info{}, false
 	}
-	return Info{Top: top, Name: filepath.Base(top), MainTop: filepath.Dir(filepath.Dir(wts)), Rel: rel}, true
+	return Info{Top: top, Name: filepath.Base(top), MainTop: filepath.Dir(filepath.Dir(wts)), Rel: rel, GitDir: gitdir}, true
 }
 
 // Entry is a worktree git lists.
@@ -198,10 +201,11 @@ const (
 
 // Add checks branch out in a new worktree in the main checkout's Dir,
 // whichever checkout of the repository dir is in, and answers its top.
-// how says what branch it is. When git refuses, as it does for a branch
-// checked out elsewhere or a new branch's name that is taken, the error
-// is git's message.
-func Add(ctx context.Context, dir, branch string, how How) (string, error) {
+// The folder is Folder(name), or Folder(branch) when name is "". how says
+// what branch it is. When git refuses, as it does for a branch checked
+// out elsewhere or a new branch's name that is taken, the error is git's
+// message.
+func Add(ctx context.Context, dir, branch, name string, how How) (string, error) {
 	list, err := List(ctx, dir)
 	if err != nil {
 		return "", err
@@ -217,7 +221,10 @@ func Add(ctx context.Context, dir, branch string, how How) (string, error) {
 	if _, err := os.Stat(ignore); errors.Is(err, os.ErrNotExist) {
 		_ = os.WriteFile(ignore, []byte("# worktrees xf web made: not for git\n*\n"), 0o644)
 	}
-	top := freeFolder(parent, Slug(branch))
+	if strings.TrimSpace(name) == "" {
+		name = branch
+	}
+	top := freeFolder(parent, Folder(name))
 	args := []string{"worktree", "add", top, branch}
 	switch how {
 	case Remote:
@@ -246,6 +253,16 @@ func Slug(branch string) string {
 	return s
 }
 
+// FolderPrefix is what the folder of every worktree xf makes starts with, so
+// it tells them apart from others in git worktree list.
+const FolderPrefix = "xf_"
+
+// Folder is the folder xf makes a worktree named name in: FolderPrefix
+// and name's Slug, once, though name has the prefix already.
+func Folder(name string) string {
+	return FolderPrefix + Slug(strings.TrimPrefix(Slug(name), FolderPrefix))
+}
+
 // freeFolder is parent/name, or parent/name-2, -3 and so on when that is
 // taken.
 func freeFolder(parent, name string) string {
@@ -260,13 +277,16 @@ func freeFolder(parent, name string) string {
 	}
 }
 
+// Config is xf's config file, from the project's folder.
+var Config = filepath.Join(".xf", "config.json")
+
 // Links are the files and folders a worktree's project gets from the
 // main checkout's, for the backend ("" for every backend's): what is
 // installed or local to a person, which git doesn't hold.
 func Links(backend string) []string {
 	dataform := []string{"node_modules", ".df-credentials.json"}
 	dbt := []string{"dbt_packages", "profiles.yml", ".user.yml"}
-	both := []string{filepath.Join(".xf", "config.json")}
+	both := []string{Config}
 	switch backend {
 	case "dataform":
 		return append(dataform, both...)
@@ -282,23 +302,52 @@ func Links(backend string) []string {
 // through a node_modules that links to the main checkout's.
 var hardLinked = map[string]bool{"node_modules": true}
 
+// OwnConfig is where the worktree's project keeps its own copy of the
+// main checkout's Config, which its Config links to: in the worktree's
+// GitDir, so git status never shows it and removing the worktree takes
+// it. The copy is made once, so a setting saved in the worktree's
+// project, such as its table prefix, stays its own, and one saved in
+// the main checkout's doesn't reach it. On Windows Config is copied into
+// the worktree instead, as every linked file is there.
+func (i Info) OwnConfig() string {
+	return filepath.Join(i.GitDir, "xf", i.Rel, "config.json")
+}
+
+// ownsConfig reports whether p is Config and the worktree keeps its own
+// copy of it.
+func ownsConfig(i Info, p string) bool {
+	return p == Config && runtime.GOOS != "windows" && i.GitDir != ""
+}
+
+// source is what p in the worktree's project stands for: the main
+// checkout's, or for Config the worktree's own copy once it has one.
+func source(i Info, p string) string {
+	if ownsConfig(i, p) {
+		if _, err := os.Stat(i.OwnConfig()); err == nil {
+			return i.OwnConfig()
+		}
+	}
+	return filepath.Join(i.MainRoot(), p)
+}
+
 // Link links into the worktree's project each of Links the main
 // checkout's project has untracked and the worktree's lacks, and answers
-// those it linked. It never replaces anything but a link of its own
-// where a hard-linked folder belongs, as an older xf made. On Windows,
-// where a symlink may need Developer Mode, a folder is a junction and a
-// file a copy.
+// those it linked. Config links to the worktree's own copy (OwnConfig).
+// It never replaces anything but a link of its own where a hard-linked
+// folder or the own copy belongs, as an older xf made. On Windows, where
+// a symlink may need Developer Mode, a folder is a junction and a file a
+// copy.
 func Link(ctx context.Context, i Info, backend string) ([]string, error) {
 	var want []string
 	for _, p := range Links(backend) {
 		dst := filepath.Join(i.Root(), p)
-		if hardLinked[p] && linkedTo(filepath.Join(i.MainRoot(), p), dst) {
+		if (hardLinked[p] || ownsConfig(i, p)) && linkedTo(filepath.Join(i.MainRoot(), p), dst) {
 			_ = os.Remove(dst)
 		}
 		if _, err := os.Lstat(dst); err == nil {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(i.MainRoot(), p)); err != nil {
+		if _, err := os.Stat(source(i, p)); err != nil {
 			continue
 		}
 		want = append(want, p)
@@ -316,14 +365,17 @@ func Link(ctx context.Context, i Info, backend string) ([]string, error) {
 		if tracked[filepath.ToSlash(p)] {
 			continue
 		}
-		src, dst := filepath.Join(i.MainRoot(), p), filepath.Join(i.Root(), p)
+		src, dst := source(i, p), filepath.Join(i.Root(), p)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		mk := link
-		if hardLinked[p] {
+		switch {
+		case hardLinked[p]:
 			mk = linkTree
+		case ownsConfig(i, p):
+			mk = func(src, dst string) error { return linkOwn(src, dst, i.OwnConfig()) }
 		}
 		if err := mk(src, dst); err != nil {
 			errs = append(errs, fmt.Errorf("link %s: %w", p, err))
@@ -445,6 +497,20 @@ func link(src, dst string) error {
 	return copyFile(src, dst)
 }
 
+// linkOwn makes dst a link to own, a copy of src made first when src
+// isn't own already.
+func linkOwn(src, dst, own string) error {
+	if src != own {
+		if err := os.MkdirAll(filepath.Dir(own), 0o755); err != nil {
+			return err
+		}
+		if err := copyFile(src, own); err != nil {
+			return err
+		}
+	}
+	return os.Symlink(own, dst)
+}
+
 // linkTree makes dst the folder src with each file a hard link to src's,
 // which takes no room, or a copy where it can't be one. Links in src are
 // made again as they are. It is made beside dst and then moved there, so
@@ -501,15 +567,17 @@ func copyFile(src, dst string) error {
 }
 
 // Unlink takes away what Link made: links to the main checkout's files
-// and, on Windows, copies still the same as them. A .xf folder Link made
-// goes too, when nothing else is in it. It answers what it took away. A
-// hard-linked folder stays: git, which ignores it as the main checkout
-// does, removes it with the worktree, and the main checkout's files stay.
+// or the own config and, on Windows, copies still the same as them. A
+// .xf folder Link made goes too, when nothing else is in it. It answers
+// what it took away. A hard-linked folder stays: git, which ignores it as
+// the main checkout does, removes it with the worktree, and the main
+// checkout's files stay. So does the own config, which a Link after a
+// refused removal links again; git removes it with the worktree.
 func Unlink(i Info, backend string) []string {
 	var gone []string
 	for _, p := range Links(backend) {
 		src, dst := filepath.Join(i.MainRoot(), p), filepath.Join(i.Root(), p)
-		if !linkedTo(src, dst) {
+		if !linkedTo(src, dst) && !(ownsConfig(i, p) && linkedTo(i.OwnConfig(), dst)) {
 			continue
 		}
 		if err := os.Remove(dst); err == nil {

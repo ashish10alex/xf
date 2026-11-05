@@ -112,6 +112,7 @@ export function newBranchName(b) {
 export async function switchBranch(i) {
   const b = S.branches;
   if (!b || b.busy) return;
+  if (b.naming) return nameWorktree();
   if (b.worktree) return openWorktree(i);
   if (i !== undefined) b.cursor = i;
   const row = b.list[b.cursor];
@@ -140,29 +141,66 @@ export async function switchBranch(i) {
   redraw();
 }
 
+// worktreeFolder is worktree.Folder: the folder xf makes a worktree
+// named name in, xf_ and name with what a folder can't hold turned to -.
+const slug = (s) => s.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'worktree';
+export const worktreeFolder = (name) => 'xf_' + slug(slug(name).replace(/^xf_/, ''));
+
 // openWorktree is shift+enter: the branch under the cursor, or i's,
 // opened as a project of its own in a git worktree (ADR 0032): the
 // checkout it is in already, or a new one in the main checkout's
-// .xf/worktrees. This checkout doesn't change, so neither a run nor
-// unsaved changes hold it up. It opens in this tab or a new one as
-// webOpenProjectIn says. On the last row of "New worktree…" it makes the
-// branch the query names, in a new worktree.
+// .xf/worktrees, which asks its name first (nameWorktree). This checkout
+// doesn't change, so neither a run nor unsaved changes hold it up. It
+// opens in this tab or a new one as webOpenProjectIn says. On the last
+// row of "New worktree…" it makes the branch the query names, in a new
+// worktree.
 export async function openWorktree(i) {
   const b = S.branches;
-  if (!b || b.busy) return;
+  if (!b || b.busy || b.naming) return;
   if (i !== undefined) b.cursor = i;
   const made = b.worktree && b.cursor === b.list.length ? newBranchName(b) : '';
   const row = made ? { name: made } : b.list[b.cursor];
   if (!row) return;
   if (row.current) { b.err = (b.worktree ? 'the checkout of ' + b.projectName + ' is on ' : 'this checkout is on ') + row.name + ': pick another branch to open beside it'; redraw(); return; }
+  if (row.worktree) { await makeWorktree(b, row.name, false, ''); return; }
+  // A new worktree: its name first, the branch's to start with.
+  const name = slug(row.name);
+  b.naming = { branch: row.name, made: !!made, name, placeholder: name };
+  b.err = '';
+  redraw();
+}
+
+// setWorktreeName is the name field's text.
+export function setWorktreeName(text) {
+  if (S.branches && S.branches.naming) { S.branches.naming.name = text; redraw(); }
+}
+
+// cancelWorktreeName goes back from the name to the list (esc).
+export function cancelWorktreeName() {
+  if (S.branches && S.branches.naming && !S.branches.busy) { S.branches.naming = null; S.branches.err = ''; redraw(); }
+}
+
+// nameWorktree makes the worktree the name field names (enter): in
+// xf_ and the name, or the branch's when the field is empty.
+export async function nameWorktree() {
+  const b = S.branches;
+  if (!b || !b.naming || b.busy) return;
+  const n = b.naming;
+  await makeWorktree(b, n.branch, n.made, worktreeFolder(n.name.trim() || n.placeholder));
+}
+
+// makeWorktree asks xf for branch's worktree, made in folder when it
+// has none, and opens its project.
+async function makeWorktree(b, branch, made, folder) {
   // A new tab opens now, while the key press lets it, and goes to the
   // project once xf has it.
   const tab = S.openIn === 'new-tab' ? window.open('', '_blank') : null;
   if (S.openIn === 'new-tab' && !tab) { b.err = 'the browser blocked the new tab: allow pop-ups for xf web to open projects in one'; redraw(); return; }
-  b.busy = (made ? 'making the branch ' + made + ' in a worktree' : (row.worktree ? 'opening ' : 'making a worktree for ') + row.name); b.err = '';
+  b.busy = made ? 'making the branch ' + branch + ' in the worktree ' + folder : folder ? 'making the worktree ' + folder + ' for ' + branch : 'opening ' + branch;
+  b.err = '';
   redraw();
   try {
-    const r = await postAs(keyOf(b), '/api/worktree/open', { name: row.name, new: !!made });
+    const r = await postAs(keyOf(b), '/api/worktree/open', { name: branch, new: made, ...(folder ? { folder } : {}) });
     if (S.branches === b) b.busy = '';
     if (!r.ok) {
       if (tab) tab.close();
@@ -328,6 +366,11 @@ export function baseKey(k) {
 // branchesKey has the switcher's keys while its query hasn't (a click
 // took the focus away).
 export function branchesKey(k) {
+  if (S.branches && S.branches.naming) {
+    if (k === 'enter') nameWorktree();
+    else if (k === 'esc' || k === 'q') cancelWorktreeName();
+    return true;
+  }
   switch (k) {
     case 'esc': case 'q': S.overlay = null; S.branches = null; return true;
     case 'enter': switchBranch(); return true;

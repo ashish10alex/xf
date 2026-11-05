@@ -100,7 +100,9 @@ func (s *Server) linkWorktree(pr session.Project) {
 // project. A branch checked out elsewhere opens there, as git checks a
 // branch out in one worktree at a time; else xf makes a worktree for it.
 // With new, a name no branch has is made a branch from this checkout's
-// HEAD, in a new worktree. It answers the project's key.
+// HEAD, in a new worktree. A new worktree's folder is xf_ and the folder
+// the page names, else the branch's (worktree.Folder). It answers the
+// project's key.
 func (s *Server) openWorktree(w http.ResponseWriter, r *http.Request) {
 	p := s.project(w, r)
 	if p == nil {
@@ -109,6 +111,9 @@ func (s *Server) openWorktree(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 		New  bool   `json:"new"`
+		// Folder is what the person named the worktree; "" for the
+		// branch's name.
+		Folder string `json:"folder"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -149,7 +154,7 @@ func (s *Server) openWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	top, made := b.Worktree, false
 	if top == "" {
-		if top, err = worktree.Add(ctx, root, b.Name, how); err != nil {
+		if top, err = worktree.Add(ctx, root, b.Name, req.Folder, how); err != nil {
 			writeJSON(w, okView{Message: err.Error()})
 			return
 		}

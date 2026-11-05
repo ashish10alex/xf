@@ -5,7 +5,7 @@
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { S, arrangePicker, handleKey, openNewWorktree, switchBranch } from '../assets/state.js';
+import { S, arrangePicker, handleKey, openNewWorktree, setWorktreeName, switchBranch, worktreeFolder } from '../assets/state.js';
 import { askRemoveWorktreeHere, nextOpenProject, openByName, pickerKey, projectTabRows } from '../assets/picker.js';
 
 beforeEach(() => {
@@ -78,18 +78,40 @@ test('New worktree… lists another project\'s branches and makes a new one in a
     // The checkout's own branch can't open beside it.
     await switchBranch(0);
     assert.match(S.branches.err, /checkout of shop is on main/);
-    // enter on a branch opens it in a worktree, asking of shop.
+    // enter on a branch asks the new worktree's name, the branch's to
+    // start with, then makes it in xf_ and that name, asking of shop.
     await switchBranch(1);
-    assert.deepEqual(sent.at(-1), { path: '/api/worktree/open', project: 'shop', body: { name: 'fix', new: false } });
-    // A name no branch has makes it, in a new worktree.
+    assert.deepEqual(S.branches.naming, { branch: 'fix', made: false, name: 'fix', placeholder: 'fix' });
+    assert.equal(sent.length, 1);
+    await switchBranch();
+    assert.deepEqual(sent.at(-1), { path: '/api/worktree/open', project: 'shop', body: { name: 'fix', new: false, folder: 'xf_fix' } });
+    // esc goes back to the list.
+    handleKey('esc');
+    assert.equal(S.branches.naming, null);
+    assert.equal(S.overlay, 'branches');
+    // A name no branch has makes it, in a new worktree the person names.
     S.branches.query = 'ash try';
     S.branches.listedFor = 'ash try';
     await switchBranch(S.branches.list.length);
-    assert.deepEqual(sent.at(-1), { path: '/api/worktree/open', project: 'shop', body: { name: 'ash-try', new: true } });
+    assert.equal(S.branches.naming.name, 'ash-try');
+    setWorktreeName('my review');
+    handleKey('enter');
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(sent.at(-1), { path: '/api/worktree/open', project: 'shop', body: { name: 'ash-try', new: true, folder: 'xf_my-review' } });
     assert.equal(S.branches.err, 'stop here');
+    // An emptied name is the branch's.
+    setWorktreeName('  ');
+    await switchBranch();
+    assert.equal(sent.at(-1).body.folder, 'xf_ash-try');
   } finally {
     globalThis.fetch = realFetch;
     S.overlay = null; S.branches = null;
+  }
+});
+
+test('a worktree\'s folder is xf_ and its name, as worktree.Folder makes it', () => {
+  for (const [name, want] of [['feature/x', 'xf_feature-x'], ['xf_review', 'xf_review'], ['xf_', 'xf_worktree'], ['xf_ two', 'xf_two'], ['my review!', 'xf_my-review'], ['', 'xf_worktree']]) {
+    assert.equal(worktreeFolder(name), want, name);
   }
 });
 

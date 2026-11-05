@@ -2691,7 +2691,7 @@ export function clickLineage(i, jump) {
 export { vim, toggleColumns, toggleIncremental, toggleFlag, startRun, toggleLineage, focusLog, nextTab, openKept, compile, openTable, copyTarget, copyPath, openInEditor, showErrorsOrSay, openPalette as palette };
 
 // What other modules take from here, now kept in modules of their own.
-export { closeBase, fetchBases, fetchBranches, moveBase, moveBranches, newBranchName, openBase, openBranches, openNewWorktree, openWorktree, pickBase, setBaseQuery, setBranchesQuery, switchBranch } from './branches.js';
+export { cancelWorktreeName, closeBase, fetchBases, fetchBranches, moveBase, moveBranches, nameWorktree, newBranchName, openBase, openBranches, openNewWorktree, openWorktree, pickBase, setBaseQuery, setBranchesQuery, setWorktreeName, switchBranch, worktreeFolder } from './branches.js';
 export { answerDefer, deferGroups, deferOn, toggleDefer } from './checks.js';
 export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, toggleTag } from './checks.js';
 export { actOnErrorRow, errorGroups, errorKinds, errorRows, errorsTabShown, pickSQLTab, runFix, runLogFix, showErrorsTab, sqlTabOn } from './errors-tab.js';

@@ -404,8 +404,13 @@ func (s *Server) saveSettingsFile(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeSettingsFile writes data to path in one step, making the file and
-// its folder when there are none.
+// its folder when there are none. A path that is a link, as a worktree's
+// config is (worktree.Link), writes the file it links to and stays a
+// link.
 func writeSettingsFile(path string, data []byte) error {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
 	if _, err := os.Stat(path); err == nil {
 		return replaceFile(path, data)
 	}

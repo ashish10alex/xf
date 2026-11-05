@@ -823,6 +823,8 @@ mark.cur { background: var(--amber); color: var(--bg); }
 .branch-row .branch-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .branch-row.sel { background: var(--sel); font-weight: 600; }
 .branch-note { padding-top: 0; }
+.worktree-folder { display: flex; flex-direction: column; gap: 2px; padding-top: 6px; padding-bottom: 6px; }
+.worktree-folder .dim { display: inline-block; width: 7ch; }
 .branch-err { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; max-height: 9em; overflow: auto; }
 .branch-ind { white-space: nowrap; }
 .base-ind { white-space: nowrap; }

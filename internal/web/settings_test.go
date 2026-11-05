@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -417,5 +418,30 @@ func TestSettingsFileUserLevel(t *testing.T) {
 	}
 	if st := getStatus(t, c, ts.URL+"/api/settings/file?level=project"); st != http.StatusUnprocessableEntity {
 		t.Errorf("project file outside a project: status %d", st)
+	}
+}
+
+// The JSON view's save of a worktree's config, a link to its own copy
+// (worktree.Link), writes the copy and leaves the link.
+func TestWriteSettingsFileThroughLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the config is a copy there, not a link")
+	}
+	dir := t.TempDir()
+	own, at := filepath.Join(dir, "own.json"), filepath.Join(dir, "config.json")
+	if err := os.WriteFile(own, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(own, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSettingsFile(at, []byte(`{"tablePrefix":"wt"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := os.Readlink(at); err != nil || l != own {
+		t.Errorf("the link is %q, %v", l, err)
+	}
+	if b, _ := os.ReadFile(own); string(b) != `{"tablePrefix":"wt"}` {
+		t.Errorf("the copy is %q", b)
 	}
 }

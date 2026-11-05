@@ -1229,7 +1229,7 @@ function helpSections() {
   ];
   if (c.changed) right.push(['R run changed', [['space', 'check/uncheck file'], ['x', 'check/uncheck all files'], ['v', 'show/hide the command it runs'], ['b', 'compare with another branch']]]);
   if (c.run) right.push(['T run tags', [['space', 'check/uncheck tag'], ['enter', 'run checked tags'], ['esc', 'd D f a options (again: close)']]]);
-  if (c.branches) right.push(['B switch branch', [['enter', 'switch (git switch), or make the branch typed (git switch -c)'], ['shift+enter', 'open the branch beside this one, in a git worktree'], ['ctrl+r', 'fetch origin'], ['esc', 'close']]]);
+  if (c.branches) right.push(['B switch branch', [['enter', 'switch (git switch), or make the branch typed (git switch -c)'], ['shift+enter', 'open the branch beside this one, in a git worktree (a new one asks its name, xf_ first)'], ['ctrl+r', 'fetch origin'], ['esc', 'close']]]);
   if (c.branches && c.changed) right.push(['b compare with (from R, I, C)', [['enter', 'compare with, saved for the project'], ['ctrl+r', 'fetch origin'], ['esc', 'back']]]);
   if (c.impact || c.cost) right.push([[c.impact && 'I', c.cost && 'C'].filter(Boolean).join('/') + ' checks page', [['y', 'copy report as Markdown'], ['c', 'check again'],
     ...(c.impact && c.cost ? [['tab', 'Impact/Cost'], ['I/C', 'that tab']] : []), ...(c.api ? [['a', 'working tree/pushed branch']] : []), ...(c.branches ? [['b', 'compare with another branch']] : []), ['j/k', 'scroll'], ['esc', 'back (asks: y goes)']]]);
@@ -1400,6 +1400,7 @@ function BranchesOverlay() {
   // worktree, where enter does what shift+enter does in B (ADR 0032).
   const wt = !!b.worktree;
   const title = wt ? 'new worktree of ' + b.projectName : 'B switch branch';
+  if (b.naming) return html`<${WorktreeName} b=${b} title=${title} />`;
   const enterWord = b.cursor === b.list.length && make ? (wt ? 'make branch in a worktree' : 'make branch')
     : wt ? (b.list[b.cursor] && b.list[b.cursor].worktree ? 'open its worktree' : 'open in a worktree') : 'switch';
   return html`<${Modal} title=${title} onClose=${() => { S.overlay = null; S.branches = null; }}>
@@ -1446,6 +1447,37 @@ function BranchesOverlay() {
       <div class="overlay-keys"><${Keys} list=${[['enter', enterWord],
         ...(!wt && b.list[b.cursor] ? [['shift+enter', b.list[b.cursor].worktree ? 'open its worktree' : 'open in a worktree']] : []),
         ['ctrl+r', 'fetch origin'], ['↑/↓', 'move'], ['esc', 'close']]} /></div>
+    </div>
+  <//>`;
+}
+
+// WorktreeName is the step before a new worktree is made: its name,
+// the branch's to start with, selected so typing replaces it. The folder
+// is xf_ and the name, which the line under it shows as it is typed.
+function WorktreeName({ b, title }) {
+  const n = b.naming;
+  const folder = st.worktreeFolder(n.name.trim() || n.placeholder);
+  return html`<${Modal} title=${title} onClose=${() => { S.overlay = null; S.branches = null; }}>
+    <div class="query">
+      <span class="prompt">name</span>
+      <input class="worktree-name" value=${n.name} placeholder=${n.placeholder} spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
+        ref=${(e) => { if (e && document.activeElement !== e) { e.focus(); e.select(); } }}
+        onInput=${(e) => st.setWorktreeName(e.currentTarget.value)}
+        onKeyDown=${(e) => {
+          const k = st.keyName(e);
+          if (k === 'esc') { e.preventDefault(); st.cancelWorktreeName(); }
+          else if (k === 'enter') { e.preventDefault(); st.nameWorktree(); }
+        }} />
+    </div>
+    <div class="pad worktree-folder">
+      <div><span class="dim">folder</span> .xf/worktrees/<b>${folder}</b></div>
+      <div><span class="dim">branch</span> ${n.branch}${n.made ? html` <span class="dim">· new, from HEAD</span>` : ''}</div>
+    </div>
+    <div class="changed-foot">
+      ${b.busy ? html`<div class="warn">${spinner()} ${b.busy}…</div>`
+        : b.err ? html`<pre class="error branch-err">${b.err}</pre>`
+        : html`<div class="dim">name the worktree, or keep the branch's name · xf_ marks the worktrees xf makes</div>`}
+      <div class="overlay-keys"><${Keys} list=${[['enter', 'make the worktree'], ['esc', 'back to the branches']]} /></div>
     </div>
   <//>`;
 }
