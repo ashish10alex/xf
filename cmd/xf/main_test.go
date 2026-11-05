@@ -4,8 +4,40 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
+
+// Bare xf outside any project, with none remembered, succeeds with a hint:
+// winget's validation runs it so. Asked for a folder that isn't a project,
+// it still fails.
+func TestBareXfOutsideAProject(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	t.Setenv("LOCALAPPDATA", filepath.Join(dir, "local"))
+	t.Setenv("APPDATA", filepath.Join(dir, "roaming"))
+	t.Chdir(dir)
+
+	if err := runTUI(nil); err != nil {
+		t.Errorf("bare xf: %v, want no error", err)
+	}
+	if err := runTUI([]string{"--dir", dir}); err == nil {
+		t.Error("xf --dir on a folder that isn't a project: no error")
+	}
+}
+
+func TestNoProjectHint(t *testing.T) {
+	var b strings.Builder
+	noProjectHint(&b)
+	for _, want := range []string{"no Dataform or dbt project", "xf web", "xf search", "--help"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("hint lacks %q:\n%s", want, b.String())
+		}
+	}
+}
 
 func TestPiped(t *testing.T) {
 	if runtime.GOOS == "windows" {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -127,10 +128,6 @@ func runTUI(args []string) error {
 	if fs.NArg() > 0 && !*inNvim {
 		return fmt.Errorf("unexpected arguments: %v (see xf --help)", fs.Args())
 	}
-	if piped(os.Stdin) {
-		return errors.New("the TUI opens on a terminal and reads nothing from a pipe; to view JSON from one, use jq or fx")
-	}
-
 	root, name, err := pf.find()
 	if errors.Is(err, backend.ErrNoProject) && *pf.dir == "" && *pf.backend == "" {
 		// Outside any project, offer the ones xf has opened before.
@@ -144,11 +141,33 @@ func runTUI(args []string) error {
 			}
 			return openPicked(fs, sf, *inNvim, inEditor, p)
 		}
+		// Bare xf with nothing to open says where to go next and succeeds:
+		// it was asked nothing it could not do. winget's validation runs it
+		// so, and fails a package whose command exits with an error.
+		if len(args) == 0 {
+			noProjectHint(os.Stdout)
+			return nil
+		}
 	}
 	if err != nil {
 		return err
 	}
+	if piped(os.Stdin) {
+		return errors.New("the TUI opens on a terminal and reads nothing from a pipe; to view JSON from one, use jq or fx")
+	}
 	return openProject(fs, sf, *inNvim, root, name)
+}
+
+// noProjectHint is what bare xf says outside any project, with none it has
+// opened before to pick.
+func noProjectHint(w io.Writer) {
+	_, _ = io.WriteString(w, `xf: no Dataform or dbt project here.
+
+  xf web            pick or find a project in your browser
+  xf search <dir>   find the projects in a folder, for xf to list
+  xf --dir <dir>    open the project in dir
+  xf --help         every command and flag
+`)
 }
 
 // openProject opens the TUI for the project at root, or neovim with the
