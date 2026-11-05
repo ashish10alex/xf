@@ -172,7 +172,7 @@ export function Rail() {
     ${btn('files', 'Files (' + tr.treeKey + ')', shows('files'), '', () => tr.toggleView('files'))}
     ${btn('search', 'Search (' + sr.searchKey + ')', shows('search'), '', () => (shows('search') ? tr.toggleView('search') : sr.openSearch()))}
     ${btn('scm', 'Source Control (' + sc.scmKey + ')', shows('scm'), badge(n, 'changes'), () => tr.toggleView('scm'))}
-    ${btn('projects', 'Projects (' + projectsKey + ' lists them in the palette)', shows('projects'), badge(S.open.length > 1 ? S.open.length : 0), () => tr.toggleView('projects'))}
+    ${btn('projects', 'Projects (' + projectsKey + ')', shows('projects'), badge(S.open.length > 1 ? S.open.length : 0), () => tr.toggleView('projects'))}
     ${btn('term', (term ? 'Terminal (' : 'Log (') + jKey + ')', S.showLog && (!term || S.logTab === 'term'), '', () => (term ? toggleTerm() : toggleLog()))}
     ${btn('settings', 'Settings (ctrl+,)', false, '', () => hooks.openSettings(), 'rail-end')}
   </nav>`;

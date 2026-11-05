@@ -304,6 +304,10 @@ export function revealActive() {
 // toggleSCM is ctrl+g: the same for Source Control.
 export function toggleSCM() { toggleView('scm'); }
 
+// toggleProjects is cmd+shift+w (ctrl+shift+w off a Mac): the same for
+// the projects tab.
+export function toggleProjects() { toggleView('projects'); }
+
 // toggleColumn is the cmd+b key: it hides the column whichever view it
 // shows, Source Control too, and shows it on the tree when hidden.
 export function toggleColumn() { toggleView(T.shown ? T.view : 'files'); }
@@ -688,6 +692,7 @@ hooks.toggleTree = toggleTree;
 hooks.revealActive = revealActive;
 hooks.toggleColumn = toggleColumn;
 hooks.toggleSCM = toggleSCM;
+hooks.toggleProjects = toggleProjects;
 hooks.scmShown = () => { restore(); return T.shown && T.view === 'scm'; };
 hooks.treeShown = () => { restore(); return T.shown; };
 hooks.treeLoading = () => { restore(); return T.shown && T.view === 'files' && !T.loaded && !T.error; };

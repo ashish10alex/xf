@@ -1793,7 +1793,6 @@ export function openProjectList() {
   openPalette('%');
   if (matchedProjects().length > 1) S.palette.cursor = 1;
 }
-hooks.openProjectList = openProjectList;
 
 // commandQuery is the query after its ">", or null when it lists files or
 // actions. Scratch's palette lists only commands, with or without it.
@@ -2002,7 +2001,8 @@ function commands() {
   }
   if (hooks.toggleTree) toggle('View: file tree', hooks.treeShown() && !hooks.scmShown() && !hooks.projectsShown(), onMac ? '⌘b' : 'ctrl+b', hooks.toggleTree);
   if (hooks.revealActive) add('View: show the open file in the file tree', revealKey, hooks.revealActive);
-  add('View: open projects', projectsKey, openProjectList);
+  if (hooks.toggleProjects) toggle('View: projects', hooks.projectsShown(), projectsKey, hooks.toggleProjects);
+  add('View: open projects', '', openProjectList);
   if (hooks.toggleSCM) toggle('View: source control', hooks.scmShown(), 'ctrl+g', hooks.toggleSCM);
   if (hooks.searchCommands) for (const [label, key, f] of hooks.searchCommands()) add(label, key, f);
   toggle('View: toggle pane 2', rightShown(), rightKey(), toggleRight);
@@ -2314,8 +2314,8 @@ function isP(e, shift) {
 export const isPaletteKey = (e) => isP(e, false);
 export const isCommandsKey = (e) => isP(e, true);
 
-// projectsKey shows and hides the column's projects tab: cmd+shift+w on a
-// Mac, ctrl+shift+w elsewhere.
+// projectsKey shows and hides the column's projects tab, as ctrl+g does
+// Source Control: cmd+shift+w on a Mac, ctrl+shift+w elsewhere.
 export const projectsKey = onMac ? '⇧⌘w' : 'ctrl+shift+w';
 
 // revealKey shows the open file in the file tree, as VS Code's Show

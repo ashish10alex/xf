@@ -6,7 +6,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { S } from '../assets/state.js';
 import { cycleProject, nextOpenProject, switchProject } from '../assets/picker.js';
-import { T, key, projectRows } from '../assets/tree.js';
+import { T, key, projectRows, toggleProjects } from '../assets/tree.js';
 
 globalThis.fetch = async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } });
 
@@ -105,4 +105,16 @@ test('with no other project open, cycling stays and says so', async () => {
   await tick();
   assert.equal(location.href, '/?project=finance');
   assert.match(S.flash, /no other project/);
+});
+
+test('cmd+shift+w shows the projects tab with the keys, and again hides it', () => {
+  S.boot = { root: '/r/finance', name: 'finance' };
+  toggleProjects(); // restores the column for /r/finance first
+  Object.assign(T, { shown: false, view: 'files' });
+  S.focus = 'sql';
+  toggleProjects();
+  assert.deepEqual([T.shown, T.view, S.focus], [true, 'projects', 'tree']);
+  toggleProjects();
+  assert.equal(T.shown, false);
+  assert.notEqual(S.focus, 'tree');
 });

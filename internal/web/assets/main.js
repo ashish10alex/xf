@@ -133,16 +133,19 @@ window.addEventListener('keydown', (e) => {
   hooks.openSearch();
 }, true);
 
-// cmd+shift+w (ctrl+shift+w off a Mac) lists the open projects in the
-// palette, to switch to one, from anywhere in the project view, the
-// editors included.
+// cmd+shift+w (ctrl+shift+w off a Mac) shows and hides the column's
+// projects tab, as ctrl+g does Source Control, from anywhere in the
+// project view, the editors included; an open palette closes first.
 window.addEventListener('keydown', (e) => {
   if (termHasKey(e)) return; // the terminal's own
   if (!isProjectsKey(e)) return;
-  if (S.mode !== 'project' || (S.overlay && S.overlay !== 'palette') || S.checks || SET.open || SC.open || T.pick) return;
+  if (S.mode !== 'project' || (S.overlay && S.overlay !== 'palette') || S.checks || SET.open || SC.open || T.pick || !hooks.toggleProjects) return;
   e.preventDefault();
   e.stopPropagation();
-  hooks.openProjectList();
+  if (S.overlay) leaveOverlay();
+  // Showing it gives it the keys, so an editor gives them up.
+  if (!hooks.projectsShown() && document.activeElement instanceof HTMLElement && document.activeElement.closest('.cm-editor')) document.activeElement.blur();
+  hooks.toggleProjects();
   redraw();
 }, true);
 
