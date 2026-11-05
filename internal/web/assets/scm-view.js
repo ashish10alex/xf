@@ -344,14 +344,16 @@ function Branch() {
 // Remote is a button that goes to origin: it spins while its command
 // runs, and is dimmed while another git command does.
 function Remote({ busy, title, run, icon }) {
-  const mine = G.busy === busy;
-  return html`<button class=${'scm-icon' + (mine ? ' running' : G.busy ? ' idle' : '')} disabled=${!!G.busy}
+  const shown = sc.busyShown();
+  const mine = shown === busy;
+  return html`<button class=${'scm-icon' + (mine ? ' running' : shown ? ' idle' : '')} disabled=${!!shown}
     title=${mine ? busy + '…' : title} onMouseDown=${act(run)}>${mine ? html`<span class="scm-spin"></span>` : icon}</button>`;
 }
 
 function Status() {
-  if (G.busy) {
-    return html`<div class="scm-status busy"><span class="scm-spin"></span><span>${G.busy}…</span><span class="spacer"></span>
+  const busy = sc.busyShown();
+  if (busy) {
+    return html`<div class="scm-status busy"><span class="scm-spin"></span><span>${busy}…</span><span class="spacer"></span>
       <button class="scm-icon" title="stop it" onMouseDown=${act(sc.cancelGit)}>✕</button></div>`;
   }
   if (G.failed) {

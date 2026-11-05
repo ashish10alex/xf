@@ -95,6 +95,23 @@ export const shown = () => T.shown && T.view === 'scm';
 
 let seq = 0, timer = 0;
 
+// A git command shows as running (the header's spinner, the status bar's
+// "git: …") once it has run for busyDelay: staging or discarding a file
+// takes milliseconds, and showing it would only flash. One the page
+// started itself (a push) shows at once.
+const busyDelay = 300;
+let busyAt = 0, busyTimer = 0;
+function setBusy(b, now = false) {
+  b = b || '';
+  if (b && !G.busy) {
+    busyAt = now ? 0 : Date.now();
+    clearTimeout(busyTimer);
+    if (!now) busyTimer = setTimeout(redraw, busyDelay);
+  }
+  G.busy = b;
+}
+export const busyShown = () => G.busy && Date.now() - busyAt >= busyDelay ? G.busy : '';
+
 // refresh lists the status again, soon: events come in bursts. It reads
 // even with the view hidden, for the column's count.
 export function refresh() {
@@ -110,7 +127,7 @@ async function load() {
     const v = await get('/api/scm');
     if (n !== seq) return;
     G.st = v;
-    G.busy = v.busy || '';
+    setBusy(v.busy);
     G.error = v.error || '';
     G.loaded = true;
     if (G.open.commits && (!G.logLoaded || G.logHead !== logKey(v))) loadLog(false);
@@ -356,7 +373,7 @@ export function focusSCM() {
 export async function act(url, body, opts = {}) {
   if (G.busy) { say('git is busy ' + G.busy + ': wait for it, or stop it (✕)'); return false; }
   G.failed = '';
-  if (opts.busy) { G.busy = opts.busy; say(opts.busy + '…'); }
+  if (opts.busy) { setBusy(opts.busy, true); say(opts.busy + '…'); }
   let r;
   try {
     r = await post(url, body || {});
@@ -894,8 +911,11 @@ hooks.scmOpenChanges = openChanges;
 // can change the source pane's file or its base without a compile, so
 // the pane looks at the disk again.
 let diskTimer = 0;
+// An event drops a read already on its way: it began before the event,
+// so its busy is old, and would show "discarding…" again after it ended.
 hooks.scmEvent = (ev) => {
-  G.busy = ev.busy || '';
+  setBusy(ev.busy);
+  seq++;
   refresh();
   clearTimeout(diskTimer);
   diskTimer = setTimeout(checkDisk, 120);

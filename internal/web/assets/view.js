@@ -847,7 +847,7 @@ function StatusLine() {
     <span class="badge">${b.backend.toUpperCase()}</span>
     <${ProjectButton} /><span class="dim"> · </span><${BranchIndicator} /><span class="dim status-parts" title=${parts.join(' · ')}>${parts.map((p) => p + ' · ').join('')}</span>${state}
     ${r && r.running && html`<span class="dim"> · </span><span class="warn">▶ running ${r.short}${r.api ? ' in GCP' : ''} (ctrl+c cancels)</span>`}
-    ${scm.G.busy && html`<span class="dim"> · </span><span class="warn git-busy" title="Source Control's ✕ (ctrl+g) stops it">${spinner()} git: ${scm.G.busy}…</span>`}
+    ${scm.busyShown() && html`<span class="dim"> · </span><span class="warn git-busy" title="Source Control's ✕ (ctrl+g) stops it">${spinner()} git: ${scm.busyShown()}…</span>`}
     <span class="spacer"></span>
     ${!S.connected && html`<span class="error">● reconnecting to xf web…</span>`}
     ${S.caps.follow && html`<span class=${'follow-ind ' + (!S.following || st.followWaits() ? 'warn' : 'dim')}>${!S.following ? 'follow paused (F)' : st.followWaits() ? 'follow waits: unsaved source' : 'following editor'}</span>`}
