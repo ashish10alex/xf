@@ -31,6 +31,29 @@ xf --help
 
 To build from source instead, install Go and [`just`](https://github.com/casey/just) (`winget install Casey.Just`), clone the repo and run `just install`. It installs into `$(go env GOPATH)\bin`; add that to your `PATH` as above. Use `just install` rather than `go install ./cmd/xf` to update: Windows can't overwrite an `xf.exe` that's running (a TUI or an editor's `xf lsp`), so `just install` builds first, then moves the running one aside.
 
+## Behind a company proxy
+
+A company proxy or firewall, such as Zscaler, can hold a download while it scans it, and answer with its own web page instead of the file. The install script says so if it happens to the release zip. If it happens to the script itself, `irm` prints the page's HTML and an `Invoke-RestMethod` error, often with "We're checking this file for a potential security risk" in it. Either way, nothing is installed. Wait about 10 minutes, as the page asks, and run the install command again.
+
+Or download the zip in your browser, which waits for the scan and then saves the file, and install it by hand:
+
+1. From the [latest release](https://github.com/ashish10alex/xf/releases/latest), download `checksums.txt` and `xf_windows_amd64.zip` (or `xf_windows_arm64.zip` on ARM64).
+2. In PowerShell, in the folder you saved them to, check that the zip's hash is the one `checksums.txt` lists for it:
+
+   ```powershell
+   (Get-FileHash .\xf_windows_amd64.zip -Algorithm SHA256).Hash.ToLower(); Select-String xf_windows_amd64.zip .\checksums.txt
+   ```
+
+3. Extract `xf.exe` to `%LocalAppData%\Programs\xf` and add that folder to your `PATH`:
+
+   ```powershell
+   $dir = "$env:LOCALAPPDATA\Programs\xf"; Unblock-File .\xf_windows_amd64.zip; Expand-Archive .\xf_windows_amd64.zip -DestinationPath $dir -Force; [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$dir", 'User')
+   ```
+
+4. Open a new terminal and run `xf --help`.
+
+A managed machine can also stop an unsigned `xf.exe` from running (see below); if it does, ask your IT team to allow it.
+
 ## Running a downloaded `xf.exe`
 
 xf isn't signed. Run from a terminal, it starts without a prompt. If you double-click a downloaded `xf.exe`, or a zip extracted from a browser download, SmartScreen may say "Windows protected your PC": choose **More info**, then **Run anyway**. Or clear the download mark before extracting:
