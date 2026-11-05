@@ -60,6 +60,23 @@ if (appWindow) {
 // runs before every other key handler, and keyEnd after them.
 window.addEventListener('keydown', keyStart, true);
 
+// The panes' numbers (ctrl+0…3) show only while ctrl is held on its own
+// for a moment, so a ctrl+key shortcut doesn't flash them. Once shown they
+// stay until ctrl goes up, so ctrl+1, ctrl+2 can be pressed in a row.
+let ctrlTimer = 0;
+const showPaneNums = (on) => {
+  clearTimeout(ctrlTimer);
+  document.documentElement.classList.toggle('ctrl-held', on);
+};
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Control' && !e.metaKey && !e.altKey && !e.shiftKey) {
+    if (!e.repeat) { clearTimeout(ctrlTimer); ctrlTimer = setTimeout(() => showPaneNums(true), 300); }
+  } else if (!e.ctrlKey) showPaneNums(false);
+  else clearTimeout(ctrlTimer);
+}, true);
+window.addEventListener('keyup', (e) => { if (e.key === 'Control' || !e.ctrlKey) showPaneNums(false); }, true);
+window.addEventListener('blur', () => showPaneNums(false));
+
 // While xf web can't be reached, xf's keys do nothing: this runs before
 // every other key handler and stops them. The browser's own (⌘r, ⌘w,
 // ctrl+r off a Mac) still work, all but ctrl+n's blank window.

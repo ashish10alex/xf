@@ -155,13 +155,16 @@ body.resizing { cursor: row-resize; user-select: none; }
 .pane-title > * { pointer-events: auto; background: var(--bg); padding: 0 4px; }
 .pane-title .dim, .pane-title .pane-name > .dim { background: transparent; padding: 0; }
 .pane.focused .pane-title { color: var(--focus); font-weight: 700; }
+/* A pane's number is its ctrl+0…3 key: shown only while ctrl is held (main.js). */
 .pane-num {
+  display: none;
   color: var(--bg) !important;
   background: var(--dim) !important;
   border-radius: 3px;
   padding: 0 4px !important;
   font-weight: 700;
 }
+.ctrl-held .pane-num { display: inline; }
 .pane.focused .pane-num { background: var(--focus) !important; }
 /* A pane whose runs go to GCP (the a toggle): the accent, unless focused. */
 .pane.api:not(.focused) { border-color: var(--blue); }
