@@ -589,9 +589,11 @@ function SourcePane() {
   if (SRC.saving) state.push(html`<span class="dim">saving…</span>`);
   else if (SRC.dirty) state.push(html`<span class="warn">unsaved</span>`);
   if (SRC.stale) state.push(html`<span class="error">changed on disk${src.autosaveMs() ? ' · autosave paused' : ''}</span>`);
-  else if (src.autosaveMs() && SRC.view && !SRC.view.readOnly) state.push(html`<span class="dim">autosave</span>`);
   if (SRC.view && SRC.view.readOnly) state.push(html`<span class="dim">read-only: ${SRC.view.readOnly}</span>`);
-  const title = html`source${bits.length ? html`<span class="dim"> · ${bits.join(' · ')}</span>` : ''}${state.map((x) => html`<span class="dim"> · </span>${x}`)}${S.zoomed && S.focus === 'source' ? html`<span class="dim"> · zoom (esc)</span>` : ''}`;
+  if (S.zoomed && S.focus === 'source') state.push(html`<span class="dim">zoom (esc)</span>`);
+  // The file's path alone names the pane; autosave on says nothing.
+  const parts = [...bits, ...state];
+  const title = html`${parts.map((x, i) => html`${i ? html`<span class="dim"> · </span>` : ''}${x}`)}`;
   const w = st.paneSize('source');
   // With pane 2 hidden, the source pane is all the width there is.
   const style = w && !S.zoomed && st.rightShown() ? `flex:0 0 ${w}%` : '';
