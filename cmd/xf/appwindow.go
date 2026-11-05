@@ -170,8 +170,15 @@ func appWindowCommand(goos, browser, profile, url string) *exec.Cmd {
 
 // linkCommand is the command that opens a link the app window asks for in
 // profile of browser: a tab of that profile's last window, or a new window
-// when it has none.
+// when it has none. On a Mac an .app is sent the link as open -a sends it,
+// with no profile: a command line (open -na, or the .app's own program)
+// makes Chrome open a new window when the app window was the last one
+// used, as it is when a key there asks for the link, though the profile
+// has one. The link goes to the profile last used, the app window's own.
 func linkCommand(goos, browser, profile, url string) *exec.Cmd {
+	if goos == "darwin" && strings.HasSuffix(strings.TrimSuffix(browser, "/"), ".app") {
+		return exec.Command("open", "-a", browser, url)
+	}
 	return browserCommand(goos, browser, profileArgs(profile, url))
 }
 

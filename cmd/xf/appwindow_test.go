@@ -71,7 +71,10 @@ func TestAppWindowCommand(t *testing.T) {
 
 func TestLinkCommand(t *testing.T) {
 	url := "https://gitlab.com/a/b/-/merge_requests/1"
-	if got := linkCommand("darwin", "/Applications/Google Chrome.app", "Profile 1", url).Args; !slices.Equal(got, []string{"open", "-na", "/Applications/Google Chrome.app", "--args", "--profile-directory=Profile 1", url}) {
+	// On a Mac, open -a with no profile: a command line (open -na, or the
+	// .app's own program) opened a new window when the app window was the
+	// last one used.
+	if got := linkCommand("darwin", "/Applications/Google Chrome.app", "Profile 1", url).Args; !slices.Equal(got, []string{"open", "-a", "/Applications/Google Chrome.app", url}) {
 		t.Errorf("Mac .app = %q", got)
 	}
 	if got := linkCommand("linux", "/usr/bin/chromium", "Default", url).Args; !slices.Equal(got, []string{"/usr/bin/chromium", "--profile-directory=Default", url}) {
