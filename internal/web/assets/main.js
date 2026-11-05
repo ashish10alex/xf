@@ -38,10 +38,22 @@ function coverIfLost() {
   if (focusBeforeLost && focusBeforeLost.isConnected) focusBeforeLost.focus();
   focusBeforeLost = null;
 }
+
+// A dialog that opens from another one in the same draw (a palette
+// command that opens the branch switcher, say) is a new .overlay-back:
+// it would fade the dimmed page out and in again, and its box rise, so
+// the whole page flickers. It shows at once instead (style.css,
+// data-held), as if the one dialog had changed what it shows.
+const backs = () => [...root.querySelectorAll('.overlay-back')];
+function holdBacks(before) {
+  if (!before.length) return;
+  for (const el of backs()) if (!before.includes(el)) el.dataset.held = '';
+}
+
 // After each draw this window tells the others what it shows.
 // <html class="drawn"> ends the switch from the page before this one and
 // shows the grain (style.css).
-onRedraw(() => { render(h(App, null), root); render(h(LostNotice, null), lostRoot); document.documentElement.classList.add('drawn'); coverIfLost(); track(); });
+onRedraw(() => { const shown = backs(); render(h(App, null), root); holdBacks(shown); render(h(LostNotice, null), lostRoot); document.documentElement.classList.add('drawn'); coverIfLost(); track(); });
 
 // In an app window a link to another site opens as openLink does, in a
 // tab of the last browser window rather than a new window.

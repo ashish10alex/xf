@@ -700,6 +700,9 @@ kbd.tap:hover { border-color: var(--focus); }
   box-shadow: var(--shadow);
   animation: rise 0.14s ease-out;
 }
+/* One dialog opened from another in the same draw (main.js, holdBacks):
+   the page stays dimmed and the new box shows at once. */
+.overlay-back[data-held], .overlay-back[data-held] > .overlay, .overlay-back[data-held] > .picker.picker-over { animation: none; }
 .overlay.wide { width: min(1080px, 96vw); }
 .overlay.zoomed { width: 96vw; max-height: 88vh; }
 .overlay .pane-body { padding: 8px 12px 8px; gap: 6px; }
