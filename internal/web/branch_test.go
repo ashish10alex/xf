@@ -121,6 +121,11 @@ func TestBranchList(t *testing.T) {
 	if v.Total != 3 || len(v.Branches) != 1 || v.Branches[0].Name != "colleague/fix" {
 		t.Errorf("q=colfix: %+v", v)
 	}
+	// The query filters main out, but the list still names it: a new
+	// branch starts from it.
+	if v.Head != "main" {
+		t.Errorf("q=colfix: head = %q, want main", v.Head)
+	}
 
 	fb := &fakeBranches{}
 	deps := branchDeps(fb)

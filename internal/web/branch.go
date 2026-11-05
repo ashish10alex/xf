@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -91,6 +92,9 @@ type branchesView struct {
 	Total    int         `json:"total"`
 	Note     string      `json:"note,omitempty"`
 	Detached string      `json:"detached,omitempty"`
+	// Head is the checked-out branch, which a new branch starts from:
+	// the query filters its row out, so the list names it here.
+	Head string `json:"head,omitempty"`
 	// NotGit says the project is in no git repository.
 	NotGit bool   `json:"notGit,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -114,6 +118,9 @@ func (p *projectState) branches(w http.ResponseWriter, r *http.Request) {
 	}
 	now := p.deps.Now()
 	v := branchesView{Branches: []branchRow{}, Total: len(l.Branches), Note: frontend.BranchRootNote(p.deps.Root, l.Root), Detached: l.Detached}
+	if i := slices.IndexFunc(l.Branches, func(b gitbranch.Branch) bool { return b.Current }); i >= 0 {
+		v.Head = l.Branches[i].Name
+	}
 	for _, b := range frontend.FindBranches(l.Branches, r.URL.Query().Get("q")) {
 		v.Branches = append(v.Branches, branchRow{Name: b.Name, Remote: b.Remote, Current: b.Current, Age: gitbranch.Age(now, b.Date), Worktree: branchWorktree(b)})
 	}

@@ -75,7 +75,7 @@ async function listBranches(keep) {
       return;
     }
     b.loading = false;
-    b.list = r.branches; b.total = r.total; b.note = r.note || ''; b.detached = r.detached || '';
+    b.list = r.branches; b.total = r.total; b.note = r.note || ''; b.detached = r.detached || ''; b.head = r.head || '';
     b.listedFor = b.query;
     if (r.error) b.err = r.error;
     b.cursor = cur ? Math.max(b.list.findIndex((x) => x.name === cur), 0) : 0;

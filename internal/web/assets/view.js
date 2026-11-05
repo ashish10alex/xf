@@ -1437,7 +1437,7 @@ function BranchesOverlay() {
           onMouseDown=${(e) => { e.preventDefault(); st.switchBranch(b.list.length); }}>
         <span class="lead">${b.cursor === b.list.length ? '▸' : ''}</span>
         <span class="branch-name">+ make branch <b>${make}</b>${wt ? ' in a new worktree' : ''}</span>
-        <span class="dim">${wt ? 'from its HEAD' : 'git switch -c, from HEAD'}</span></div>`}
+        <span class="dim">${(wt ? 'from ' : 'git switch -c, from ') + (b.head || b.detached || 'HEAD')}</span></div>`}
       ${!b.loading && !b.list.length && !make && html`<div class="dim pad">no matches</div>`}
     </div>
     <div class="changed-foot">
