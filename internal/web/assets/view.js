@@ -1860,6 +1860,21 @@ function Confirm() {
         <button class="plain" onClick=${() => { S.overlay = null; redraw(); }}><kbd>any other key</kbd> stay</button></div>
     <//>`;
   }
+  // The projects tab's Close Project, on a project this tab doesn't show.
+  if (o === 'confirmClose') {
+    const c = S.closeOther;
+    if (!c) return null;
+    const others = alsoOpenIn(c.key);
+    const keep = () => { S.overlay = null; S.closeOther = null; st.say('kept ' + c.name + ' open'); };
+    return html`<${Modal} title="close project" cls="confirm" onClose=${keep}>
+      <p class="warn">close ${c.name}?</p>
+      ${others && html`<p>It is open in ${others}: ${others.includes(',') || others.includes(' and ') ? 'they go' : 'it goes'} to the project shown before.</p>`}
+      ${c.unsaved.length > 0 && html`<p class="warn">${unsavedWords(c.unsaved)}</p>`}
+      <p class="dim">This tab stays on ${S.boot.name}.</p>
+      <div class="buttons"><button class="run-btn" onClick=${() => { S.overlay = null; S.closeOther = null; st.closeListed(c); }}><kbd>y</kbd>/<kbd>enter</kbd> close</button>
+        <button class="plain" onClick=${keep}><kbd>any other key</kbd> keep it open</button></div>
+    <//>`;
+  }
   // The projects tab's Remove Worktree and the palette's (ADR 0032).
   if (o === 'confirmRemoveWorktree') {
     const c = S.removeWorktree;
@@ -1930,7 +1945,7 @@ function Overlay() {
     case 'watch': return S.watch && html`<${WatchPrompt} />`;
     case 'editor': return S.editor && html`<${EditorPicker} />`;
     case 'scratchNew': return html`<${NewBox} />`;
-    case 'confirmQuit': case 'confirmClear': case 'confirmFull': case 'confirmRemoveWorktree': return html`<${Confirm} />`;
+    case 'confirmQuit': case 'confirmClose': case 'confirmClear': case 'confirmFull': case 'confirmRemoveWorktree': return html`<${Confirm} />`;
     case 'deferAsk': return S.deferAsk && html`<${DeferAsk} />`;
     case 'projects': return html`<${Picker} overlay=${true} />`;
     case 'sourceConflict': return html`<${SourceConflict} />`;

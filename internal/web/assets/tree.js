@@ -15,7 +15,7 @@
 // open in xf web (ADR 0008), to switch to another. The rail's icons (ADR
 // 0035) switch between the four; the header names the one showing.
 
-import { S, get, post, redraw, hooks, setFocus, selectAction, showPlainFile, onMac, copy, absPath, say, openNewWorktree } from './state.js';
+import { S, get, post, redraw, hooks, setFocus, selectAction, showPlainFile, onMac, copy, absPath, say, openNewWorktree, askCloseListed } from './state.js';
 import { SRC } from './source.js';
 import { part } from './workspace.js';
 import { askRemoveWorktreeHere, openFoundRow, projectTabRows, switchProject } from './picker.js';
@@ -106,7 +106,8 @@ export function openProjectRow(o, flip) {
 
 // openProjectMenu is a row's right-click menu (ADR 0032): open it here or
 // in a new tab; New Worktree… lists its repository's branches to open in
-// a worktree, or a new branch to make in one; Remove Worktree asks before
+// a worktree, or a new branch to make in one; Close Project asks before
+// closing an open one for every tab on it; Remove Worktree asks before
 // removing a worktree, xf's or another's; and its path.
 export function openProjectMenu(e, o) {
   e.preventDefault();
@@ -124,6 +125,7 @@ export function openProjectMenu(e, o) {
     { label: 'New Worktree…', key: 'shift+enter in B', off: !S.caps.branches ? 'not available' : !via ? 'open its project first' : '',
       run: () => openNewWorktree(via.key, repo.name) },
   ];
+  items.push('-', { label: 'Close Project', key: here ? 'ctrl+q' : '', off: o.found ? 'not open' : '', run: () => askCloseListed(o) });
   if (o.worktree) {
     items.push({ label: 'Remove Worktree',
       run: () => askRemoveWorktreeHere({ ...o, key: o.found ? '' : o.key, path: o.path || o.root }) });

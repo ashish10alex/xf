@@ -73,7 +73,7 @@ export const S = {
   jobsQuery: '', jobsTyping: false, jobsSort: { col: '', desc: false },
   history: { rows: [], last: null },
   historyOpen: null, historyJobs: null,
-  overlay: null,    // palette, help, errors, changed, tags, prod, confirmFull, confirmQuit, confirmClear, confirmRemoveWorktree
+  overlay: null,    // palette, help, errors, changed, tags, prod, confirmFull, confirmQuit, confirmClose, confirmClear, confirmRemoveWorktree
   // checks is the Checks page's tab while the page shows, impact or cost:
   // I and C fill the window, as settings does (ADR 0010).
   checks: null,
@@ -111,6 +111,9 @@ export const S = {
   pickerBranches: null,
   // removeWorktree is the worktree confirmRemoveWorktree asks about.
   removeWorktree: null,
+  // closeOther is the open project confirmClose asks to close, from the
+  // projects tab's Close Project: { key, name, unsaved }.
+  closeOther: null,
   // pickerWorktrees are, by a project's root, its repository's worktrees
   // xf hasn't opened yet (ADR 0032), as read.
   pickerWorktrees: null,
@@ -2139,15 +2142,25 @@ export async function closeProject() {
   }
 }
 
-// closeListed closes the open project c from the projects list, after
-// its confirm; this tab's own is ctrl+q.
+// closeListed closes the open project c from the projects list or the
+// projects tab, after its confirm; this tab's own is ctrl+q.
 export async function closeListed(c) {
   if (S.mode === 'project' && c.key === S.key) { closeProject(); return; }
   try {
     await post('/api/close', { key: c.key, by: windowWord() });
+    // From the projects tab, over a project, the projects event redraws it.
+    if (S.mode === 'picker' || S.overlay === 'projects') setPickerQuery(S.pickerQuery);
     say('closed ' + c.name);
-    setPickerQuery(S.pickerQuery);
   } catch (e) { say(e.message); }
+}
+
+// askCloseListed is the projects tab's Close Project: this tab's own
+// project asks as ctrl+q does; another open one asks in a dialog of its
+// own, naming its unsaved files, then closes for every tab on it.
+export function askCloseListed(o) {
+  if (o.key === S.key) { askQuit(); return; }
+  S.closeOther = { key: o.key, name: o.name, unsaved: o.unsaved || [] };
+  S.overlay = 'confirmClose';
 }
 
 // arrangePicker puts the open projects first, those this tab showed
@@ -2354,7 +2367,7 @@ export function handleKey(k) {
   // "palette" is paletteKey, named by main.js and the footer's chip;
   // "commands" is commandsKey, named by main.js.
   if (k === 'palette' || k === 'commands') {
-    if (['confirmQuit', 'confirmClear', 'confirmFull', 'confirmRemoveWorktree', 'prod', 'sourceConflict', 'scratchNew', 'watch', 'deferAsk'].includes(S.overlay)) return true;
+    if (['confirmQuit', 'confirmClose', 'confirmClear', 'confirmFull', 'confirmRemoveWorktree', 'prod', 'sourceConflict', 'scratchNew', 'watch', 'deferAsk'].includes(S.overlay)) return true;
     if (k === 'commands' && S.overlay === 'palette') setPaletteQuery('>');
     else openPalette(k === 'commands' ? '>' : '');
     return true;
@@ -2374,6 +2387,14 @@ export function handleKey(k) {
       S.overlay = null;
       if (k === 'y' || k === 'enter' || k === 'ctrl+q') closeProject();
       return true;
+    // y or enter closes the other project; any other key keeps it.
+    case 'confirmClose': {
+      const c = S.closeOther;
+      S.overlay = null;
+      S.closeOther = null;
+      if (c && (k === 'y' || k === 'enter')) closeListed(c); else say('kept ' + (c ? c.name : 'it') + ' open');
+      return true;
+    }
     case 'confirmClear':
       S.overlay = null;
       if (k === 'y') clearHistory(); else say('history kept');
