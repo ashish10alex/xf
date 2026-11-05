@@ -40,7 +40,7 @@ In Dataform, `--defer` reads prod through **proxy views** that xf makes at the d
 ## Reading `xf run --dry-run --json`
 
 - `command`: the tool's command a real run starts. `added`: actions xf added to the run (functions and procedures, or with `--defer-build-changed`, the stale tables).
-- `builds[]`: each action the run builds, with its `dryRuns[]` (an incremental table has a `full` and an `incremental` one). Each has `bytes` and `costUSD`, or `error`, or `builtByRun`: a table it reads that isn't built yet and that this run builds first, so the dry run couldn't find it. That one is expected, not a failure.
+- `builds[]`: each action the run builds, with its `dryRuns[]` (an incremental table has a `full` and an `incremental` one). Each has `bytes` and `costUSD`, or `error`, or `builtByRun`: a table it reads that isn't built yet and that this run builds first, so the dry run couldn't find it; or `firstBuild`: an incremental table not built yet, whose first run is its full build. Those two are expected, not failures.
 - `readsFromProd[]`: `dev` → `prod`, with `stale: true` for a table this branch changes. `readsFromDev[]`: upstream tables built in dev, with `builtAt`.
 - `proxyViews`: leftover views a run without `--defer` reads prod through.
 - `refusal`: `reason` (`stale`, `cannotDefer` or `proxyViews`), `tables`, and `flags` that settle it.

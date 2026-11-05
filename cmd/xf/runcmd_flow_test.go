@@ -47,8 +47,10 @@ func (f *fakeRunEngine) DryRun(_ context.Context, _, _, sql string) (*bigquery.D
 	f.mu.Lock()
 	f.sqls = append(f.sqls, sql)
 	f.mu.Unlock()
-	if strings.Contains(sql, "`p.s.fct`") {
-		return nil, errors.New("Not found: Table p:s.fct was not found in location EU")
+	for _, unbuilt := range []string{"fct", "inc"} {
+		if strings.Contains(sql, "`p.s."+unbuilt+"`") {
+			return nil, errors.New("Not found: Table p:s." + unbuilt + " was not found in location EU")
+		}
 	}
 	return &bigquery.DryRun{Bytes: 100, Accuracy: bigquery.AccuracyPrecise}, nil
 }
@@ -74,7 +76,20 @@ func runGraph() *project.Graph {
 		table("stg", "select 2"),
 		table("fct", "select * from `p.s.raw` join `p.s.stg` using (id)", "raw", "stg"),
 		table("agg", "select count(*) from `p.s.fct`", "fct"),
+		{ID: "p.s.inc", Target: tgt("p", "s", "inc"), Kind: project.KindIncremental, Query: "select 3",
+			IncrementalQuery: "select 3 from `p.s.inc` where false"},
 	})
+}
+
+func TestXfRunDryRunOfAnUnbuiltIncrementalIsItsFullBuild(t *testing.T) {
+	rc, out := newTestRun(t, &fakeRunEngine{}, "--actions", "inc", "--dry-run", "--json")
+	plan, code := checkAndDryRun(t, rc)
+	if code != runOK || plan.refusal != nil {
+		t.Fatalf("code %d\n%s", code, out)
+	}
+	if !strings.Contains(out.String(), `"firstBuild": true`) || !strings.Contains(out.String(), `"failed": 0`) {
+		t.Errorf("the incremental query of an unbuilt table isn't a failure:\n%s", out)
+	}
 }
 
 func newTestRun(t *testing.T, f *fakeRunEngine, args ...string) (*runCtx, *bytes.Buffer) {

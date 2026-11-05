@@ -54,6 +54,10 @@ type plannedDryRun struct {
 	// BuiltByRun is a table the SQL reads that isn't built yet and that
 	// this run builds first, so the dry run can't find it.
 	BuiltByRun string `json:"builtByRun,omitempty"`
+	// FirstBuild says an incremental table's own table isn't built yet,
+	// so its incremental query can't be dry run: its first run is the
+	// full build.
+	FirstBuild bool `json:"firstBuild,omitempty"`
 }
 
 type plannedRead struct {
@@ -137,9 +141,18 @@ func (rc *runCtx) dryRun(ctx context.Context, plan *runPlan) (int, error) {
 				switch {
 				case err != nil:
 					msg := err.Error()
-					if m := notFound.FindStringSubmatch(msg); m != nil && built[project.ActionID(m[1]+"."+m[2]+"."+m[3])] && project.ActionID(m[1]+"."+m[2]+"."+m[3]) != a.ID {
-						p.BuiltByRun = m[1] + "." + m[2] + "." + m[3]
-					} else {
+					var missing project.ActionID
+					if m := notFound.FindStringSubmatch(msg); m != nil {
+						missing = project.ActionID(m[1] + "." + m[2] + "." + m[3])
+					}
+					switch {
+					case missing != "" && missing == a.ID && q.Label == "incremental":
+						// Its own table isn't built yet, so its first run
+						// is the full build, dry run beside it.
+						p.FirstBuild = true
+					case missing != "" && built[missing] && missing != a.ID:
+						p.BuiltByRun = string(missing)
+					default:
 						p.Error = msg
 					}
 				default:
@@ -216,6 +229,8 @@ func planText(p dryRunPlan, now time.Time) string {
 			case d.Error != "":
 				msg, _, _ := strings.Cut(d.Error, "\n")
 				fmt.Fprintf(&b, "  ✗ %-*s  %s\n", width, id, msg)
+			case d.FirstBuild:
+				fmt.Fprintf(&b, "  ↳ %-*s  not built yet: its first run is the full build\n", width, id)
 			case d.BuiltByRun != "":
 				fmt.Fprintf(&b, "  ↳ %-*s  reads %s, which this run builds first\n", width, id, d.BuiltByRun)
 			default:
