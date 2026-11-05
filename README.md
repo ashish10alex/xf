@@ -1,6 +1,6 @@
 # xf
 
-A web UI, terminal UI and language server for [Dataform](https://github.com/dataform-co/dataform) and [dbt](https://www.getdbt.com/) projects on BigQuery. Browse a project's actions with their compiled SQL, columns and lineage, dry run and run them, edit the source with vim keys, and see what your branch changes: the actions it touches, the columns it drops or retypes that something downstream still reads, and what its queries would cost.
+A unified interface for [Dataform](https://github.com/dataform-co/dataform) and [dbt](https://www.getdbt.com/) projects on BigQuery. Browse a project's actions with their compiled SQL, columns and lineage, dry run and run them, edit the source with vim keys, and see what your branch changes: the actions it touches, the columns it drops or retypes that something downstream still reads, and what its queries would cost.
 
 xf works out from the files in a project's root whether it is Dataform or dbt. dbt projects get most of what Dataform's do; [dbt projects](docs/dbt.md) lists the differences.
 
