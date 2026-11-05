@@ -1470,8 +1470,8 @@ function WorktreeName({ b, title }) {
         }} />
     </div>
     <div class="pad worktree-folder">
-      <div><span class="dim">folder</span> .xf/worktrees/<b>${folder}</b></div>
-      <div><span class="dim">branch</span> ${n.branch}${n.made ? html` <span class="dim">· new, from HEAD</span>` : ''}</div>
+      <div><span class="dim wt-label">folder</span> .xf/worktrees/<b>${folder}</b></div>
+      <div><span class="dim wt-label">branch</span> ${n.branch}${n.made ? html` <span class="dim">· new, from ${b.head || b.detached || 'HEAD'}</span>` : ''}</div>
     </div>
     <div class="changed-foot">
       ${b.busy ? html`<div class="warn">${spinner()} ${b.busy}…</div>`
