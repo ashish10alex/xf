@@ -130,7 +130,28 @@ const vimSlot = new cm.Compartment();
 const keysSlot = new cm.Compartment();
 const defaultKeys = () => [...cm.defaultKeymap, ...cm.historyKeymap, ...cm.searchKeymap, cm.indentWithTab];
 const vimExt = (on) => (on ? cm.vim() : []);
-const keysExt = (on) => cm.keymap.of(on ? defaultKeys().filter((b) => !vimOwns(b)).map(insertOnly) : defaultKeys());
+const keysExt = (on) => cm.keymap.of(on ? defaultKeys().filter((b) => !vimOwns(b)).map(insertOnly) : [...cursorKeys, ...defaultKeys()]);
+
+// addCursor puts one more cursor on the line above (or below) the top (or
+// bottom) one, at the column it keeps, as VS Code's add cursor above/below:
+// what is typed then goes to every line. esc takes the extra cursors away.
+function addCursor(view, below) {
+  const sel = view.state.selection;
+  const edge = sel.ranges.reduce((a, r) => ((below ? r.head > a.head : r.head < a.head) ? r : a));
+  const next = view.moveVertically(edge, below);
+  const line = (pos) => view.state.doc.lineAt(pos).number;
+  if (line(next.head) === line(edge.head)) return true;
+  view.dispatch({ selection: sel.addRange(next), scrollIntoView: true });
+  return true;
+}
+
+// ctrl+shift+↑/↓ add a cursor, with ctrl on a Mac too. Without vim only:
+// CodeMirror's own keys for them (select a page on a Mac, to the start or
+// end of the file elsewhere) give way.
+const cursorKeys = [
+  { key: 'Ctrl-Shift-ArrowUp', run: (v) => addCursor(v, false), preventDefault: true },
+  { key: 'Ctrl-Shift-ArrowDown', run: (v) => addCursor(v, true), preventDefault: true },
+];
 
 // vimMode says whether the editors have vim's keys.
 export const vimMode = () => vimOn;

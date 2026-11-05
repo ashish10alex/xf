@@ -40,7 +40,7 @@ function plainSourceHelp() {
     ['right-click', 'context menu: definition, card, next/prev change and error, stage/revert the change, copy, format (shift+right-click: the browser\'s)'],
     ['mouse', 'card of a ref, a function or an includes name (constants.X)'],
     [cmds + ' Go to:', 'next/prev git change or error, the file named under the cursor, the file before'], ['ctrl+x ctrl+f', 'complete a file name'],
-    [st.onMac ? '⌘/' : 'ctrl+/', 'comment out or back in (the selection\'s lines; also the Scratch editor)'], ['ctrl+o/ctrl+i', 'jump back/forward'],
+    [st.onMac ? '⌘/' : 'ctrl+/', 'comment out or back in (the selection\'s lines; also the Scratch editor)'], ['ctrl+shift+↑/↓', 'add a cursor above/below, to type on several lines at once (esc: one cursor again)'], ['ctrl+o/ctrl+i', 'jump back/forward'],
     [cmds + ' Buffers:', 'next/prev buffer (files opened), list, remove the one shown'], ['backspace', 'back from go to definition (outside the editor)']];
 }
 import { SettingsPage, GearButton } from './settings-view.js';
