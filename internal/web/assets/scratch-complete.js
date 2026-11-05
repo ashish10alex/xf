@@ -497,9 +497,9 @@ export function cardDOM(card) {
   const kind = (mdl && mdl.kind) || (d && d.type && d.type.toLowerCase().replace('_', ' ')) || '';
   if (kind) bar.append(el('span', 'sc-card-kind', kind));
   const actions = el('div', 'sc-card-actions');
-  const openBtn = el('button', 'sc-card-link', '↗\u00a0bigquery');
+  const openBtn = el('button', 'sc-card-link sc-card-open', '↗\u00a0bigquery');
   const nameBtn = el('button', 'sc-card-link', '⧉\u00a0name');
-  openBtn.title = 'Open in BigQuery';
+  openBtn.title = 'Open in BigQuery (u, on a card K showed)';
   nameBtn.title = 'Copy `' + full + '`';
   actions.append(openBtn, el('span', 'sc-card-sep', ' · '), nameBtn);
   const search = el('button', 'sc-card-link', '⌕\u00a0filter');
@@ -606,9 +606,9 @@ export function cardDOM(card) {
 }
 
 // keyedCard gives the keys to a card K showed, as a language server's
-// hover window has them after a second K: f filters its columns, j/k (and
-// the arrows, ctrl+d/ctrl+u, g/G) scroll it, and esc, q or K close it, the
-// keys going back to the editor. In the filter, esc or enter comes back to
+// hover window has them after a second K: f filters its columns, u opens
+// its table in BigQuery, j/k (and the arrows, ctrl+d/ctrl+u, g/G) scroll
+// it, and esc, q or K close it, the keys going back to the editor. In the filter, esc or enter comes back to
 // the card, the filter kept. close takes the card away.
 export function keyedCard(dom, view, close) {
   dom.tabIndex = -1;
@@ -633,6 +633,7 @@ export function keyedCard(dom, view, close) {
         input.focus();
         input.select();
       },
+      u: () => { const open = dom.querySelector('.sc-card-open'); if (open) open.click(); },
       j: () => scroll(line), ArrowDown: () => scroll(line),
       k: () => scroll(-line), ArrowUp: () => scroll(-line),
       g: () => box.scrollTo({ top: 0 }), G: () => box.scrollTo({ top: box.scrollHeight }),
