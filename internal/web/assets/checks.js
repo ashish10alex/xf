@@ -326,6 +326,26 @@ export async function answerProd(dismiss) {
 
 // ---- defer to prod (ADR 0031) ----
 
+// deferGroups groups defer to prod's rows by the label's head ("→ prod",
+// "✓ dev", before any " · ") and the dataset of the table read, in the
+// order the server sent them; each row keeps the rest of its label as note.
+export function deferGroups(rows) {
+  const groups = [];
+  const byKey = new Map();
+  for (const r of rows) {
+    const i = r.label.indexOf(' · ');
+    const head = i < 0 ? r.label : r.label.slice(0, i);
+    const note = i < 0 ? '' : r.label.slice(i + 3);
+    const name = r.prod || r.dev;
+    const ds = name.slice(0, Math.max(0, name.lastIndexOf('.')));
+    const key = r.tone + '\n' + head + '\n' + ds;
+    let g = byKey.get(key);
+    if (!g) { g = { tone: r.tone, head, ds, rows: [] }; byKey.set(key, g); groups.push(g); }
+    g.rows.push({ ...r, note });
+  }
+  return groups;
+}
+
 // deferOn says defer to prod is on for the project's engine.
 export const deferOn = () => !!(S.state && S.state.defer);
 

@@ -1997,10 +1997,16 @@ function DeferSection() {
   else if (d.error) body = html`<div class="warn" title=${d.error}>not applied: ${d.error}</div>`;
   else if (!rows.length) body = html`<div class="dim">no upstream tables to read from prod</div>`;
   else {
-    body = rows.map((r) => html`<div class="defer-row" title=${r.hover}>
-      <span class=${'defer-label defer-' + r.tone}>${r.label}</span>
-      ${r.url ? html`<a class="mono" href=${r.url} target="_blank" rel="noopener">${r.prod || r.dev}</a>` : html`<span class="mono">${r.prod || r.dev}</span>`}
-    </div>`);
+    // One line per label and dataset, its tables after it, so a dataset
+    // read for several tables is written once.
+    body = html`<div class="defer-grid">${st.deferGroups(rows).map((g) => html`
+      <span class=${'defer-label defer-' + g.tone}>${g.head}</span>
+      <span class="defer-ds mono" title=${g.ds}>${g.ds}</span>
+      <span class="defer-tables">${g.rows.map((r) => {
+        const name = r.prod || r.dev;
+        const t = name.slice(name.lastIndexOf('.') + 1);
+        return html`<span class="defer-table" title=${r.hover}>${r.url ? html`<a class="mono" href=${r.url} target="_blank" rel="noopener">${t}</a>` : html`<span class="mono">${t}</span>`}${r.note && html`<span class="dim"> ${r.note}</span>`}</span>`;
+      })}</span>`)}</div>`;
   }
   const n = rows.filter((r) => r.tone === 'prod' || r.label.startsWith('⚠ prod')).length;
   // A click gives it the keys, so z zooms it.
