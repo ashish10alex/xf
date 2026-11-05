@@ -313,6 +313,8 @@ usage:
                               stopped a few seconds after the last of them leaves
   xf stop                    stop your xf engines and list the xf processes still
                               running (close them before upgrading on Windows)
+  xf update                  update xf to the latest release, the way it was installed
+                              (brew, go install, or the install script; also xf --update)
   xf help                    this help; xf <command> --help for a command's flags
   xf --version               the version of xf: the commit it was built from and when
 

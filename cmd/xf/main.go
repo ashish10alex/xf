@@ -74,6 +74,8 @@ func main() {
 			run = func() error { return runScratch(args[1:]) }
 		case "search":
 			run = func() error { return runSearch(args[1:]) }
+		case "update", "-update", "--update":
+			run = func() error { return runUpdate(args[1:]) }
 		case "impact":
 			os.Exit(runImpact(args[1:]))
 		case "cost":

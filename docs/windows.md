@@ -17,7 +17,7 @@ scoop bucket add ashish10alex https://github.com/ashish10alex/scoop-bucket
 scoop install xf
 ```
 
-Or with the install script, which puts the latest release in `%LocalAppData%\Programs\xf` (`$env:XF_INSTALL_DIR` picks another folder) after checking it against the release's checksums, and adds that folder to your `PATH`; run it again to update:
+Or with the install script, which puts the latest release in `%LocalAppData%\Programs\xf` (`$env:XF_INSTALL_DIR` picks another folder) after checking it against the release's checksums, and adds that folder to your `PATH`; `xf update` (or running the script again) updates it:
 
 ```powershell
 irm https://raw.githubusercontent.com/ashish10alex/xf/main/scripts/install.ps1 | iex
@@ -73,6 +73,8 @@ xf stop
 ```
 
 It stops your engines and lists the xf processes still running, with the app each runs in (Windows Terminal, VS Code, nvim). Quit xf in those terminals and close those editor windows, then upgrade. If `winget upgrade` reports **Access is denied**, your old xf still works: run `xf stop`, close what it lists, and try again. After an upgrade, the first xf of the new build replaces any engine left from the old one.
+
+For an install from the script or a zip, `xf update` moves the running `xf.exe` aside and puts the latest release in its place, so it works with xf still open; the old one is removed on a later update. For winget and Scoop, `xf update` prints the command to run, as they can't replace an `xf.exe` that runs.
 
 ## Tools, settings and logs
 

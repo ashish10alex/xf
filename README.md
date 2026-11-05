@@ -40,7 +40,7 @@ Make sure the folder xf is in is on your `PATH`, since neovim starts `xf lsp` fr
 xf --help
 ```
 
-To update later, `brew upgrade --cask xf`, run the install script again, or `go install …@latest` again. The neovim plugin warns you if the `xf` on your `PATH` is older than the plugin.
+To update later, run `xf update` (or `xf --update`). It updates xf the way it was installed: `brew upgrade --cask` for Homebrew, `go install …@latest` for Go, and otherwise replaces `xf` with the latest release after checking it against the release's checksums. A build from source says to pull and rebuild instead. The neovim plugin warns you if the `xf` on your `PATH` is older than the plugin.
 
 To build from source, clone the repo and run `go install ./cmd/xf` (or `just install`, with [`just`](https://github.com/casey/just)).
 
