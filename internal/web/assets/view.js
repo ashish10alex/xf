@@ -1354,7 +1354,7 @@ function ChangedOverlay() {
   const curRow = cursorRows[c.cursor];
   const pv = c.preview;
   const run = listed && pv && pv.run;
-  return html`<${Modal} title="R run changed" wide=${true} api=${S.flags.api}>
+  return html`<${Modal} title="run changed" wide=${true} api=${S.flags.api}>
     <div class="changed-head">${header}</div>
     <div class=${'scroll changed-list' + (c.loading ? ' dimmed' : '')}>
       ${rows.map((r) => {
@@ -1400,7 +1400,7 @@ function BranchesOverlay() {
   // The projects tab's "New worktree…" lists the branches to open in a
   // worktree, where enter does what shift+enter does in B (ADR 0032).
   const wt = !!b.worktree;
-  const title = wt ? 'new worktree of ' + b.projectName : 'B switch branch';
+  const title = wt ? 'new worktree of ' + b.projectName : 'switch branch';
   if (b.naming) return html`<${WorktreeName} b=${b} title=${title} />`;
   const enterWord = b.cursor === b.list.length && make ? (wt ? 'make branch in a worktree' : 'make branch')
     : wt ? (b.list[b.cursor] && b.list[b.cursor].worktree ? 'open its worktree' : 'open in a worktree') : 'switch';
@@ -1486,7 +1486,7 @@ function WorktreeName({ b, title }) {
 // BaseOverlay is b's picker: the branch R, I and C compare with.
 function BaseOverlay() {
   const b = S.base;
-  return html`<${Modal} title="b compare with" onClose=${() => { st.closeBase(); redraw(); }}>
+  return html`<${Modal} title="compare with branch" onClose=${() => { st.closeBase(); redraw(); }}>
     <div class="query">
       <span class="prompt">></span>
       <input value=${b.query} placeholder="find branch" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
@@ -1536,7 +1536,7 @@ function BaseTitle({ title }) {
 function TagsOverlay() {
   const t = S.tags;
   const [checked, actions] = st.tagsRun();
-  return html`<${Modal} title="T run tags" api=${S.flags.api}>
+  return html`<${Modal} title="run tags" api=${S.flags.api}>
     <div class="query">
       <span class="prompt">></span>
       <input value=${t.query} placeholder="find tag" spellcheck="false" readOnly=${t.options}
