@@ -43,12 +43,14 @@ export async function openBranches() {
 // project, this tab's or another's (ADR 0032): B's list of that project's
 // branches, where enter opens one in a worktree and a name no branch has
 // makes it, from that checkout's HEAD, in a new one. Nothing here changes,
-// so neither a run nor unsaved changes hold it up.
-export async function openNewWorktree(key, name) {
+// so neither a run nor unsaved changes hold it up. The palette's "Git:
+// open branch in a worktree" opens it for this tab's project, with
+// fromTab false: the project it opens keeps its own column.
+export async function openNewWorktree(key, name, fromTab = true) {
   if (!S.caps.branches) { say('worktrees are not available'); return; }
   S.zoomed = false;
   S.branches = { query: '', list: [], total: 0, note: '', detached: '', cursor: 0, loading: true, busy: '', err: '', listedFor: null,
-    worktree: true, project: key, projectName: name };
+    worktree: true, project: key, projectName: name, fromTab };
   S.overlay = 'branches';
   redraw();
   await listBranches(false);
@@ -209,7 +211,7 @@ async function makeWorktree(b, branch, made, folder) {
       if (S.branches === b) { S.overlay = null; S.branches = null; }
       // From the projects tab, the column shows that tab in the project it
       // opens, as a switch from there does.
-      if (b.worktree && r.root && hooks.showColumnFor) hooks.showColumnFor(r.root);
+      if (b.worktree && b.fromTab && r.root && hooks.showColumnFor) hooks.showColumnFor(r.root);
       if (tab) { tab.opener = null; tab.location.href = projectURL(r.key); say(r.message + ' · in a new tab'); } else { say(r.message); goToProject(r.key); }
     }
   } catch (e) {

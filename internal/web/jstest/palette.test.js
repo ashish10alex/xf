@@ -70,7 +70,7 @@ test('commands done before come first, the last done first', () => {
 });
 
 test('pane-local and overlay-local commands show no key badge in the command palette', async () => {
-  const { paletteList, openPalette, setPaletteQuery, cancelPalette } = await import('../assets/state.js');
+  const { paletteList, openPalette, setPaletteQuery, cancelPalette, pickFromPalette } = await import('../assets/state.js');
   const sc = await import('../assets/scm.js');
   const fg = await import('../assets/forge.js');
   const { BUF } = await import('../assets/buffers.js');
@@ -94,6 +94,15 @@ test('pane-local and overlay-local commands show no key badge in the command pal
     ['Git: switch branch', 'B'],
     ['Git: checkout branch', 'B'],
   ]);
+  // It opens B's list in its worktree mode, not the switcher.
+  const wt = gitCmds.findIndex((c) => c.title === 'Git: open branch in a worktree');
+  assert.ok(wt >= 0);
+  pickFromPalette(wt);
+  assert.equal(S.overlay, 'branches');
+  assert.equal(S.branches.worktree, true);
+  assert.equal(S.branches.fromTab, false);
+  S.overlay = null; S.branches = null;
+  openPalette('>git');
 
   setPaletteQuery('>buffers');
   assert.ok(paletteList().some((c) => c.title === 'Buffers: show open buffers'));

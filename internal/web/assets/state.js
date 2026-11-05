@@ -7,7 +7,7 @@ import * as vim from './vim.js';
 import { diagSetup, drew, drawFailed, note, requestStart } from './diag.js';
 import { T, applyTheme, themeHooks, openThemePicker, themeName } from './theme.js';
 import { part, setWorkspaceRoot, saveWorkspace, workspaceOf, restoreParts, unsavedNow } from './workspace.js';
-import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranches, readBranch } from './branches.js';
+import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranches, openNewWorktree, readBranch } from './branches.js';
 import { answerProd, askDefer, changedKey, checkKey, deferAskKey, deferOn, onProgress, openChanged, openCost, openImpact, openTags, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleDefer, toggleTag } from './checks.js';
 import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showErrorsTab, sqlTabOn } from './errors-tab.js';
 import { clearHistory, closeWatch, hasTabs, jobsTableKey, logKey, nextTab, openKept, openURL, openWatch } from './log-tabs.js';
@@ -2018,10 +2018,12 @@ function commands() {
   if (S.caps.branches) {
     add('Git: switch branch', 'B', openBranches, 'or make one');
     add('Git: checkout branch', 'B', openBranches, 'or make one');
-    add('Git: open branch in a worktree', '', openBranches);
   }
-  // A worktree can go from its own project (ADR 0032), once a dialog asks.
   const me = S.open.find((o) => o.key === S.key);
+  // B's list in its worktree mode, where enter opens the branch in a
+  // worktree rather than checking it out here.
+  if (S.caps.branches) add('Git: open branch in a worktree', '', () => openNewWorktree(S.key, me ? me.name : 'this project', false));
+  // A worktree can go from its own project (ADR 0032), once a dialog asks.
   if (me && me.worktree) add('Worktree: remove this worktree', '', () => askRemoveWorktreeHere({ ...me, path: me.root }), me.worktree);
   if (S.caps.branches && S.caps.changed) add('Git: compare with branch (R, I and C)', '', openBase, 'now ' + S.boot.defaultBranch);
   if (hooks.scmCommands) for (const [label, key, f] of hooks.scmCommands()) add(label, key, f);
