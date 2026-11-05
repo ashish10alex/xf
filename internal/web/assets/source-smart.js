@@ -30,7 +30,7 @@ import { S, get, post, redraw, hooks, setFocus, say } from './state.js';
 import { SRC, sourceEditor, goToPlace, isLibraryFile } from './source.js';
 import { wordMarks } from './diff.js';
 import { jumpWithin } from './editor.js';
-import { tableCard, cardDOM, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts } from './scratch-complete.js';
+import { tableCard, cardDOM, keyedCard, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts } from './scratch-complete.js';
 import { loadFunctions, functionOptions, valueOptions, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 import { sqlText, inJavaScript } from './sqlx.js';
 import { pathSource, unlessPaths, pathExtensions } from './source-paths.js';
@@ -224,18 +224,20 @@ async function cardAtCursor(view) {
   if (isPy()) { if (hooks.pythonCard) hooks.pythonCard(view); return; }
   if (view.state.field(cardField, false)) { view.dispatch({ effects: setCard.of(null) }); return; }
   const head = view.state.selection.main.head;
+  const close = () => { if (view.state.field(cardField, false)) view.dispatch({ effects: setCard.of(null) }); };
+  const keyed = (make) => () => keyedCard(make(), view, close);
   const fn = functionAt(view.state, head, sqlOf);
-  if (fn) { view.dispatch({ effects: setCard.of({ pos: fn.from, end: fn.to, make: () => functionCard(fn.fn) }) }); return; }
+  if (fn) { view.dispatch({ effects: setCard.of({ pos: fn.from, end: fn.to, make: keyed(() => functionCard(fn.fn)) }) }); return; }
   const ask = includeAt(view.state, head);
   if (ask) {
     const inc = await ask;
-    if (inc) view.dispatch({ effects: setCard.of({ pos: inc.from, end: inc.to, make: () => includeCard(inc) }) });
+    if (inc) view.dispatch({ effects: setCard.of({ pos: inc.from, end: inc.to, make: keyed(() => includeCard(inc)) }) });
     else say('nothing in includes/ declares that');
     return;
   }
   const r = await refAt(view.state, head);
   if (!r.hit) { say(sqlOf(view.state) === null ? r.why : 'no table or function under the cursor'); return; }
-  view.dispatch({ effects: setCard.of({ pos: r.hit.from, end: r.hit.to, make: r.make }) });
+  view.dispatch({ effects: setCard.of({ pos: r.hit.from, end: r.hit.to, make: keyed(r.make) }) });
 }
 
 const hover = cm.hoverTooltip(async (view, pos, side) => {

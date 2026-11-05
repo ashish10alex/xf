@@ -503,6 +503,7 @@ export function cardDOM(card) {
   nameBtn.title = 'Copy `' + full + '`';
   actions.append(openBtn, el('span', 'sc-card-sep', ' · '), nameBtn);
   const search = el('button', 'sc-card-link', '⌕\u00a0filter');
+  search.title = 'Filter the columns (f, on a card K showed)';
   const copyBtn = el('button', 'sc-card-link', '⧉\u00a0columns');
   if (cols.length) actions.append(el('span', 'sc-card-sep', ' │ '), search, el('span', 'sc-card-sep', ' · '), copyBtn);
   bar.append(actions);
@@ -573,9 +574,27 @@ export function cardDOM(card) {
       }
     });
     find.addEventListener('keydown', (e) => e.stopPropagation()); // typing here is not the editor's
+    // While the filter shows, the card keeps the size and the columns'
+    // widths it had: rows going would shrink it, and a card above its line
+    // would jump down to stay on it. The rows scroll within that size.
+    const pin = (on) => {
+      if (on) {
+        const r = root.getBoundingClientRect();
+        table.style.gridTemplateColumns = getComputedStyle(table).gridTemplateColumns;
+        root.style.width = r.width + 'px';
+        // Not height, which CodeMirror clears when a tooltip has room.
+        root.style.minHeight = root.style.maxHeight = r.height + 'px';
+      } else {
+        table.style.gridTemplateColumns = root.style.width = root.style.minHeight = root.style.maxHeight = '';
+      }
+    };
+    search.classList.add('sc-card-filter');
     search.addEventListener('click', () => {
+      if (find.hidden) pin(true);
+      else if (document.activeElement === find) root.focus(); // a card K showed keeps the keys
       find.hidden = !find.hidden;
-      if (!find.hidden) find.focus(); else { find.value = ''; find.dispatchEvent(new Event('input')); }
+      if (!find.hidden) find.focus();
+      else { find.value = ''; find.dispatchEvent(new Event('input')); pin(false); }
     });
     // One to a line with a comma after, as they paste into a SELECT.
     copyBtn.addEventListener('click', () => {
@@ -584,6 +603,54 @@ export function cardDOM(card) {
     });
   }
   return root;
+}
+
+// keyedCard gives the keys to a card K showed, as a language server's
+// hover window has them after a second K: f filters its columns, j/k (and
+// the arrows, ctrl+d/ctrl+u, g/G) scroll it, and esc, q or K close it, the
+// keys going back to the editor. In the filter, esc or enter comes back to
+// the card, the filter kept. close takes the card away.
+export function keyedCard(dom, view, close) {
+  dom.tabIndex = -1;
+  dom.classList.add('sc-card-keyed');
+  const box = dom.classList.contains('sc-card') ? dom : dom.querySelector('.sc-card') || dom;
+  const back = () => { close(); view.focus(); };
+  const scroll = (by) => box.scrollBy({ top: by });
+  dom.addEventListener('keydown', (e) => {
+    const find = e.target instanceof HTMLInputElement && e.target.classList.contains('sc-card-find') ? e.target : null;
+    if (find) {
+      if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); dom.focus(); }
+      return; // the rest is the filter's typing
+    }
+    if (e.metaKey || e.altKey) return; // from the card, or a button of it a click focused
+    const half = Math.max(40, box.clientHeight / 2), line = 20;
+    const keys = {
+      Escape: back, q: back, K: back,
+      f: () => {
+        const input = dom.querySelector('.sc-card-find');
+        if (!input) return;
+        if (input.hidden) dom.querySelector('.sc-card-filter').click(); // shows it, the card's size kept
+        input.focus();
+        input.select();
+      },
+      j: () => scroll(line), ArrowDown: () => scroll(line),
+      k: () => scroll(-line), ArrowUp: () => scroll(-line),
+      g: () => box.scrollTo({ top: 0 }), G: () => box.scrollTo({ top: box.scrollHeight }),
+    };
+    const ctrl = { d: () => scroll(half), u: () => scroll(-half) };
+    const run = e.ctrlKey ? ctrl[e.key] : keys[e.key];
+    if (!run) return;
+    e.preventDefault();
+    e.stopPropagation();
+    run();
+  }, true); // capturing: the filter stops its keys going further
+  // Leaving it for elsewhere on the page closes it; leaving the window keeps it.
+  dom.addEventListener('focusout', () => setTimeout(() => {
+    if (dom.isConnected && document.hasFocus() && !dom.contains(document.activeElement)) close();
+  }, 0));
+  // Once the tooltip is in the page, after vim has put its cursor down.
+  setTimeout(() => { if (dom.isConnected) dom.focus({ preventScroll: true }); }, 0);
+  return dom;
 }
 
 // refAt is the table the text names at pos, with its parsed reference.
@@ -623,16 +690,18 @@ const cardField = cm.StateField.define({
 export async function hoverAtCursor(view) {
   if (view.state.field(cardField, false)) { view.dispatch({ effects: setCard.of(null) }); return true; }
   const head = view.state.selection.main.head;
+  const close = () => { if (view.state.field(cardField, false)) view.dispatch({ effects: setCard.of(null) }); };
+  const keyed = (make) => () => keyedCard(make(), view, close);
   const hit = refAt(view, head);
   if (!hit) {
     const fn = functionAt(view.state, head);
     if (!fn) return false;
-    view.dispatch({ effects: setCard.of({ pos: fn.from, end: fn.to, make: () => functionCard(fn.fn) }) });
+    view.dispatch({ effects: setCard.of({ pos: fn.from, end: fn.to, make: keyed(() => functionCard(fn.fn)) }) });
     return true;
   }
   const card = await tableCard(hit.t, true);
   if (!card) return false;
-  view.dispatch({ effects: setCard.of({ pos: hit.ref.start, end: hit.ref.end, make: () => cardDOM(card) }) });
+  view.dispatch({ effects: setCard.of({ pos: hit.ref.start, end: hit.ref.end, make: keyed(() => cardDOM(card)) }) });
   return true;
 }
 
