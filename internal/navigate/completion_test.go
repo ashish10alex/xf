@@ -53,7 +53,26 @@ func TestCompletions(t *testing.T) {
 		{name: "dollar inside a placeholder", file: sqlx, text: "SELECT ${ $|}", wantItems: nil},
 		{name: "dollar in a comment", file: sqlx, text: "-- costs $|", wantItems: nil},
 		{name: "dollar before a brace", file: sqlx, text: "SELECT $|{", wantItems: nil},
-		{name: "a string outside an array", file: sqlx, text: "config { type: \"|\" }", wantItems: nil},
+		{
+			name:     "a config's type",
+			file:     sqlx,
+			text:     "config { type: \"in|\" }",
+			wantKind: CompletionConfigValue,
+			wantItems: []string{
+				"table -> table", "view -> view", "incremental -> incremental",
+				"operations -> operations", "assertion -> assertion", "declaration -> declaration",
+			},
+			wantStart: "in",
+		},
+		{name: "a string of free text", file: sqlx, text: "config { description: \"|\" }", wantItems: nil},
+		{
+			name:      "bigquery keys of a view",
+			file:      sqlx,
+			text:      "config {\n  type: \"view\",\n  bigquery: {\n    labels: {},\n    p|\n  }\n}",
+			wantKind:  CompletionConfigKey,
+			wantItems: []string{"partitionBy -> partitionBy: ", "clusterBy -> clusterBy: ", "additionalOptions -> additionalOptions: "},
+			wantStart: "p",
+		},
 		{name: "javascript", file: filepath.Join(p.Root, "definitions", "x.js"), text: "const a = `$|`", wantItems: nil},
 	}
 	for _, tt := range tests {

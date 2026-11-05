@@ -17,6 +17,11 @@ const (
 	CompletionTag
 	// CompletionMacro is a dbt macro call.
 	CompletionMacro
+	// CompletionConfigKey is a key of a sqlx config, or of an object in
+	// it (bigquery { }, assertions { }).
+	CompletionConfigKey
+	// CompletionConfigValue is one of the strings a config key takes.
+	CompletionConfigValue
 )
 
 // Completion is one suggestion: InsertText replaces the source from Start to
@@ -33,18 +38,26 @@ var arrayKey = regexp.MustCompile(`(\w+)["']?\s*:\s*$`)
 
 // Completions returns what can be typed at offset in a sqlx file: a
 // ${ref("…")} for every action after a `$` in SQL, action names inside a
-// config's dependencies array and the project's tags inside its tags array.
+// config's dependencies array and the project's tags inside its tags
+// array, and the config's keys and the values of those that take a fixed
+// set (config.go), which need no compiled project.
 // In a dbt project's file it is names inside ref('…') and source('…', '…'),
 // macros in a tag, and whole ref() and source() calls at the start of a
 // {{ }}.
 func Completions(p Project, file string, src []byte, offset int) []Completion {
-	if isJSFile(file) || p.Graph == nil || offset < 0 || offset > len(src) {
+	if isJSFile(file) || offset < 0 || offset > len(src) {
 		return nil
 	}
 	if p.Dbt {
+		if p.Graph == nil {
+			return nil
+		}
 		return dbtCompletions(p, file, src, offset)
 	}
 	if start, ok := dollarAt(src, offset); ok {
+		if p.Graph == nil {
+			return nil
+		}
 		return refCompletions(p.Graph, start)
 	}
 	r := Regions(src)
@@ -53,6 +66,9 @@ func Completions(p Project, file string, src []byte, offset int) []Completion {
 	}
 	key, start, ok := configArrayString(src[r.ConfigStart:offset])
 	if !ok {
+		return configCompletions(src[r.ConfigStart:r.ConfigEnd], r.ConfigStart, offset, src[offset:])
+	}
+	if p.Graph == nil {
 		return nil
 	}
 	start += r.ConfigStart

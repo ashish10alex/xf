@@ -251,6 +251,10 @@ func (s *server) completion(path string, text []byte, pos Position) CompletionLi
 			kind = completionKindKeyword
 		case navigate.CompletionMacro:
 			kind = completionKindFunction
+		case navigate.CompletionConfigKey:
+			kind = completionKindProperty
+		case navigate.CompletionConfigValue:
+			kind = completionKindEnumMember
 		}
 		list.Items = append(list.Items, CompletionItem{
 			Label:      c.Label,

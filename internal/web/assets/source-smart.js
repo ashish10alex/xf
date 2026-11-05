@@ -2,7 +2,9 @@
 // the server (internal/navigate and internal/diagnose, which xf lsp uses):
 //
 //   - completion of ${ref("…")} after a $, of names in a config's
-//     dependencies and tags, and in a dbt model of refs, sources and macros
+//     dependencies and tags, of a config's keys (navigate's config.go)
+//     and the values of those that take a fixed set, and in a dbt model
+//     of refs, sources and macros
 //   - completion of the columns of the tables the file refers to, from the
 //     Scratch view's table cards: after alias. only that table's
 //   - K (or the mouse) on a ref shows its table's card, or says why it
@@ -288,15 +290,22 @@ async function goToDefinition(view) {
 // ---- completion ----
 
 // mayComplete says whether the text before the cursor is where navigate
-// completes: after a $, in a string (a ref's or a config array's), or at
-// the start of a {{ }}.
-const mayComplete = (before) => /\$\w*$/.test(before) || /["'][\w.\- ]*$/.test(before) || /\{\{-?\s*\w*$/.test(before);
+// completes: after a $, in a string (a ref's, a config array's or a
+// config key's value), at the start of a {{ }}, or in a .sqlx file's
+// JavaScript where a key may be being typed (after a { or a , or at the
+// start of a line), which in a config is one of its keys.
+const mayComplete = (before, state, pos) => /\$\w*$/.test(before) || /["'][\w.\- ]*$/.test(before) || /\{\{-?\s*\w*$/.test(before)
+  || (SRC.view.lang === 'sqlx' && /(^|[{,\n])[ \t]*[A-Za-z_]\w*$/.test(before) && inJavaScript(state, pos));
+
+// KIND_TYPES is the completion type (its class in the list) of each kind
+// of server item; a ref or dependency is a class.
+const KIND_TYPES = { macro: 'function', tag: 'keyword', configKey: 'property', configValue: 'enum' };
 
 async function serverSource(context) {
   const { state, pos } = context;
   if (!SRC.view || isPy()) return null;
   const before = state.doc.sliceString(Math.max(0, pos - 200), pos);
-  if (!context.explicit && !mayComplete(before)) return null;
+  if (!context.explicit && !mayComplete(before, state, pos)) return null;
   let res;
   try { res = await post('/api/source/complete', { file: SRC.file, text: state.doc.toString(), offset: pos }); } catch { return null; }
   if (!res || !res.items.length) return null;
@@ -307,7 +316,7 @@ async function serverSource(context) {
   const typed = state.doc.sliceString(from, pos).replace(/^\$/, '');
   const options = byParts(res.items.map((i) => ({
     label: i.label, detail: i.detail, apply: i.insert,
-    type: i.kind === 'macro' ? 'function' : i.kind === 'tag' ? 'keyword' : 'class', boost: 3,
+    type: KIND_TYPES[i.kind] || 'class', boost: 3,
   })), typed);
   if (!options.length) return null;
   return { from, options, filter: false, getMatch: (o) => o.ranges };

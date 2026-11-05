@@ -67,11 +67,33 @@ function copyState(s) {
   return out;
 }
 
-// enterIsland starts a JavaScript island whose opening brace was read.
-function enterIsland(state, kind) {
+// enterIsland starts a JavaScript island whose opening brace the stream
+// just read.
+function enterIsland(state, kind, stream) {
   state.island = kind;
   state.js = js.startState(state.unit);
   state.depth = 1;
+  if (kind !== 'interp') primeIsland(state.js, kind, stream);
+}
+
+// primeIsland has the JavaScript tokenizer read the island's opening as
+// JavaScript would see it, so a new line in it is indented as JavaScript
+// is: a config's brace opens an object (fed as `(  {`), a js block's a
+// block (`;  {`). The text fed keeps the line's columns: the keyword's first
+// letter turned into that ( or ;, the rest blanks, so the line's
+// indentation, where the closing brace goes, stays as it is.
+function primeIsland(jsState, kind, stream) {
+  const at = stream.pos - 1; // the brace
+  let text = stream.string.slice(0, at).replace(/\S/g, ' ');
+  const first = stream.string.search(/\S/);
+  if (first >= 0 && first < at) text = text.slice(0, first) + (kind === 'config' ? '(' : ';') + text.slice(first + 1);
+  text += '{';
+  const fed = new stream.constructor(text, stream.tabSize, stream.indentUnit);
+  while (!fed.eol()) {
+    fed.start = fed.pos;
+    js.token(fed, jsState);
+    if (fed.pos === fed.start) fed.next();
+  }
 }
 
 // islandToken reads a token of the JavaScript island the stream is in.
@@ -92,8 +114,9 @@ function islandToken(stream, state) {
     }
   }
   // A config's keys are properties, as the grammar's object members are,
-  // and a name called is a function: ref(), self(), when().
-  if (style && /^variable/.test(style)) {
+  // and a name called is a function: ref(), self(), when(). The tokenizer
+  // reads a config as an object, so it calls its keys property.
+  if (style && /^(variable|property$)/.test(style)) {
     if (state.island === 'config' && stream.match(/^\s*:/, false)) return 'propertyName';
     if (stream.match(/^\s*\(/, false)) return 'variableName.function';
   }
@@ -108,7 +131,7 @@ function stringToken(stream, state, sqlx) {
     if (sqlx && stream.match('${', false)) {
       if (stream.current().length) break; // the text before it first
       stream.match('${');
-      enterIsland(state, 'interp');
+      enterIsland(state, 'interp', stream);
       return 'punctuation';
     }
     if (q.length === 1 && q !== '`' && stream.peek() === '\\') { stream.next(); stream.next(); continue; }
@@ -156,7 +179,7 @@ function sqlToken(stream, state, sqlx) {
     const kind = state.pending;
     state.pending = '';
     if (kind === 'sql') { state.sqlBraces++; return 'punctuation'; }
-    enterIsland(state, kind);
+    enterIsland(state, kind, stream);
     return 'punctuation';
   }
   state.pending = '';
@@ -169,7 +192,7 @@ function sqlToken(stream, state, sqlx) {
       return 'punctuation';
     }
   }
-  if (sqlx && stream.match('${')) { enterIsland(state, 'interp'); return 'punctuation'; }
+  if (sqlx && stream.match('${')) { enterIsland(state, 'interp', stream); return 'punctuation'; }
   if (stream.match('--') || (stream.peek() === '#' && !(state.jinja && stream.match(/^#\}/, false)))) { stream.skipToEnd(); return 'comment'; }
   if (stream.match('/*')) { state.comment = true; return sqlToken(stream, state, sqlx) || 'comment'; }
 

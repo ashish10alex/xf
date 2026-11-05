@@ -466,8 +466,8 @@ type completionView struct {
 
 // sourceComplete answers with what can be typed at offset in the text:
 // navigate's completions, as xf lsp offers them (a ${ref()} after a $,
-// names in a config's dependencies and tags; dbt's refs, sources and
-// macros).
+// names in a config's dependencies and tags, the config's keys and the
+// values some take; dbt's refs, sources and macros).
 func (p *projectState) sourceComplete(w http.ResponseWriter, r *http.Request) {
 	var req sourceRequest
 	abs, ok := p.readSourceRequest(w, r, &req)
@@ -485,6 +485,10 @@ func (p *projectState) sourceComplete(w http.ResponseWriter, r *http.Request) {
 			kind = "macro"
 		case navigate.CompletionDependency:
 			kind = "dependency"
+		case navigate.CompletionConfigKey:
+			kind = "configKey"
+		case navigate.CompletionConfigValue:
+			kind = "configValue"
 		}
 		out = append(out, completionView{Label: c.Label, Detail: c.Detail, Insert: c.InsertText, Filter: c.FilterText,
 			From: unitsAt(req.Text, c.Start), Kind: kind})

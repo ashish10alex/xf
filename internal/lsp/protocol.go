@@ -126,9 +126,11 @@ type CompletionList struct {
 
 // Completion item kinds.
 const (
-	completionKindFunction  = 3
-	completionKindKeyword   = 14
-	completionKindReference = 18
+	completionKindFunction   = 3
+	completionKindProperty   = 10
+	completionKindKeyword    = 14
+	completionKindReference  = 18
+	completionKindEnumMember = 20
 )
 
 type TextEdit struct {
