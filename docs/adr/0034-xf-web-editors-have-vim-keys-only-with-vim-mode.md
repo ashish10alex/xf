@@ -9,7 +9,7 @@ xf web's CodeMirror editors (the source pane, Scratch's editor and its run-SQL t
 Without vim:
 
 - Closing an overlay or a page gives the keys back to the source editor ready to type, where with vim they come back in normal mode.
-- `esc` closes one thing open (completions, a card, the find panel, extra cursors or a selection) and, with nothing open, leaves the editor, as `ctrl+w` does. It leaves no more than that: ctrl+q is still what leaves a page or the project (ADR 0030).
+- `esc` closes one thing open (completions, a card, the find panel, extra cursors or a selection) and, with nothing open, does nothing, as VS Code's: the editor keeps the keys. `ctrl+w` leaves the editor, and ctrl+q a page or the project (ADR 0030). (Amended 2026-11-05: esc with nothing open left the editor, as `ctrl+w` does, until the user found it took the keys away where VS Code's esc doesn't.)
 - Autosave's countdown starts at each change and on leaving the editor; with vim it waits for the end of insert mode.
 - ctrl+o and ctrl+i walk the source pane's jump list, bound ahead of CodeMirror's split line; `/` in pane 1 opens the find panel.
 - What vim's keys and ex commands do is in the palette's `>` commands (next and previous git change and error, go to the file named under the cursor, the file before, the buffers, discard unsaved changes) and the right-click menu (next and previous change and error). No new default keys.

@@ -185,9 +185,9 @@ export function openFind(view) { if (openSearch) openSearch.run(view); }
 
 // escapeOff is esc without vim: it closes the first thing open of the
 // completions, the card, the mouse's hover card, the find panel and the
-// extra cursors or the selection; with none, leave() gives the keys back
-// to the page.
-function escapeOff(view, leave) {
+// extra cursors or the selection; with none, it does nothing, as VS Code's
+// esc: the editor keeps the keys, and ctrl+w gives them back to the page.
+function escapeOff(view) {
   if (cm.completionStatus(view.state)) { cm.closeCompletion(view); return true; }
   if (view.state.field(cardField, false)) { view.dispatch({ effects: setCard.of(null) }); return true; }
   if (view.dom.querySelector('.cm-tooltip-hover')) { view.dispatch({ effects: cm.closeHoverTooltips }); return true; }
@@ -195,7 +195,6 @@ function escapeOff(view, leave) {
   if (simplifySelection && simplifySelection.run(view)) return true;
   const sel = view.state.selection.main;
   if (!sel.empty) { view.dispatch({ selection: { anchor: sel.head } }); return true; }
-  leave(view);
   return true;
 }
 
@@ -775,9 +774,9 @@ export function createEditor(parent, opts) {
       { key: 'Tab', run: (v) => cm.completionStatus(v.state) === 'active' && cm.acceptCompletion(v) },
       // Escape closes the completions and goes on to vim, which leaves
       // insert mode: one press, as in vim, not one for each. Without vim
-      // it closes one thing open, or leaves (escapeOff).
+      // it closes one thing open, or does nothing (escapeOff).
       { key: 'Escape', run: (v) => {
-        if (!vimOn) return escapeOff(v, leave);
+        if (!vimOn) return escapeOff(v);
         if (cm.completionStatus(v.state)) cm.closeCompletion(v);
         return false;
       } },

@@ -35,7 +35,7 @@ const keyOr = (vim, plain) => (vimOn() ? vim : plain);
 function plainSourceHelp() {
   const cmds = st.commandsKey;
   return [['enter', 'edit'], ['/', 'find in the file (as ' + (st.onMac ? '⌘f' : 'ctrl+f') + ' in the editor)'], ['ctrl+shift+o', 'symbols'],
-    ['esc/ctrl+w', 'leave the editor (esc first closes completions, a card, the find panel, a selection)'], [st.saveKey, 'save'], [cmds + ' discard unsaved changes', 'discard changes'],
+    ['ctrl+w', 'leave the editor'], ['esc', 'close the completions, a card, the find panel, extra cursors or a selection (nothing else)'], [st.saveKey, 'save'], [cmds + ' discard unsaved changes', 'discard changes'],
     [cmds + ' Format: file', 'format the SQL (sqlfluff) and the config block (unsaved; ' + (st.onMac ? '⌘z' : 'ctrl+z') + ' undoes)'],
     ['right-click', 'context menu: definition, card, next/prev change and error, stage/revert the change, copy, format (shift+right-click: the browser\'s)'],
     ['mouse', 'card of a ref, a function or an includes name (constants.X)'],
