@@ -1,6 +1,6 @@
 // What xf web's editor (the Scratch view, the source pane and the settings page's JSON view) needs of CodeMirror 6, bundled by `npm run build`.
 export { EditorState, Text, Compartment, Prec, StateField, StateEffect, ChangeSet, RangeSet } from '@codemirror/state';
-export { EditorView, Decoration, WidgetType, ViewPlugin, gutter, GutterMarker, hoverTooltip, closeHoverTooltips, showTooltip, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, placeholder } from '@codemirror/view';
+export { EditorView, Decoration, WidgetType, ViewPlugin, gutter, GutterMarker, gutterLineClass, hoverTooltip, closeHoverTooltips, showTooltip, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, placeholder } from '@codemirror/view';
 export { history, historyKeymap, defaultKeymap, indentWithTab } from '@codemirror/commands';
 export { sql, SQLDialect, StandardSQL } from '@codemirror/lang-sql';
 export { json } from '@codemirror/lang-json';

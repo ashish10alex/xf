@@ -178,6 +178,20 @@ function escapeOff(view, leave) {
   return true;
 }
 
+// cursorLine and cursorLineNumber light the main cursor's line and its
+// number, as vim's cursorline does. CodeMirror's highlightActiveLine lights
+// the line of every cursor, so ctrl+v's block, a cursor per line, lit each
+// of its rows end to end.
+const cursorLineOf = (state) => state.doc.lineAt(state.selection.main.head).from;
+const cursorLineDeco = cm.Decoration.line({ class: 'cm-activeLine' });
+const cursorLine = cm.ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this.draw(view.state); }
+  update(u) { if (u.docChanged || u.selectionSet) this.decorations = this.draw(u.state); }
+  draw(state) { return cm.Decoration.set([cursorLineDeco.range(cursorLineOf(state))]); }
+}, { decorations: (p) => p.decorations });
+const cursorNumberMark = new class extends cm.GutterMarker { elementClass = 'cm-activeLineGutter'; }();
+const cursorLineNumber = cm.gutterLineClass.compute(['selection'], (state) => cm.RangeSet.of([cursorNumberMark.range(cursorLineOf(state))]));
+
 // isBlock says whether the selection is a ctrl+v block that covers text: a
 // range per line.
 export function isBlock(view) {
@@ -770,8 +784,8 @@ export function createEditor(parent, opts) {
     undo.of(cm.history()),
     keysSlot.of(keysExt(vimOn)),
     cm.lineNumbers(),
-    cm.highlightActiveLine(),
-    cm.highlightActiveLineGutter(),
+    cursorLine,
+    cursorLineNumber,
     cm.drawSelection(),
     cm.bracketMatching(),
     cm.highlightSelectionMatches(),
