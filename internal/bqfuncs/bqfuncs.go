@@ -6,9 +6,10 @@
 // function's typed arguments, the values they take, what it returns, an
 // example and its docs; bigquery.code-snippets.json the snippets it borrowed,
 // which still describe the functions the catalog has not taken in yet.
-// clauses.json is xf's own, in the catalog's format: PIVOT and UNPIVOT,
-// written as a call after a table, so they get the same snippet, card and
-// signature help.
+// clauses.json and overrides.json are xf's own, in the catalog's format:
+// the first has PIVOT and UNPIVOT, written as a call after a table, so they
+// get the same snippet, card and signature help; the second shorter cards
+// that take the place of the catalog's, as ARRAY_AGG's.
 // Snippets here are CodeMirror's: `${1:name}` is a field, and there is no
 // dropdown, so a field of fixed values holds the first and the editor offers
 // the rest.
@@ -34,6 +35,9 @@ var snippetsJSON []byte
 
 //go:embed clauses.json
 var clausesJSON []byte
+
+//go:embed overrides.json
+var overridesJSON []byte
 
 // Func is a function as the editor shows it.
 type Func struct {
@@ -101,6 +105,17 @@ func load() ([]Func, error) {
 	cat, err := loadCatalog(catalogJSON)
 	if err != nil {
 		return nil, fmt.Errorf("bigquery-functions.json: %w", err)
+	}
+	overrides, err := loadCatalog(overridesJSON)
+	if err != nil {
+		return nil, fmt.Errorf("overrides.json: %w", err)
+	}
+	for _, o := range overrides {
+		i := slices.IndexFunc(cat, func(f Func) bool { return f.Name == o.Name })
+		if i < 0 {
+			return nil, fmt.Errorf("overrides.json: the catalog has no %s", o.Name)
+		}
+		cat[i] = o
 	}
 	clauses, err := loadCatalog(clausesJSON)
 	if err != nil {
@@ -196,7 +211,7 @@ func loadCatalog(data []byte) ([]Func, error) {
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", cf.Name, err)
 				}
-				params = append(params, Param{Name: cp.Name, Type: cp.Type, Optional: cp.Optional, Repeated: cp.Repeated, Values: vs, Before: cp.Before, Text: paramText(cp.Doc, vs, cp.Optional)})
+				params = append(params, Param{Name: cp.Name, Type: cp.Type, Optional: cp.Optional, Repeated: cp.Repeated, Values: vs, Before: cp.Before, Text: paramText(cp.Doc, vs, cp.Optional && cp.Type != "")})
 			}
 			f.Signatures = append(f.Signatures, label(cf.Name, cf.Window, params, cs.Returns))
 		}
@@ -311,7 +326,8 @@ func catalogSnippet(name, window, over string, raw []catalogParam, params []Para
 }
 
 // paramText is what is said of a param: its doc as a sentence, its values,
-// and whether it is optional.
+// and whether it is optional. xf's short params, which have no type, leave
+// that to the brackets of the signature.
 func paramText(doc string, values []string, optional bool) string {
 	var parts []string
 	if doc != "" {

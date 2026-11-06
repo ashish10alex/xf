@@ -161,3 +161,13 @@ func TestClauses(t *testing.T) {
 		t.Error("SUM is a clause")
 	}
 }
+
+func TestOverrides(t *testing.T) {
+	f := byName(t)["ARRAY_AGG"]
+	if want := "ARRAY_AGG([DISTINCT] expression [IGNORE NULLS] [ORDER BY key] [LIMIT n]) → ARRAY"; f.Detail != want {
+		t.Errorf("detail %q, want %q", f.Detail, want)
+	}
+	if len(f.Notes) != 0 || f.Example == nil {
+		t.Errorf("notes %q, example %v", f.Notes, f.Example)
+	}
+}

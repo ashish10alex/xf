@@ -1,0 +1,26 @@
+{
+  "$comment": "xf's own, in bigquery-functions.json's format: each entry takes the place of the catalog's function of its name, for a shorter card. A param with no type is its name alone in the signature, and no window note is added without a window field.",
+  "valueSets": {},
+  "functions": [
+    {
+      "name": "ARRAY_AGG",
+      "doc": "Collects a group's values into an array. It fails on a NULL unless you add IGNORE NULLS.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "[DISTINCT] expression", "type": "", "snippet": "{expression}" },
+            { "name": "NULLS", "type": "", "before": "IGNORE", "optional": true },
+            { "name": "key", "type": "", "before": "ORDER BY", "optional": true },
+            { "name": "n", "type": "", "before": "LIMIT", "optional": true }
+          ],
+          "returns": "ARRAY"
+        }
+      ],
+      "example": {
+        "sql": "ARRAY_AGG(fruit ORDER BY fruit)",
+        "result": "['apple', 'banana', 'cherry']"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#array_agg"
+    }
+  ]
+}

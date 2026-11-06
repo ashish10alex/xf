@@ -121,8 +121,11 @@ function activeParameter(params, separators) {
   let index = 0;
   let fits = true;
   for (const sep of separators) {
-    const next = params[index + 1];
-    if (next && sep === separatorOf(next)) index++;
+    // The next param this separator begins, past optional ones left out,
+    // as ARRAY_AGG(x ORDER BY y) leaves out IGNORE NULLS.
+    let k = index + 1;
+    while (params[k] && params[k].optional && sep !== separatorOf(params[k])) k++;
+    if (params[k] && sep === separatorOf(params[k])) index = k;
     else if (sep === ',' && !(params[index] && params[index].repeated)) fits = false;
   }
   return { index, fits };
