@@ -1684,8 +1684,8 @@ function CostReport({ o }) {
       <p class="total"><b>${r.total}</b>${r.later && html`<br /><span class="dim">${r.later}</span>`}</p>
       ${r.empty ? html`<p class="dim">${r.empty}</p>` : r.rows.length > 0 && wrapTable(html`<table class="grid">
         <thead><tr><th rowspan="2">Action</th><th rowspan="2">Type</th>
-          <th colspan="2" class="run" title="A table's run, or an incremental table's full rebuild">Full run</th>
-          <th colspan="2" class="run" title="Each run of an incremental table once it is built">Incremental run</th>
+          <th colspan="2" class="run" title="Dry-run estimate of a table's run, or of an incremental table's full rebuild; nothing was run">Full build (dry run)</th>
+          <th colspan="2" class="run" title="Dry-run estimate of each run of an incremental table once it is built; nothing was run">Incremental (dry run)</th>
           <th rowspan="2" title=${'Against the same action at the merge-base' + (r.compared ? ', ' + r.compared.split(' vs ')[1] : '')}>Change</th><th rowspan="2">Notes</th></tr>
           <tr><th class="num">Scans</th><th class="num">Cost</th><th class="num">Scans</th><th class="num">Cost</th></tr></thead>
         <tbody>${r.rows.map((x) => html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td>

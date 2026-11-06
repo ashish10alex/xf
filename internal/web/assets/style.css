@@ -581,6 +581,7 @@ table.grid td.cmd { max-width: 50ch; overflow: hidden; text-overflow: ellipsis; 
 .jobs-stat { font-variant-numeric: tabular-nums; }
 .jobs-cost { font-weight: 600; }
 table.grid th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+table.grid th.run { white-space: nowrap; }
 table.grid th.sortable:hover, table.grid th.sorted { color: var(--fg); }
 
 /* pane 2's errors tab */

@@ -457,7 +457,7 @@ func TestMarkdown(t *testing.T) {
 		"**Branch:** `feat/v2` vs `origin/main` @ `abc1234` | working tree",
 		"**Total scanned:** ≤ 4.20 TiB | **Estimated cost:** ≤ $26.26 (on demand, at $6.25 per TiB)",
 		"❌ Gate failed: 4.20 TiB exceeds the limit of 100.00 GiB",
-		"| Action | Type | Full run | Incremental run | Change | Notes |",
+		"| Action | Type | Full build (dry run) | Incremental (dry run) | Change | Notes |",
 		"| `marts.fct_order_items` | incremental | 9.00 TiB · $56.25 | **≤ 4.20 TiB** · $26.25 | +4.20 TiB (+$26.23), was 3.00 GiB · $0.018 | ⚠️ no partition filter: `event_date` of `raw.events` · `definitions/fct_order_items.sqlx` |",
 		"| `marts.stg_pageviews` | view | **420.00 MiB** · $0.003 | – | no change | `definitions/stg_pageviews.sqlx` |",
 		"| `marts.dim_customers` | table | **1.80 GiB** · $0.011 | – | new | `definitions/dim_customers.sqlx` |",

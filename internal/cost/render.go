@@ -339,7 +339,7 @@ func Markdown(r *Report, o Options) string {
 		lines = append(lines, "", "Nothing to estimate: the branch changes no action with a query to dry run.")
 	}
 	if len(estimated) > 0 {
-		lines = append(lines, "", "| Action | Type | Full run | Incremental run | Change | Notes |", "| --- | --- | ---: | ---: | ---: | --- |")
+		lines = append(lines, "", "| Action | Type | Full build (dry run) | Incremental (dry run) | Change | Notes |", "| --- | --- | ---: | ---: | ---: | --- |")
 		for _, a := range estimated {
 			var notes []string
 			for _, u := range a.Unfiltered {
