@@ -54,3 +54,24 @@ test('t still goes to the next tab, and tab no longer does', () => {
   handleKey('tab');
   assert.equal(S.logTab, 'jobs');
 });
+
+test('ctrl+j hides the panel and shows it again on the tab it showed last', () => {
+  S.logTab = 'history';
+  handleKey('ctrl+j');
+  assert.equal(S.showLog, false);
+  handleKey('ctrl+j');
+  assert.equal(S.showLog, true);
+  assert.equal(S.logTab, 'history');
+  assert.equal(S.focus, 'log');
+});
+
+test('ctrl+` shows the terminal tab, and again hides the panel', () => {
+  S.showLog = false;
+  handleKey('ctrl+`');
+  assert.equal(S.showLog, true);
+  assert.equal(S.logTab, 'term');
+  handleKey('ctrl+j');
+  assert.equal(S.showLog, false);
+  handleKey('ctrl+j');
+  assert.equal(S.logTab, 'term');
+});

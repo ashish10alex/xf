@@ -6,7 +6,7 @@
 import { h } from './vendor/preact.mjs';
 import { useLayoutEffect, useRef } from './vendor/hooks.mjs';
 import htm from './vendor/htm.mjs';
-import { S, redraw, setFocus, openProjects, commandsKey, projectsKey, hooks, onMac, toggleTerm, toggleLog } from './state.js';
+import { S, redraw, setFocus, openProjects, commandsKey, projectsKey, hooks, onMac, toggleTerm, togglePanel, termKeyLabel } from './state.js';
 import * as tr from './tree.js';
 import { SRC } from './source.js';
 import { readOpenWorktrees } from './picker.js';
@@ -173,7 +173,7 @@ export function Rail() {
     ${btn('search', 'Search (' + sr.searchKey + ')', shows('search'), '', () => (shows('search') ? tr.toggleView('search') : sr.openSearch()))}
     ${btn('scm', 'Source Control (' + sc.scmKey + ')', shows('scm'), badge(n, 'changes'), () => tr.toggleView('scm'))}
     ${btn('projects', 'Projects (' + projectsKey + ')', shows('projects'), badge(S.open.length > 1 ? S.open.length : 0), () => tr.toggleView('projects'))}
-    ${btn('term', (term ? 'Terminal (' : 'Log (') + jKey + ')', S.showLog && (!term || S.logTab === 'term'), '', () => (term ? toggleTerm() : toggleLog()))}
+    ${btn('term', term ? 'Terminal (' + termKeyLabel + ')' : 'Log (' + jKey + ')', S.showLog && (!term || S.logTab === 'term'), '', () => (term ? toggleTerm() : togglePanel()))}
     ${btn('settings', 'Settings (ctrl+,)', false, '', () => hooks.openSettings(), 'rail-end')}
   </nav>`;
 }

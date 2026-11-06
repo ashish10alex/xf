@@ -3,7 +3,7 @@
 import { h, render } from './vendor/preact.mjs';
 import { App, LostNotice } from './view.js';
 import { runScratch, toggleResults, toggleList, flushSave, SC } from './scratch.js';
-import { S, start, onRedraw, handleKey, keyName, redraw, toggleLog, toggleTerm, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
+import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
 import { SET, reopenAfterReload, openSettings, closeSettings } from './settings.js';
 import { T, closeThemePicker } from './theme.js';
 import { track } from './windows.js';
@@ -327,9 +327,19 @@ window.addEventListener('keydown', (e) => {
     redraw();
     return;
   }
+  // ⌘` (ctrl+`) shows the terminal tab with the keys, or hides the pane
+  // when the terminal has them, from anywhere in the project view.
+  if (isTermKey(e)) {
+    if (S.mode === 'project' && S.caps.terminal && !S.overlay && !S.checks && !SET.open && !SC.open) {
+      e.preventDefault();
+      toggleTerm();
+      redraw();
+    }
+    return;
+  }
   // cmd+j / ctrl+j toggles the scratch results in Scratch view, and the
-  // bottom log pane in the project view (like VS Code's terminal), even
-  // while editing in CodeMirror.
+  // bottom panel in the project view (like VS Code's), on the tab it
+  // showed last, even while editing in CodeMirror.
   if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (letter(e) === 'j' || letter(e) === 'b')) {
     if (SC.open) {
       e.preventDefault();
@@ -338,7 +348,7 @@ window.addEventListener('keydown', (e) => {
     }
     if (letter(e) === 'j' && S.mode === 'project' && !S.overlay && !S.checks && !SET.open) {
       e.preventDefault();
-      if (S.caps.terminal) toggleTerm(); else toggleLog();
+      togglePanel();
       redraw();
       return;
     }

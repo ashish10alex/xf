@@ -10,7 +10,7 @@ import { part, setWorkspaceRoot, saveWorkspace, workspaceOf, restoreParts, unsav
 import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranches, openNewWorktree, readBranch } from './branches.js';
 import { answerProd, askDefer, changedKey, checkKey, deferAskKey, deferOn, onProgress, openChanged, openCost, openImpact, openTags, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleDefer, toggleTag } from './checks.js';
 import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showErrorsTab, sqlTabOn } from './errors-tab.js';
-import { clearHistory, closeWatch, hasTabs, jobsTableKey, logKey, nextTab, openKept, openURL, openWatch } from './log-tabs.js';
+import { clearHistory, closeWatch, hasTabs, jobsTableKey, logKey, logTabs, nextTab, openKept, openURL, openWatch } from './log-tabs.js';
 import { askRemoveWorktreeHere, cycleProject, nextOpenProject, openByName, pickerKey, readOpenWorktrees, setPickerQuery, stopFind, switchProject } from './picker.js';
 import { columnsKey, searchSQLFromPalette, sqlKey } from './sql-pane.js';
 import { unsavedIn, noteVimMode } from './vim-mode.js';
@@ -444,7 +444,9 @@ function restoreView(v) {
   S.restoring = v;
   S.lineageOpen = !!v.lineageOpen;
   S.showLog = S.showLog || !!v.showLog;
-  if (['log', 'jobs', 'history'].includes(v.logTab)) S.logTab = v.logTab;
+  // The terminal tab comes back only on a hidden pane, for ⌘j to show:
+  // a page never opens on a new shell.
+  if (['log', 'jobs', 'history'].includes(v.logTab) || (v.logTab === 'term' && !S.showLog)) S.logTab = v.logTab;
   S.jobsCursor = v.jobsCursor || 0;
   if (v.jobsSort && typeof v.jobsSort.col === 'string') S.jobsSort = { col: v.jobsSort.col, desc: !!v.jobsSort.desc };
   S.historyCursor = v.historyCursor || 0;
@@ -1319,8 +1321,23 @@ function toggleLineage() {
   setFocus('lineage');
 }
 
-// toggleLog is L, and ctrl+j/cmd+j where there is no terminal tab. From
-// the terminal tab it goes to the log tab. Closing the log while it has the keys gives
+// togglePanel is ⌘j (ctrl+j off a Mac), as VS Code's: it hides the log
+// pane, or shows it again on the tab it showed last, the terminal's too,
+// with the keys.
+export function togglePanel() {
+  if (S.showLog) {
+    if (S.logTab === 'term' && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    S.showLog = false;
+    if (S.focus === 'log') S.zoomed = false;
+    leaveLog();
+    return;
+  }
+  if (!logTabs().includes(S.logTab)) S.logTab = 'log';
+  S.showLog = true;
+  setFocus('log');
+}
+
+// toggleLog is L. From the terminal tab it goes to the log tab. Closing the log while it has the keys gives
 // them to the source editor in vim's normal mode, as VS Code's terminal
 // hands them back to the editor.
 export function toggleLog() {
@@ -1341,7 +1358,7 @@ function leaveLog() {
   if (hooks.sourceReturn) hooks.sourceReturn();
 }
 
-// toggleTerm is ctrl+j: it shows the log pane's terminal tab and
+// toggleTerm is ⌘` (ctrl+` everywhere, as VS Code's): it shows the log pane's terminal tab and
 // gives it the keys, or hides the pane when the terminal already has them.
 export function toggleTerm() {
   if (S.showLog && S.logTab === 'term' && S.focus === 'log') {
@@ -1364,7 +1381,8 @@ export function showTerm() {
 }
 
 // termReserved says xf keeps a key while the terminal has the keys:
-// ctrl+0…3 (go to a pane), ctrl+j and ⌘j (the terminal), alt+z and ⌘z
+// ctrl+0…3 (go to a pane), ctrl+j and ⌘j (the panel), ctrl+` and ⌘`
+// (the terminal), alt+z and ⌘z
 // (zoom it), ⌥⌘←/→ (the log pane's next tab) and the palette.
 export function termReserved(e) {
   if (isTermZoomKey(e) || logTabKey(e)) return true;
@@ -1372,8 +1390,15 @@ export function termReserved(e) {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (e.ctrlKey && !e.metaKey && !e.shiftKey && k.length === 1 && '0123'.includes(k)) return true;
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && k === 'j') return true;
+  if (isTermKey(e)) return true;
   return isP(e, false) || isP(e, true);
 }
+
+// isTermKey is ⌘` and ctrl+` on a Mac, ctrl+` off one: the terminal.
+// Read by code, so a keyboard whose backquote key types another letter
+// has it too.
+export const isTermKey = (e) => e.code === 'Backquote' && !e.altKey && !e.shiftKey &&
+  (e.ctrlKey ? !e.metaKey : onMac && e.metaKey);
 
 // termZoomed says the terminal tab fills the window.
 const termZoomed = () => S.showLog && S.logTab === 'term' && S.focus === 'log' && S.zoomed;
@@ -1997,9 +2022,10 @@ function commands() {
   if (S.run && S.run.url) add('Open: run in browser', 'u', () => openURL(S.run.url, 'the workflow invocation'));
   if (v && v.hasIncremental) toggle('View: incremental SQL', S.incremental, 'i', toggleIncremental);
   toggle('View: columns', S.cols.shown, 'c', toggleColumns);
-  toggle('View: log', S.showLog && S.logTab !== 'term', S.caps.terminal ? 'L' : 'ctrl+j', toggleLog);
+  toggle('View: bottom panel', S.showLog, onMac ? '⌘j' : 'ctrl+j', togglePanel);
+  toggle('View: log', S.showLog && S.logTab !== 'term', 'L', toggleLog);
   if (S.caps.terminal) {
-    toggle('View: terminal', S.showLog && S.logTab === 'term', 'ctrl+j', toggleTerm);
+    toggle('View: terminal', S.showLog && S.logTab === 'term', termKeyLabel, toggleTerm);
     toggle('View: zoom terminal', termZoomed(), onMac ? '⌘z' : 'alt+z', toggleTermZoom);
   }
   if (hooks.toggleTree) toggle('View: file tree', hooks.treeShown() && !hooks.scmShown() && !hooks.projectsShown(), onMac ? '⌘b' : 'ctrl+b', hooks.toggleTree);
@@ -2273,6 +2299,8 @@ export function openProjects() {
 export const onMac = /Mac|iPhone|iPad/.test(navigator.platform);
 // logTabLabel names the log pane's next-tab key in footers.
 export const logTabLabel = onMac ? '⌥⌘→' : 'ctrl+alt+→';
+// termKeyLabel names the terminal's key.
+export const termKeyLabel = onMac ? '⌘`' : 'ctrl+`';
 export const paletteKey = onMac ? '⌘p' : 'ctrl+p';
 
 // appWindow is whether the page is in an app window (xf web with
@@ -2473,7 +2501,8 @@ export function handleKey(k) {
     case '[': cycleInFile(-1); return true;
     case 'z': S.zoomed = !S.zoomed; return true;
     case 'L': toggleLog(); return true;
-    case 'ctrl+j': if (S.caps.terminal) toggleTerm(); else toggleLog(); return true;
+    case 'ctrl+j': togglePanel(); return true;
+    case 'ctrl+`': if (S.caps.terminal) toggleTerm(); return true;
     case '?': openHelp(); return true;
     case 'E': hooks.toggleSource(); return true;
     case 'e': showErrorsOrSay(); return true;
