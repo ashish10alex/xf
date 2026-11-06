@@ -539,8 +539,9 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 	return finish(false), nil
 }
 
-// dryRunIn is the one project, and location, where actions are dry run:
-// "acme-prod (EU)", or "" when there are more.
+// dryRunIn is the one project, and location when there is one, where
+// actions are dry run: "acme-prod" or "acme-prod (EU)", or "" when there
+// are more.
 func dryRunIn(g *project.Graph, actions []*project.Action) string {
 	in := ""
 	for _, a := range actions {

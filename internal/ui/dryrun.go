@@ -32,7 +32,7 @@ func dryRunKey(project, location, sql string) string {
 	return project + "\x00" + location + "\x00" + sql
 }
 
-// dryRunTarget is where Dataform would run a's jobs.
+// dryRunTarget is where to dry run a's queries: see project.Graph.DryRunTarget.
 func (m Model) dryRunTarget(a *project.Action) (project, location string) {
 	if m.graph == nil {
 		return a.Target.Database, ""

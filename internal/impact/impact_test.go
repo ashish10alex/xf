@@ -662,7 +662,7 @@ func TestRunDryRunsChangedTablesAndComparesWithProd(t *testing.T) {
 	if l := BuildLedger(report); l.Summary != "1 to fix before merging." || len(l.Rows) != 4 {
 		t.Errorf("ledger %+v", l)
 	}
-	if !slices.Contains(dryRuns, "p/EU: SELECT order_id, amount FROM src") {
+	if !slices.Contains(dryRuns, "p/: SELECT order_id, amount FROM src") {
 		t.Errorf("dry runs %v", dryRuns)
 	}
 	if report.Signature != Signature(res, g) || report.Comparison.HeadLabel != "working tree" || report.Comparison.MergeBase != "abcdef123456" {

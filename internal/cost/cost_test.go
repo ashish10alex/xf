@@ -339,7 +339,7 @@ func TestRunDryRunsAnotherCompileOfTheProject(t *testing.T) {
 	if l := find(t, r, "lost"); l.Estimate != nil || l.Reason != "nothing in the compile with prodCompilerOptions matches it" {
 		t.Errorf("lost %+v", l)
 	}
-	if r.Compiled != "prodCompilerOptions" || r.DryRunIn != "acme-prod (EU)" {
+	if r.Compiled != "prodCompilerOptions" || r.DryRunIn != "acme-prod" {
 		t.Errorf("compiled %q, dry run in %q", r.Compiled, r.DryRunIn)
 	}
 }

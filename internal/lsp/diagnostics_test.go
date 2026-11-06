@@ -112,7 +112,7 @@ func TestServeDryRunDiagnostics(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(jobs) == 0 || jobs[0] != "demo-project/EU" {
+	if len(jobs) == 0 || jobs[0] != "demo-project/" {
 		t.Errorf("dry-run jobs in %v", jobs)
 	}
 }

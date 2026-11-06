@@ -76,8 +76,8 @@ func TestDryRunStatsForEachFileAction(t *testing.T) {
 		t.Fatalf("%d dry runs, want one per action: %q", n, bq.calls)
 	}
 	for _, c := range bq.calls {
-		if !strings.HasPrefix(c, "demo-project EU ") {
-			t.Errorf("dry run not in the project's default project and location: %q", c)
+		if !strings.HasPrefix(c, "demo-project  ") {
+			t.Errorf("dry run not in the project's default project, with no location: %q", c)
 		}
 	}
 	view := screen(m)
@@ -118,7 +118,7 @@ func TestDryRunIncrementalShowsBothVariants(t *testing.T) {
 		"    partition    event_date")
 	// Each variant runs after its own pre_operations, which declare checkpoint.
 	for _, c := range bq.calls {
-		if !strings.HasPrefix(c, "demo-project EU DECLARE checkpoint") {
+		if !strings.HasPrefix(c, "demo-project  DECLARE checkpoint") {
 			t.Errorf("dry run without its pre_operations: %q", c)
 		}
 	}

@@ -59,14 +59,19 @@ func (a *Action) DryRunQueries() []DryRunQuery {
 	return out
 }
 
-// DryRunTarget is where Dataform would run a's jobs: the project's
-// defaultProject and defaultLocation, else the action's own project.
+// DryRunTarget is where to dry run a's queries: the project's
+// defaultProject, else the action's own project. location is "", so
+// BigQuery runs the job where the tables the query reads are. It is not
+// defaultLocation: Dataform uses that only to make new datasets, and runs
+// its jobs in the location of .df-credentials.json. A job in another
+// location than a table it reads fails with "Access Denied … or perhaps it
+// does not exist", even when the user can read the table.
 func (g *Graph) DryRunTarget(a *Action) (project, location string) {
-	project, location = g.DefaultDatabase, g.DefaultLocation
+	project = g.DefaultDatabase
 	if project == "" {
 		project = a.Target.Database
 	}
-	return project, location
+	return project, ""
 }
 
 // ScriptPart places one statement of a Script.

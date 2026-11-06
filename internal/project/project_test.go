@@ -24,6 +24,21 @@ func TestTargetIDMatchesCLI(t *testing.T) {
 	}
 }
 
+// A dry run sends no location, even with a defaultLocation, so BigQuery
+// runs it where the tables it reads are: a dataset in EU read by a job in
+// europe-west2 comes back as Access Denied.
+func TestDryRunTargetSendsNoLocation(t *testing.T) {
+	a := &Action{Target: Target{Database: "own", Schema: "ds", Name: "tbl"}}
+	g := &Graph{DefaultDatabase: "proj", DefaultLocation: "europe-west2"}
+	if p, l := g.DryRunTarget(a); p != "proj" || l != "" {
+		t.Errorf("DryRunTarget = %q %q, want proj and no location", p, l)
+	}
+	g.DefaultDatabase = ""
+	if p, l := g.DryRunTarget(a); p != "own" || l != "" {
+		t.Errorf("without defaultProject: %q %q, want the action's project and no location", p, l)
+	}
+}
+
 func TestScript(t *testing.T) {
 	stmts := []string{"  DECLARE x INT64 \n", "", "\n\tSELECT x;", "SELECT 2"}
 	sql, parts := Script(stmts)
