@@ -1358,7 +1358,8 @@ function leaveLog() {
   if (hooks.sourceReturn) hooks.sourceReturn();
 }
 
-// toggleTerm is ⌘` (ctrl+` everywhere, as VS Code's): it shows the log pane's terminal tab and
+// toggleTerm is ctrl+` (on a Mac too, as VS Code's; ⌘` as well where
+// macOS leaves it to the page): it shows the log pane's terminal tab and
 // gives it the keys, or hides the pane when the terminal already has them.
 export function toggleTerm() {
   if (S.showLog && S.logTab === 'term' && S.focus === 'log') {
@@ -2300,7 +2301,9 @@ export const onMac = /Mac|iPhone|iPad/.test(navigator.platform);
 // logTabLabel names the log pane's next-tab key in footers.
 export const logTabLabel = onMac ? '⌥⌘→' : 'ctrl+alt+→';
 // termKeyLabel names the terminal's key.
-export const termKeyLabel = onMac ? '⌘`' : 'ctrl+`';
+// ctrl+` on a Mac too: macOS keeps ⌘` for its next window unless that
+// shortcut is turned off, so ⌘` works only on some Macs.
+export const termKeyLabel = 'ctrl+`';
 export const paletteKey = onMac ? '⌘p' : 'ctrl+p';
 
 // appWindow is whether the page is in an app window (xf web with

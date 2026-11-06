@@ -327,7 +327,7 @@ window.addEventListener('keydown', (e) => {
     redraw();
     return;
   }
-  // ⌘` (ctrl+`) shows the terminal tab with the keys, or hides the pane
+  // ctrl+` (and ⌘` on a Mac that leaves it to the page) shows the terminal tab with the keys, or hides the pane
   // when the terminal has them, from anywhere in the project view.
   if (isTermKey(e)) {
     if (S.mode === 'project' && S.caps.terminal && !S.overlay && !S.checks && !SET.open && !SC.open) {
