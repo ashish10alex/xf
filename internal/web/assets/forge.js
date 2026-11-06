@@ -321,6 +321,21 @@ function commands() {
 
 // ---- Settings › Git hosting ----
 
+// hostWords are what the hosts list is about, which a search of the
+// Settings finds it by.
+const hostWords = 'git hosting hosts tokens gitlab github merge requests pipelines';
+
+// hostsMatching are the hosts a search of the Settings shows, q
+// lowercase: all of them when q is empty or in hostWords (e.g. "git
+// hosting", "token"), else those whose name or kind has q; null when
+// none does, and the list stays hidden.
+export function hostsMatching(q) {
+  const hs = (F.hosts && F.hosts.hosts) || [];
+  if (!q || hostWords.includes(q)) return hs;
+  const m = hs.filter((h) => (h.host + ' ' + h.kind).toLowerCase().includes(q));
+  return m.length ? m : null;
+}
+
 export async function loadHosts() {
   try {
     F.hosts = await get('/api/forge/hosts');

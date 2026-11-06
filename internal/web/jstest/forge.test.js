@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { F, rows, pill, key, shownTitle } from '../assets/forge.js';
+import { F, rows, pill, key, shownTitle, hostsMatching } from '../assets/forge.js';
 
 const view = (pipeline, mr) => ({ state: 'ok', kind: 'gitlab', host: 'gitlab.example.com', path: 'g/p', branch: 'feat', base: 'develop',
   mr: mr || { number: 42, title: 'Feat', state: 'open', source: 'feat', target: 'develop', approvals: 0, required: 1, unresolved: 0, blockers: null },
@@ -121,4 +121,16 @@ test('the pipeline row names the pipeline, not its status, and its key is a kbd'
   const create = ForgeRow({ r: rows()[0], cur: false, focused: false, onClick() {}, refEl() {} });
   assert.deepEqual(kbds(create), ['m']);
   F.v = null;
+});
+
+// A search of the Settings for the section ("Git hosting") or what it
+// holds ("token") showed no host: the list hid while searching.
+test('a search of the Settings finds the hosts by the section or by name', () => {
+  F.hosts = { hosts: [{ host: 'github.com', kind: 'github' }, { host: 'gitlab.example.com', kind: 'gitlab' }] };
+  const names = (q) => (hostsMatching(q) || []).map((h) => h.host);
+  assert.deepEqual(names('git hosting'), ['github.com', 'gitlab.example.com']);
+  assert.deepEqual(names('token'), ['github.com', 'gitlab.example.com']);
+  assert.deepEqual(names('example'), ['gitlab.example.com']);
+  assert.equal(hostsMatching('autosave'), null);
+  F.hosts = null;
 });

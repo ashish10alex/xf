@@ -252,6 +252,14 @@ export function rows() {
   return [...SECTIONS, VIM].flatMap((s) => keys.filter((k) => k.section === s));
 }
 
+// matchesAll is how many keys the search finds among them all, whether
+// or not they show only the changed: what showing them all would find.
+export function matchesAll() {
+  if (!SET.data) return 0;
+  const q = SET.query.trim().toLowerCase();
+  return SET.data.keys.filter((k) => matches(k, q)).length;
+}
+
 // fileValue is what the scope's file says of k, null when nothing.
 export const fileValue = (k) => (levelName() === 'user' ? k.user : k.project);
 // changedCount is how many keys level's file (the scope's when unset) sets.

@@ -16,6 +16,7 @@ import { S, redraw, copy } from './state.js';
 import { createEditor } from './editor.js';
 import * as se from './settings.js';
 import { GitHosting } from './forge-view.js';
+import { hostsMatching } from './forge.js';
 import { vimOn, savesWith } from './vim-mode.js';
 import { ProdForm, TargetPick, prodOptionsOf } from './prod-form-view.js';
 
@@ -600,7 +601,7 @@ function JSONView() {
 
 // ---- the page ----
 
-function SettingsBody({ list, sections }) {
+function SettingsBody({ list, sections, hosts }) {
   const d = SET.data;
   const lvl = se.level();
   const q = SET.query.trim();
@@ -615,13 +616,16 @@ function SettingsBody({ list, sections }) {
       <p class="dim set-file">${SET.tab === 'user' ? 'Your settings, for every project.' : 'This project\'s settings, which win over yours: commit the file to share them.'}</p>
       ${sections.map((s) => {
         const ks = list.filter((k) => k.section === s);
-        if (!ks.length) return null;
+        const hs = s === se.GIT ? hosts : null;
+        if (!ks.length && !hs) return null;
         return html`<section class="set-section"><h2 id=${secId(s)}>${s}</h2>
-          ${s === se.GIT && !q && html`<${GitHosting} />`}
+          ${hs && html`<${GitHosting} shown=${q ? hs : null} />`}
           ${s === se.VIM && html`<p class="dim set-file">Vim mode gives the editors (the source pane, Scratch and this page's JSON) vim's keys. The keys below are of the editor's own commands in vim's normal mode, as vim writes them, e.g. ]g or ${'<C-j>'}${vimModeOn() ? '' : ': with vim mode off they do nothing until it is on'}.</p>`}
           ${ks.map((k) => { n++; return html`<${Row} k=${k} i=${n} />`; })}</section>`;
       })}
-      ${!list.length && html`<div class="dim pad">${q ? 'no setting matches · esc clears the search' : SET.only === 'changed' ? 'this file sets no setting · c shows them all' : 'no settings'}</div>`}
+      ${!list.length && !hosts && html`<div class="dim pad">${!q ? (SET.only === 'changed' ? 'this file sets no setting · c shows them all' : 'no settings')
+        : SET.only === 'changed' && se.matchesAll() ? html`no setting this file sets matches · <button class="link" onClick=${() => se.setOnly('all')}>search them all</button>`
+        : 'no setting matches · esc clears the search'}</div>`}
     `}`;
 }
 
@@ -635,6 +639,12 @@ export function SettingsPage() {
   const sections = se.sectionsShown();
   const counts = {};
   for (const k of list) counts[k.section] = (counts[k.section] || 0) + 1;
+  // The Git hosting hosts show with the section's keys, and on their own
+  // when a search finds them; showing the changed only, with the keys.
+  const q = SET.query.trim().toLowerCase();
+  const hosts = SET.only === 'changed' && !counts[se.GIT] ? null : hostsMatching(q);
+  const found = list.length + (q && hosts ? hosts.length : 0);
+  if (q && hosts) counts[se.GIT] = (counts[se.GIT] || 0) + hosts.length;
   const settingsUI = view === 'settings' && SET.mode === 'ui';
   useSpy(main, settingsUI && d ? sections : []);
   const scope = (t, label) => html`<button class=${'tab' + (SET.tab === t ? ' on' : '')} disabled=${t === 'project' && !project}
@@ -686,12 +696,12 @@ export function SettingsPage() {
             if (e.key === 'Escape') { e.preventDefault(); SET.query = ''; SET.typing = false; e.currentTarget.blur(); redraw(); }
             if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); SET.typing = false; e.currentTarget.blur(); redraw(); }
           }} />
-        ${SET.query.trim() ? html`<span class="dim">${list.length} found</span>` : html`<kbd>/</kbd>`}
+        ${q ? html`<span class="dim">${found} found</span>` : html`<kbd>/</kbd>`}
       </div>
       <${Sidebar} names=${sections} counts=${counts} cls="set-nav set-nav-chips" />`}
       <div class=${'set-body' + (SET.mode === 'json' ? ' json' : '')}>
         ${SET.mode === 'ui' && html`<${Sidebar} names=${sections} counts=${counts} cls="set-nav set-nav-side" />`}
-        <div class="set-main" ref=${main}><${SettingsBody} list=${list} sections=${sections} /></div>
+        <div class="set-main" ref=${main}><${SettingsBody} list=${list} sections=${sections} hosts=${hosts} /></div>
       </div>
     `}
     <div class="footer set-footer">${keyList(keys)}<span class="spacer"></span>${status}</div>

@@ -198,10 +198,11 @@ function HostCard({ hv }) {
 }
 
 // GitHosting is the hosts xf reads merge requests and pipelines from,
-// each with its token (ADR 0020).
-export function GitHosting() {
+// each with its token (ADR 0020); only those in shown when given, as a
+// search of the Settings finds them.
+export function GitHosting({ shown }) {
   useEffect(() => { fg.loadHosts(); }, []);
-  const v = F.hosts;
+  const v = F.hosts && shown ? { ...F.hosts, hosts: shown } : F.hosts;
   return html`<div class="forge-hosts">
     <p class="dim set-file">The hosts xf web shows the branch's merge request and pipeline from, read-only, each with a token of xf's own${v && v.path ? html` in <button class="link" title="Copy the path" onClick=${() => copy(v.path, 'copied: ' + v.path)}>${v.path}</button>` : ''}. $GITLAB_TOKEN and $GITHUB_TOKEN win for gitlab.com and github.com, and stand in for a host of their kind with no token here.</p>
     ${F.hostsError && html`<div class="set-err set-block">${F.hostsError}</div>`}
