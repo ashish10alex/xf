@@ -102,22 +102,22 @@ type Example struct {
 var All = sync.OnceValues(load)
 
 func load() ([]Func, error) {
-	cat, err := loadCatalog(catalogJSON)
+	var sets struct {
+		ValueSets map[string][]string `json:"valueSets"`
+	}
+	if err := json.Unmarshal(catalogJSON, &sets); err != nil {
+		return nil, fmt.Errorf("bigquery-functions.json: %w", err)
+	}
+	cat, err := loadCatalog(catalogJSON, nil)
 	if err != nil {
 		return nil, fmt.Errorf("bigquery-functions.json: %w", err)
 	}
-	overrides, err := loadCatalog(overridesJSON)
+	// xf's files name the catalog's value sets, as date_granularity.
+	overrides, err := loadCatalog(overridesJSON, sets.ValueSets)
 	if err != nil {
 		return nil, fmt.Errorf("overrides.json: %w", err)
 	}
-	for _, o := range overrides {
-		i := slices.IndexFunc(cat, func(f Func) bool { return f.Name == o.Name })
-		if i < 0 {
-			return nil, fmt.Errorf("overrides.json: the catalog has no %s", o.Name)
-		}
-		cat[i] = o
-	}
-	clauses, err := loadCatalog(clausesJSON)
+	clauses, err := loadCatalog(clausesJSON, sets.ValueSets)
 	if err != nil {
 		return nil, fmt.Errorf("clauses.json: %w", err)
 	}
@@ -135,6 +135,13 @@ func load() ([]Func, error) {
 		return nil, fmt.Errorf("bigquery.code-snippets.json: %w", err)
 	}
 	out := append(cat, borrowed...)
+	for _, o := range overrides {
+		i := slices.IndexFunc(out, func(f Func) bool { return f.Name == o.Name })
+		if i < 0 {
+			return nil, fmt.Errorf("overrides.json: there is no %s to take the place of", o.Name)
+		}
+		out[i] = o
+	}
 	slices.SortStableFunc(out, func(a, b Func) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
 }
@@ -173,10 +180,20 @@ type catalogParam struct {
 // dropdown of `A|B`.
 var field = regexp.MustCompile(`\{([^{}]*)\}`)
 
-func loadCatalog(data []byte) ([]Func, error) {
+// loadCatalog reads a file in the catalog's format; its params' values may
+// name its own value sets or shared's.
+func loadCatalog(data []byte, shared map[string][]string) ([]Func, error) {
 	var file catalogFile
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, err
+	}
+	for name, set := range shared {
+		if _, ok := file.ValueSets[name]; !ok {
+			if file.ValueSets == nil {
+				file.ValueSets = map[string][]string{}
+			}
+			file.ValueSets[name] = set
+		}
 	}
 	values := func(p catalogParam) ([]string, error) {
 		if len(p.Values) == 0 {
@@ -218,11 +235,9 @@ func loadCatalog(data []byte) ([]Func, error) {
 		if len(f.Signatures) == 0 {
 			return nil, fmt.Errorf("%s: no signatures", cf.Name)
 		}
-		switch cf.Window {
-		case "required":
-			f.Notes = append(f.Notes, "A window function: it takes `OVER (PARTITION BY … ORDER BY …)`.")
-		case "optional":
-			f.Notes = append(f.Notes, "Also a window function with `OVER (...)`.")
+		// A required OVER is in the signature already.
+		if cf.Window == "optional" {
+			f.Notes = append(f.Notes, "Also takes `OVER (...)`.")
 		}
 		f.Detail = f.Signatures[0].Label
 		f.Snippet = catalogSnippet(cf.Name, cf.Window, cf.Over, cf.Signatures[0].Params, f.Signatures[0].Params)
@@ -325,6 +340,9 @@ func catalogSnippet(name, window, over string, raw []catalogParam, params []Para
 	return body
 }
 
+// maxListedValues is the most values a card lists for a param.
+const maxListedValues = 8
+
 // paramText is what is said of a param: its doc as a sentence, its values,
 // and whether it is optional. xf's short params, which have no type, leave
 // that to the brackets of the signature.
@@ -334,7 +352,11 @@ func paramText(doc string, values []string, optional bool) string {
 		parts = append(parts, strings.ToUpper(doc[:1])+doc[1:]+".")
 	}
 	if len(values) > 0 {
-		parts = append(parts, "One of: "+strings.Join(values, ", ")+".")
+		// A longer list is offered as the argument is typed, and only
+		// lengthens the card.
+		if len(values) <= maxListedValues {
+			parts = append(parts, "One of: "+strings.Join(values, ", ")+".")
+		}
 	}
 	if optional {
 		parts = append(parts, "Optional.")

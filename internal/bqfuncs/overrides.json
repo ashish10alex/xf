@@ -1,5 +1,5 @@
 {
-  "$comment": "xf's own, in bigquery-functions.json's format: each entry takes the place of the catalog's function of its name, for a shorter card. A param with no type is its name alone in the signature, and no window note is added without a window field.",
+  "$comment": "xf's own, in bigquery-functions.json's format: each entry takes the place of the catalog's (or a borrowed snippet's) function of its name, for a short card: its call with the optional parts in brackets, a sentence and an example. A param with no type is its name alone in the signature; values may name the catalog's value sets.",
   "valueSets": {},
   "functions": [
     {
@@ -8,10 +8,29 @@
       "signatures": [
         {
           "params": [
-            { "name": "[DISTINCT] expression", "type": "", "snippet": "{expression}" },
-            { "name": "NULLS", "type": "", "before": "IGNORE", "optional": true },
-            { "name": "key", "type": "", "before": "ORDER BY", "optional": true },
-            { "name": "n", "type": "", "before": "LIMIT", "optional": true }
+            {
+              "name": "[DISTINCT] expression",
+              "type": "",
+              "snippet": "{expression}"
+            },
+            {
+              "name": "NULLS",
+              "type": "",
+              "before": "IGNORE",
+              "optional": true
+            },
+            {
+              "name": "key",
+              "type": "",
+              "before": "ORDER BY",
+              "optional": true
+            },
+            {
+              "name": "n",
+              "type": "",
+              "before": "LIMIT",
+              "optional": true
+            }
           ],
           "returns": "ARRAY"
         }
@@ -21,6 +40,610 @@
         "result": "['apple', 'banana', 'cherry']"
       },
       "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#array_agg"
+    },
+    {
+      "name": "STRING_AGG",
+      "doc": "Joins a group's values into one string, with ',' between them unless you give a delimiter.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "[DISTINCT] expression",
+              "type": "",
+              "snippet": "{expression}"
+            },
+            {
+              "name": "delimiter",
+              "type": "",
+              "optional": true
+            },
+            {
+              "name": "key",
+              "type": "",
+              "before": "ORDER BY",
+              "optional": true
+            },
+            {
+              "name": "n",
+              "type": "",
+              "before": "LIMIT",
+              "optional": true
+            }
+          ],
+          "returns": "STRING"
+        }
+      ],
+      "window": "optional",
+      "example": {
+        "sql": "STRING_AGG(fruit, ', ' ORDER BY fruit)",
+        "result": "'apple, banana, cherry'"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#string_agg"
+    },
+    {
+      "name": "COUNT",
+      "doc": "Counts rows: COUNT(*) every row, COUNT(x) the rows where x is not NULL.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "[DISTINCT] expression",
+              "type": "",
+              "snippet": "{expression}"
+            }
+          ],
+          "returns": "INT64"
+        }
+      ],
+      "window": "optional",
+      "example": {
+        "sql": "COUNT(DISTINCT customer_id)",
+        "result": "the number of different customers"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#count"
+    },
+    {
+      "name": "SUM",
+      "doc": "Adds up the values that are not NULL; NULL when there are none.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "[DISTINCT] expression",
+              "type": "",
+              "snippet": "{expression}"
+            }
+          ],
+          "returns": "a number"
+        }
+      ],
+      "window": "optional",
+      "example": {
+        "sql": "SUM(x)",
+        "result": "3, for x = 1, 2, NULL"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#sum"
+    },
+    {
+      "name": "AVG",
+      "doc": "Averages the values that are not NULL.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "[DISTINCT] expression",
+              "type": "",
+              "snippet": "{expression}"
+            }
+          ],
+          "returns": "FLOAT64"
+        }
+      ],
+      "window": "optional",
+      "example": {
+        "sql": "AVG(x)",
+        "result": "1.5, for x = 1, 2, NULL"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#avg"
+    },
+    {
+      "name": "MIN",
+      "doc": "Returns the smallest value that is not NULL.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "expression",
+              "type": ""
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "window": "optional",
+      "example": {
+        "sql": "MIN(x)",
+        "result": "1, for x = 3, 1, NULL"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#min"
+    },
+    {
+      "name": "MAX",
+      "doc": "Returns the largest value that is not NULL.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "expression",
+              "type": ""
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "window": "optional",
+      "example": {
+        "sql": "MAX(x)",
+        "result": "3, for x = 3, 1, NULL"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#max"
+    },
+    {
+      "name": "ROW_NUMBER",
+      "doc": "Numbers each partition's rows 1, 2, 3, … in ORDER BY's order.",
+      "signatures": [
+        {
+          "params": [],
+          "returns": "INT64"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_at DESC) = 1",
+        "result": "the latest row of each id"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/numbering_functions#row_number"
+    },
+    {
+      "name": "RANK",
+      "doc": "Ranks each partition's rows; ties share a rank and leave a gap.",
+      "signatures": [
+        {
+          "params": [],
+          "returns": "INT64"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "RANK() OVER (ORDER BY score DESC)",
+        "result": "1, 1, 3, for scores 9, 9, 7"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/numbering_functions#rank"
+    },
+    {
+      "name": "DENSE_RANK",
+      "doc": "Ranks each partition's rows; ties share a rank and leave no gap.",
+      "signatures": [
+        {
+          "params": [],
+          "returns": "INT64"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "DENSE_RANK() OVER (ORDER BY score DESC)",
+        "result": "1, 1, 2, for scores 9, 9, 7"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/numbering_functions#dense_rank"
+    },
+    {
+      "name": "NTILE",
+      "doc": "Splits each partition's rows into n near-equal buckets, and returns the row's bucket, from 1.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "n",
+              "type": ""
+            }
+          ],
+          "returns": "INT64"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "NTILE(4) OVER (ORDER BY score)",
+        "result": "the row's quartile, 1 to 4"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/numbering_functions#ntile"
+    },
+    {
+      "name": "LAG",
+      "doc": "Returns value from the row offset rows before (1 unless you give one), or default (NULL) when there is none.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "value",
+              "type": ""
+            },
+            {
+              "name": "offset",
+              "type": "",
+              "optional": true
+            },
+            {
+              "name": "default",
+              "type": "",
+              "optional": true
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "LAG(amount) OVER (PARTITION BY customer ORDER BY day)",
+        "result": "the customer's amount on the row before"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/navigation_functions#lag"
+    },
+    {
+      "name": "LEAD",
+      "doc": "Returns value from the row offset rows after (1 unless you give one), or default (NULL) when there is none.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "value",
+              "type": ""
+            },
+            {
+              "name": "offset",
+              "type": "",
+              "optional": true
+            },
+            {
+              "name": "default",
+              "type": "",
+              "optional": true
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "LEAD(amount) OVER (PARTITION BY customer ORDER BY day)",
+        "result": "the customer's amount on the row after"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/navigation_functions#lead"
+    },
+    {
+      "name": "FIRST_VALUE",
+      "doc": "Returns value from the first row of the window frame.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "value",
+              "type": ""
+            },
+            {
+              "name": "NULLS",
+              "type": "",
+              "before": "IGNORE",
+              "optional": true
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "FIRST_VALUE(status) OVER (PARTITION BY id ORDER BY ts)",
+        "result": "each id's first status"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/navigation_functions#first_value"
+    },
+    {
+      "name": "LAST_VALUE",
+      "doc": "Returns value from the last row of the window frame. With ORDER BY the frame ends at the current row, so widen it as the example does.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "value",
+              "type": ""
+            },
+            {
+              "name": "NULLS",
+              "type": "",
+              "before": "IGNORE",
+              "optional": true
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "LAST_VALUE(status) OVER (PARTITION BY id ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)",
+        "result": "each id's last status"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/navigation_functions#last_value"
+    },
+    {
+      "name": "NTH_VALUE",
+      "doc": "Returns value from the nth row of the window frame, from 1.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "value",
+              "type": ""
+            },
+            {
+              "name": "n",
+              "type": ""
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "window": "required",
+      "example": {
+        "sql": "NTH_VALUE(name, 2) OVER (ORDER BY score DESC)",
+        "result": "the second-best name (NULL on the first row)"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/navigation_functions#nth_value"
+    },
+    {
+      "name": "PERCENTILE_CONT",
+      "doc": "Returns a percentile of value in each partition, from 0 to 1; 0.5 is the median.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "value",
+              "type": ""
+            },
+            {
+              "name": "percentile",
+              "type": ""
+            }
+          ],
+          "returns": "FLOAT64"
+        }
+      ],
+      "window": "required",
+      "over": "PARTITION BY {partition_expr}",
+      "example": {
+        "sql": "PERCENTILE_CONT(price, 0.5) OVER (PARTITION BY category)",
+        "result": "each category's median price"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/navigation_functions#percentile_cont"
+    },
+    {
+      "name": "DATE_TRUNC",
+      "doc": "Rounds a date down to the start of its granularity. WEEK starts on Sunday, WEEK(MONDAY) on Monday.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "date_value",
+              "type": ""
+            },
+            {
+              "name": "granularity",
+              "type": "",
+              "values": "date_granularity"
+            }
+          ],
+          "returns": "same type"
+        }
+      ],
+      "example": {
+        "sql": "DATE_TRUNC(DATE '2023-12-13', MONTH)",
+        "result": "2023-12-01"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/date_functions#date_trunc"
+    },
+    {
+      "name": "DATETIME_TRUNC",
+      "doc": "Rounds a datetime down to the start of its granularity.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "datetime_value",
+              "type": ""
+            },
+            {
+              "name": "granularity",
+              "type": "",
+              "values": "datetime_granularity"
+            }
+          ],
+          "returns": "DATETIME"
+        }
+      ],
+      "example": {
+        "sql": "DATETIME_TRUNC(DATETIME '2024-03-31 12:34:56', HOUR)",
+        "result": "2024-03-31T12:00:00"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/datetime_functions#datetime_trunc"
+    },
+    {
+      "name": "TIMESTAMP_TRUNC",
+      "doc": "Rounds a timestamp down to the start of its granularity, in UTC unless you give a time zone.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "timestamp_value",
+              "type": ""
+            },
+            {
+              "name": "granularity",
+              "type": "",
+              "values": "datetime_granularity"
+            },
+            {
+              "name": "time_zone",
+              "type": "",
+              "optional": true
+            }
+          ],
+          "returns": "TIMESTAMP"
+        }
+      ],
+      "example": {
+        "sql": "TIMESTAMP_TRUNC(TIMESTAMP '2024-03-31 12:34:56 UTC', DAY)",
+        "result": "2024-03-31 00:00:00 UTC"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions#timestamp_trunc"
+    },
+    {
+      "name": "EXTRACT",
+      "doc": "Returns one part of a date or time, as YEAR, MONTH, DAYOFWEEK or HOUR.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "part",
+              "type": "",
+              "values": "extract_part"
+            },
+            {
+              "name": "value",
+              "type": "",
+              "before": "FROM"
+            },
+            {
+              "name": "time_zone",
+              "type": "",
+              "before": "AT TIME ZONE",
+              "optional": true
+            }
+          ],
+          "returns": "INT64"
+        }
+      ],
+      "example": {
+        "sql": "EXTRACT(DAYOFWEEK FROM DATE '2023-12-13')",
+        "result": "4 (Sunday is 1)"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/date_functions#extract"
+    },
+    {
+      "name": "FORMAT_TIMESTAMP",
+      "doc": "Writes a timestamp as a string, in UTC unless you give a time zone.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "format_string",
+              "type": "",
+              "snippet": "'{%Y-%m-%d %H:%M:%S}'"
+            },
+            {
+              "name": "timestamp_expr",
+              "type": ""
+            },
+            {
+              "name": "time_zone",
+              "type": "",
+              "optional": true
+            }
+          ],
+          "returns": "STRING"
+        }
+      ],
+      "example": {
+        "sql": "FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', TIMESTAMP '2024-03-31 12:34:56 UTC')",
+        "result": "'2024-03-31 12:34'"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions#format_timestamp"
+    },
+    {
+      "name": "PARSE_TIMESTAMP",
+      "doc": "Reads a timestamp from a string, in UTC unless you give a time zone.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "format_string",
+              "type": "",
+              "snippet": "'{%Y-%m-%d %H:%M:%S}'"
+            },
+            {
+              "name": "timestamp_string",
+              "type": ""
+            },
+            {
+              "name": "time_zone",
+              "type": "",
+              "optional": true
+            }
+          ],
+          "returns": "TIMESTAMP"
+        }
+      ],
+      "example": {
+        "sql": "PARSE_TIMESTAMP('%Y-%m-%d %H:%M', '2024-03-31 12:34')",
+        "result": "2024-03-31 12:34:00 UTC"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/timestamp_functions#parse_timestamp"
+    },
+    {
+      "name": "UNNEST",
+      "doc": "Turns an array into rows, one for each element.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "array_expression",
+              "type": ""
+            }
+          ],
+          "returns": "rows"
+        }
+      ],
+      "example": {
+        "sql": "SELECT id, item FROM t, UNNEST(t.items) AS item",
+        "result": "a row for each item of each row of t"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#unnest_operator"
+    },
+    {
+      "name": "SUBSTRING",
+      "doc": "Returns part of a string from position: 1 is the first character, -1 the last.",
+      "signatures": [
+        {
+          "params": [
+            {
+              "name": "value",
+              "type": ""
+            },
+            {
+              "name": "position",
+              "type": ""
+            },
+            {
+              "name": "length",
+              "type": "",
+              "optional": true
+            }
+          ],
+          "returns": "STRING"
+        }
+      ],
+      "example": {
+        "sql": "SUBSTRING('Hello, world!', 8, 5)",
+        "result": "'world'"
+      },
+      "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/string_functions#substring"
     }
   ]
 }

@@ -170,4 +170,22 @@ func TestOverrides(t *testing.T) {
 	if len(f.Notes) != 0 || f.Example == nil {
 		t.Errorf("notes %q, example %v", f.Notes, f.Example)
 	}
+	m := byName(t)
+	// A borrowed snippet's function can be taken the place of too.
+	if u := m["UNNEST"]; len(u.Signatures) == 0 || u.Example == nil || u.Snippet != "UNNEST(${1:array_expression})" {
+		t.Errorf("UNNEST: %+v", u)
+	}
+	// A required OVER, in the signature, is said in no note.
+	for name, f := range m {
+		if strings.Contains(f.Detail, "OVER (...)") && strings.Contains(strings.Join(f.Notes, " "), "OVER") {
+			t.Errorf("%s: notes %q say OVER again", name, f.Notes)
+		}
+	}
+	if r := m["ROW_NUMBER"]; r.Detail != "ROW_NUMBER() OVER (...) → INT64" || len(r.Notes) != 0 || r.Example == nil {
+		t.Errorf("ROW_NUMBER: detail %q, notes %q", r.Detail, r.Notes)
+	}
+	// EXTRACT's 18 parts are offered as it is typed, not listed on its card.
+	if p := m["EXTRACT"].Signatures[0].Params[0]; len(p.Values) < 10 || strings.Contains(p.Text, "One of") {
+		t.Errorf("EXTRACT's part: %d values, text %q", len(p.Values), p.Text)
+	}
 }
