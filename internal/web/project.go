@@ -655,6 +655,7 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 	route("POST /api/scratch/delete", (*projectState).scratchDelete)
 	route("POST /api/scratch/dryrun", (*projectState).scratchDryRun)
 	route("POST /api/scratch/run", (*projectState).scratchRun)
+	route("POST /api/preview", (*projectState).preview)
 	route("GET /api/scratch/job", (*projectState).scratchJob)
 	route("GET /api/scratch/rows", (*projectState).scratchRows)
 	route("POST /api/scratch/cancel", (*projectState).scratchCancel)

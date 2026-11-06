@@ -267,6 +267,24 @@ window.addEventListener('keydown', (e) => {
   saveAndCompile().then(redraw);
 }, true);
 
+// cmd+enter (ctrl+enter off a Mac) previews the selected action's rows
+// from anywhere in the project view, the source editor included, where it
+// is caught before CodeMirror's own (a blank line). Other editors (the
+// commit message's) and boxes keep it.
+window.addEventListener('keydown', (e) => {
+  if (termHasKey(e)) return; // the terminal's own
+  if (e.key !== 'Enter' || e.altKey || e.shiftKey || !(onMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) return;
+  if (S.mode !== 'project' || SET.open || SC.open || S.overlay || S.checks || S.inspector || T.pick || !hooks.preview) return;
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+  const cmEd = t instanceof Element && t.closest('.cm-editor');
+  if (cmEd && !cmEd.closest('.src-cm')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  hooks.preview();
+  redraw();
+}, true);
+
 window.addEventListener('keydown', (e) => {
   if (termHasKey(e)) return; // the terminal's own
   const t = e.target;

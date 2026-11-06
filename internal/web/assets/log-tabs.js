@@ -1,6 +1,7 @@
-// The log pane's tabs: the run's log, its jobs and the kept runs.
+// The log pane's tabs: the run's log, its jobs, the kept runs and the
+// preview of an action's rows (preview.js).
 
-import { S, copy, get, openLink, post, redraw, say } from './state.js';
+import { S, copy, get, hooks, openLink, post, redraw, say } from './state.js';
 
 export const hasTabs = () => S.caps.history;
 
@@ -12,6 +13,7 @@ export function jobsShown() {
 // logTabs are the log pane's tabs, in the order ⌥⌘→ and t go round them.
 export function logTabs() {
   const tabs = hasTabs() ? ['log', 'jobs', 'history'] : ['log'];
+  if (S.caps.scratch) tabs.push('preview');
   if (S.caps.terminal) tabs.push('term');
   return tabs;
 }
@@ -197,7 +199,9 @@ export function logKey(k) {
     if (t) return jobsRows(t);
     return S.logTab === 'jobs' || (S.logTab === 'history' && S.historyOpen) ? [] : null;
   };
+  if (S.logTab === 'preview' && hooks.previewKey && hooks.previewKey(k)) return true;
   if (k === 't' && nextTab()) return true;
+  if (S.logTab === 'preview') return false;
   const rows = tableRows();
   if (k === 'u') {
     // As the TUI's u: in a table of jobs, an API run's page, or else the

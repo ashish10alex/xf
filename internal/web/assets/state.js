@@ -871,7 +871,7 @@ function viewQuery() {
 // selFile is the file action id was last seen in: the view's, or its
 // buffer's. Should an edit to that file's config rename the action, the
 // server answers with the action the file defines now.
-function selFile(id) {
+export function selFile(id) {
   if (S.view && S.view.id === id && S.view.file) return S.view.file;
   if (picked.id === id && picked.file) return picked.file;
   return (hooks.bufferFile && hooks.bufferFile(id)) || '';
@@ -2383,7 +2383,10 @@ export function handleKey(k) {
 
   if (k === 'ctrl+c') {
     if (S.overlay && S.overlay !== 'confirmQuit') { closeOverlay(); return true; }
+    // On the preview tab it cancels the preview's query, before a run.
+    if (S.focus === 'log' && S.logTab === 'preview' && hooks.previewCancel && hooks.previewCancel()) return true;
     if (running()) { S.overlay = null; cancelRun(); return true; }
+    if (hooks.previewCancel && hooks.previewCancel()) return true;
     return true;
   }
   switch (S.overlay) {

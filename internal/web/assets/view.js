@@ -7,6 +7,8 @@ import htm from './vendor/htm.mjs';
 import * as st from './state.js';
 import { ScratchPage, NewBox } from './scratch-view.js';
 import './scratch.js';
+import { PreviewBody, previewTitle, previewKeyLabel } from './preview-view.js';
+import { PV } from './preview.js';
 import * as src from './source.js';
 import './source-smart.js';
 import { sourceEditorDOM } from './source-editor.js';
@@ -785,17 +787,22 @@ function LogPane() {
   const focused = S.focus === 'log';
   const tabs = S.caps.history;
   const termTab = S.caps.terminal;
+  const previewTab = S.caps.scratch;
   let title = 'log', body;
   const jobs = st.jobsShown();
-  if (tabs || termTab) {
+  if (tabs || termTab || previewTab) {
     const n = jobs ? jobs.rows.length : 0;
     const tab = (id, label) => html`<span class=${'tab' + (S.logTab === id ? ' on' : '')}
       onMouseDown=${(e) => { e.stopPropagation(); S.logTab = id; st.setFocus('log'); if (id === 'history') st.get('/api/history').then((hv) => { S.history = hv; redraw(); }); redraw(); }}>${label}</span>`;
     title = tabs ? html`${tab('log', 'log')} │ ${tab('jobs', n ? `jobs (${n})` : 'jobs')} │ ${tab('history', 'history')}` : tab('log', 'log');
+    if (previewTab) title = html`${title} │ ${tab('preview', 'preview')}`;
     if (termTab) title = html`${title} │ ${tab('term', 'terminal')}`;
   }
   let rest = '';
-  if (S.logTab === 'term' && termTab) {
+  if (S.logTab === 'preview' && previewTab) {
+    rest = previewTitle();
+    body = html`<${PreviewBody} />`;
+  } else if (S.logTab === 'term' && termTab) {
     // An overlay (the palette, say) keeps the keys while it is open.
     body = html`<${TermBody} focused=${focused && !S.overlay} />`;
   } else if (S.logTab === 'history' && tabs) {
@@ -809,7 +816,7 @@ function LogPane() {
   } else {
     body = html`<${LogLines} />`;
   }
-  if (!rest && r && r.seq && S.logTab !== 'history' && S.logTab !== 'term') {
+  if (!rest && r && r.seq && S.logTab !== 'history' && S.logTab !== 'term' && S.logTab !== 'preview') {
     rest = [r.label, r.title].filter(Boolean).join(' · ');
     if (r.running) rest += r.cancelling ? (r.api ? ' · ctrl+c stops watching' : ' · ctrl+c force-kills') : ' · ctrl+c cancels';
   }
@@ -952,8 +959,8 @@ function Footer() {
   }
   else if (S.focus === 'sql' && b.visual) list = [['y', 'copy selection'], ['esc', 'cancel']];
   else if (S.focus === 'sql' && b.hlHits) list = [['esc', 'clear search']];
-  else if (S.focus === 'source' && SRC.editing) list = [['ctrl+w', 'leave editor'], [st.saveKey, 'save'], ['ctrl+shift+o', 'symbols'], ['right-click', 'menu']];
-  else if (S.focus === 'source') list = [['enter', 'edit'], ['E', 'hide source']];
+  else if (S.focus === 'source' && SRC.editing) list = [['ctrl+w', 'leave editor'], [st.saveKey, 'save'], ...(S.caps.scratch ? [[previewKeyLabel, 'preview']] : []), ['ctrl+shift+o', 'symbols'], ['right-click', 'menu']];
+  else if (S.focus === 'source') list = [['enter', 'edit'], ...(S.caps.scratch ? [[previewKeyLabel, 'preview']] : []), ['E', 'hide source']];
   else if (S.focus === 'actions') list = [['enter', 'show its sql'], ...target(S.view)];
   else if (S.focus === 'lineage') {
     const rows = st.lineageRows();
@@ -966,6 +973,11 @@ function Footer() {
   } else if (S.focus === 'log') {
     if (st.logTabs().length > 1) list.push([st.logTabLabel, 'next tab']);
     if (S.logTab === 'history') list = [[st.logTabLabel, 'next tab'], ['enter', 'open run'], ['⌫', 'back'], ['X', 'clear history']];
+    if (S.logTab === 'preview') {
+      if (PV.ask) list = [['y', 'preview anyway'], ['n', 'cancel']];
+      else if (PV.run && ['starting', 'running'].includes(PV.run.phase)) list.unshift(['ctrl+c', 'cancel']);
+      else list.unshift([previewKeyLabel, 'preview again']);
+    }
     const jobs = st.shownJobs();
     if (jobs) {
       // As the TUI: u opens an API run's page, else the selected job.
@@ -1201,7 +1213,7 @@ function Palette() {
 function helpSections() {
   const c = S.caps;
   const global = [[st.paletteKey, st.paletteKeyMovesDown ? 'find file (again: down the list)' : 'find file'], ['# in it', 'find action'], ['/', 'search the focused pane'], ['$kind', 'find one kind'], [st.commandsKey + ' or >', 'commands'], [']', 'next action in file'], ['[', 'prev action in file'],
-    [st.saveKey, 'save and compile'], ['i', 'incremental/full'], ['E', 'show/hide source'], ['ctrl+,', 'settings and project info'], ['s', 'scratch query from this model'], ['e', 'errors'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
+    [st.saveKey, 'save and compile'], ['i', 'incremental/full'], ['E', 'show/hide source'], ['ctrl+,', 'settings and project info'], ['s', 'scratch query from this model'], ...(c.scratch ? [[previewKeyLabel, 'preview the selected action\'s rows (log pane\'s preview tab)']] : []), ['e', 'errors'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
   if (c.branches) global.push(['B', 'switch branch']);
   if (c.follow) global.push(['F', 'follow editor on/off']);
   if (c.open) global.push(['o', 'open in editor']);

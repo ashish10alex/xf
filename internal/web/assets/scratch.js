@@ -177,9 +177,9 @@ export function toggleResults() {
 
 // setResultTab shows the run's rows ('rows') or the SQL it ran ('sql').
 // The tab is the run's own, so a new run opens on its rows.
-export function setResultTab(tab) {
-  if (!SC.run) return;
-  SC.run.tab = tab;
+export function setResultTab(tab, ctx = SC) {
+  if (!ctx.run) return;
+  ctx.run.tab = tab;
   redraw();
 }
 
@@ -478,11 +478,12 @@ function newRun(sql, ctx = SC) {
 
 // showJob shows the rows of a job that has run, or is running, in ctx,
 // read from BigQuery as a recent run's are: the dependency inspector's
-// rows' runs.
-export function showJob(ctx, job, sql) {
+// rows' runs. fresh is a job just started (a preview), which the result's
+// line times from now rather than calling it a recent result.
+export function showJob(ctx, job, sql, fresh) {
   const run = ctx.run = newRun(sql, ctx);
   run.job = job;
-  run.restored = Date.now();
+  if (!fresh) run.restored = Date.now();
   run.phase = 'running';
   ctx.sel = null; ctx.filters = {}; ctx.sort = null; ctx.scrollTop = 0;
   poll(run);
@@ -630,18 +631,18 @@ export async function loadMore(ctx = SC) {
 }
 
 // showChild shows the rows of one statement of a script.
-export async function showChild(child) {
-  const run = SC.run;
+export async function showChild(child, ctx = SC) {
+  const run = ctx.run;
   if (!run || run.phase !== 'done') return;
   run.child = child.id;
   run.schema = null; run.rows = []; run.next = ''; run.total = 0;
   run.sub = null; run.subOn = false; run.lc = null;
-  SC.sel = null; SC.scrollTop = 0; SC.filters = {}; SC.sort = null;
+  ctx.sel = null; ctx.scrollTop = 0; ctx.filters = {}; ctx.sort = null;
   redraw();
   if (child.hasRows) {
     run.phase = 'loading';
     await loadFirst(run, { ...run.job, id: child.id });
-    if (SC.run === run && run.phase === 'loading') run.phase = 'done';
+    if (ctx.run === run && run.phase === 'loading') run.phase = 'done';
   }
   redraw();
 }
@@ -672,10 +673,10 @@ export function jobURL(job) {
   return `https://console.cloud.google.com/bigquery?project=${encodeURIComponent(job.project)}&j=bq:${encodeURIComponent(loc)}:${encodeURIComponent(job.id)}&page=queryresults`;
 }
 
-export function csvURL() {
-  const run = viewRun();
+export function csvURL(ctx = SC, name = '') {
+  const run = viewRun(ctx);
   if (!run || !run.rowsJob || !run.schema || !run.schema.length) return '';
-  return jobQuery('/api/scratch/csv', run.rowsJob, { name: SC.cur ? SC.cur.id : 'result' });
+  return jobQuery('/api/scratch/csv', run.rowsJob, { name: name || (SC.cur ? SC.cur.id : 'result') });
 }
 
 export function fmtBytes(n) {

@@ -482,6 +482,11 @@ body.v-resizing { cursor: col-resize; user-select: none; }
   .right-col { flex: 1 1 50%; overflow: visible; }
 }
 .log-pane { flex: 0 1 30%; min-height: 110px; }
+/* The preview tab: Scratch's result panel, filling the log pane. */
+.pv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; margin: -6px 0 -4px; }
+.pv-body.sc-result { overflow: hidden; }
+.pv-ask p { margin: 0 0 8px; }
+.pv-ask .run-btn { margin-right: 12px; }
 /* The terminal tab: xterm.js fills its box, which the pane sizes. */
 .term-box { flex: 1; min-height: 0; padding-left: 8px; }
 .term-screen { width: 100%; height: 100%; }

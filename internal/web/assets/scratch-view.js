@@ -85,8 +85,11 @@ function shortErr(e) {
 
 // ---- the result ----
 
-function RunLine() {
-  const run = SC.run;
+// RunLine is how a run stands, with its result and SQL tabs: Scratch's,
+// or another view's (ctx), which says how its run is cancelled and what
+// its CSV is called.
+function RunLine({ ctx = SC, cancel = sc.cancelRun, csvName = '' }) {
+  const run = ctx.run;
   const running = run && ['starting', 'running', 'loading'].includes(run.phase);
   useTick(running, 100);
   if (!run) return html`<div class="sc-runline dim">cmd+enter runs the selection, or the whole file</div>`;
@@ -96,7 +99,7 @@ function RunLine() {
   switch (run.phase) {
     case 'starting': case 'running': case 'loading':
       bits.push(html`<span class="warn">${SPIN[Math.floor(Date.now() / 90) % SPIN.length]} ${run.phase === 'loading' ? 'reading rows' : 'running'} ${elapsed}</span>`);
-      if (run.phase !== 'loading') bits.push(html`<button class="link error" onClick=${() => sc.cancelRun()}>cancel (ctrl+c)</button>`);
+      if (run.phase !== 'loading') bits.push(html`<button class="link error" onClick=${() => cancel()}>cancel (ctrl+c)</button>`);
       break;
     case 'failed': case 'cancelled':
       if (run.restored && run.phase === 'failed') { bits.push(html`<span class="error">✗ could not read this result</span>`); break; }
@@ -105,7 +108,7 @@ function RunLine() {
     default:
       bits.push(html`<span class="ok">✓ ${elapsed}</span>`);
   }
-  if (run.restored) bits.push(html`<span class="dim" title=${'A recent result, read again from BigQuery, which keeps it about 24 hours. It ran ' + new Date(run.restored).toLocaleString() + (SC.cur && run.sql !== SC.cur.sql ? ', from SQL that has changed since' : '')}>ran ${sc.ago(run.restored)}</span>`);
+  if (run.restored) bits.push(html`<span class="dim" title=${'A recent result, read again from BigQuery, which keeps it about 24 hours. It ran ' + new Date(run.restored).toLocaleString() + (ctx === SC && SC.cur && run.sql !== SC.cur.sql ? ', from SQL that has changed since' : '')}>ran ${sc.ago(run.restored)}</span>`);
   if (st.statementType && st.statementType !== 'SELECT') bits.push(html`<span>${st.statementType}</span>`);
   if (run.phase === 'done') {
     if (run.schema && run.schema.length) bits.push(html`<span>${run.total.toLocaleString()} row${run.total === 1 ? '' : 's'}${run.next ? html` <span class="dim">(${run.rows.length.toLocaleString()} loaded)</span>` : ''}</span>`);
@@ -115,12 +118,12 @@ function RunLine() {
     bits.push(st.cacheHit ? html`<span class="dim">cache hit · $0</span>`
       : html`<span title=${st.cost ? 'The bytes BigQuery billed, and their on-demand price ($6.25 per TiB)' : ''}>billed ${sc.fmtBytes(st.bytesBilled)}${st.cost ? ' ≈ ' + st.cost : ''}</span>`);
   }
-  const csv = run.phase === 'done' ? sc.csvURL() : '';
+  const csv = run.phase === 'done' ? sc.csvURL(ctx, csvName) : '';
   const tab = run.tab === 'sql' ? 'sql' : 'rows';
   return html`<div class="sc-runline">
     <span class="set-tabs sc-tabs" role="group" aria-label="Show">
-      <button class=${'tab' + (tab === 'rows' ? ' on' : '')} title="The rows this job returned" onClick=${() => sc.setResultTab('rows')}>result</button>
-      <button class=${'tab' + (tab === 'sql' ? ' on' : '')} title="The SQL this job ran: the selection, if a selection ran" onClick=${() => sc.setResultTab('sql')}>SQL</button>
+      <button class=${'tab' + (tab === 'rows' ? ' on' : '')} title="The rows this job returned" onClick=${() => sc.setResultTab('rows', ctx)}>result</button>
+      <button class=${'tab' + (tab === 'sql' ? ' on' : '')} title=${ctx === SC ? 'The SQL this job ran: the selection, if a selection ran' : 'The SQL this job ran'} onClick=${() => sc.setResultTab('sql', ctx)}>SQL</button>
     </span>
     ${bits.map((b, i) => html`${i ? html`<span class="dim"> · </span>` : ''}${b}`)}
     <span class="spacer"></span>
@@ -129,13 +132,13 @@ function RunLine() {
   </div>`;
 }
 
-function Children() {
-  const run = SC.run;
+function Children({ ctx = SC }) {
+  const run = ctx.run;
   if (!run || !run.children.length) return null;
   return html`<div class="sc-children">
     <span class="dim">script</span>
     ${run.children.map((c, i) => html`<button class=${'chip child' + ((run.child === c.id || (!run.child && c.hasRows && i === lastRows(run.children))) ? ' on' : '') + (c.error ? ' bad' : '')}
-      title=${c.error || c.query} onClick=${() => sc.showChild(c)}>${i + 1}. ${c.statementType || c.state}${c.dmlRows >= 0 ? ` · ${c.dmlRows} rows` : ''}${c.table ? ' · ' + c.table.split('.').slice(-1)[0] : ''}</button>`)}
+      title=${c.error || c.query} onClick=${() => sc.showChild(c, ctx)}>${i + 1}. ${c.statementType || c.state}${c.dmlRows >= 0 ? ` · ${c.dmlRows} rows` : ''}${c.table ? ' · ' + c.table.split('.').slice(-1)[0] : ''}</button>`)}
   </div>`;
 }
 
@@ -430,16 +433,22 @@ function RunSQL({ sql }) {
 }
 
 function Result() {
-  const run = SC.run;
+  return html`<section class="sc-result"><${ResultPanel} /></section>`;
+}
+
+// ResultPanel is a run's line, its statements, filters and rows, or the
+// SQL it ran: Scratch's result, and the preview tab's (ctx, with how its
+// run is cancelled and its CSV named, as RunLine takes them).
+export function ResultPanel({ ctx = SC, cancel, csvName }) {
+  const run = ctx.run;
+  const line = html`<${RunLine} ctx=${ctx} cancel=${cancel} csvName=${csvName} />`;
   if (run && run.tab === 'sql') {
-    return html`<section class="sc-result">
-      <${RunLine} />
+    return html`${line}
       <div class="sc-result-body">
         ${run.sql ? html`<${RunSQL} sql=${run.sql} />` : html`<div class="dim pad">this run kept no SQL</div>`}
-      </div>
-    </section>`;
+      </div>`;
   }
-  const vr = sc.viewRun();
+  const vr = sc.viewRun(ctx);
   let body = null;
   if (vr !== run && vr.phase !== 'done') {
     body = vr.phase === 'failed' ? html`<pre class="sc-error">${vr.error}</pre>` : html`<div class="dim pad">searching…</div>`;
@@ -452,15 +461,13 @@ function Result() {
       ${run.children.length > 0 && html`<p class="dim">${run.children.length} statements ran; pick one above to see its rows.</p>`}
     </div>`;
   }
-  return html`<section class="sc-result">
-    <${RunLine} />
-    <${Children} />
-    <${FilterBar} />
+  return html`${line}
+    <${Children} ctx=${ctx} />
+    <${FilterBar} ctx=${ctx} />
     <div class="sc-result-body">
-      ${body || html`<${Grid} />`}
-      <${Detail} />
-    </div>
-  </section>`;
+      ${body || html`<${Grid} ctx=${ctx} />`}
+      <${Detail} ctx=${ctx} />
+    </div>`;
 }
 
 // ResultGrid is a result's rows, with their filters, sort and selected
