@@ -134,3 +134,22 @@ func TestParseSnippet(t *testing.T) {
 		t.Errorf("template %q", got)
 	}
 }
+
+func TestClauses(t *testing.T) {
+	m := byName(t)
+	for name, want := range map[string]string{
+		"PIVOT":   "PIVOT(${1:SUM}(${2:value_column}) FOR ${3:input_column} IN (${4:value}))",
+		"UNPIVOT": "UNPIVOT(${1:values_column} FOR ${2:name_column} IN (${3:columns}))",
+	} {
+		f := m[name]
+		if !f.Clause || f.Snippet != want {
+			t.Errorf("%s: clause %v, snippet %q, want %q", name, f.Clause, f.Snippet, want)
+		}
+		if ps := f.Signatures[0].Params; ps[1].Before != "FOR" || ps[2].Before != "IN" {
+			t.Errorf("%s: params %+v", name, ps)
+		}
+	}
+	if m["SUM"].Clause {
+		t.Error("SUM is a clause")
+	}
+}

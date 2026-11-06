@@ -99,15 +99,17 @@ function nameBefore(text, at) {
   let start = end;
   while (start > 0 && /[\w.]/.test(text[start - 1])) start--;
   const name = text.slice(start, end).replace(/^\.+/, '');
+  // UNPIVOT INCLUDE NULLS ( is UNPIVOT's bracket.
+  if (/^nulls$/i.test(name) && /\bunpivot\s+(?:include|exclude)\s+$/i.test(text.slice(Math.max(0, start - 40), start))) return 'UNPIVOT';
   return /^[A-Za-z_]/.test(name) ? name : '';
 }
 
 // callAt is the call the end of text is in: the innermost named bracket,
-// looking through those that only group.
+// looking through those that only group, as an IN list does (PIVOT's too).
 function callAt(text) {
   const { frames, inCode } = scan(text);
   if (!inCode) return null;
-  for (let k = frames.length - 1; k >= 0; k--) if (frames[k].name) return frames[k];
+  for (let k = frames.length - 1; k >= 0; k--) if (frames[k].name && !/^in$/i.test(frames[k].name)) return frames[k];
   return null;
 }
 
@@ -177,12 +179,31 @@ function shortArgs(f) {
   return s + ')';
 }
 
-// functionOptions are every function, each inserted as its snippet.
-export async function functionOptions(boost) {
+const asOption = (f, boost) => cm.snippetCompletion(f.snippet, {
+  label: f.name, detail: shortArgs(f), type: 'function', boost, info: () => functionCard(f, true),
+});
+
+export const isAggregate = (f) => /aggregate_functions/.test(f.url);
+
+// functionOptions are every function, each inserted as its snippet, or
+// the aggregates alone. PIVOT and UNPIVOT are no function: clauseOptions
+// has them.
+export async function functionOptions(boost, aggregates = false) {
   if (!(await loadFunctions())) return [];
-  return F.list.map((f) => cm.snippetCompletion(f.snippet, {
-    label: f.name, detail: shortArgs(f), type: 'function', boost, info: () => functionCard(f, true),
-  }));
+  return F.list.filter((f) => !f.clause && (!aggregates || isAggregate(f))).map((f) => asOption(f, boost));
+}
+
+// clauseOptions are PIVOT and UNPIVOT, which go after a table in FROM.
+export async function clauseOptions(boost) {
+  if (!(await loadFunctions())) return [];
+  return F.list.filter((f) => f.clause).map((f) => ({ ...asOption(f, boost), type: 'keyword' }));
+}
+
+// inPivotAggregate is whether the end of text is where PIVOT( takes its
+// aggregate: in the bracket itself, before FOR, not in a call within it.
+export function inPivotAggregate(text) {
+  const info = callInfo(text);
+  return !!info && info.fn.name === 'PIVOT' && info.actives[info.sig].index === 0;
 }
 
 // valueOptions are the values the argument the cursor is at takes, as

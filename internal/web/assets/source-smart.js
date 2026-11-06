@@ -34,8 +34,8 @@ import { S, get, post, redraw, hooks, setFocus, say, onMac } from './state.js';
 import { SRC, sourceEditor, goToPlace, isLibraryFile } from './source.js';
 import { wordMarks } from './diff.js';
 import { jumpWithin } from './editor.js';
-import { tableCard, cardDOM, keyedCard, keyOnFocus, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts } from './scratch-complete.js';
-import { loadFunctions, functionOptions, valueOptions, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
+import { tableCard, cardDOM, keyedCard, keyOnFocus, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts, afterTable, madeColumns } from './scratch-complete.js';
+import { loadFunctions, functionOptions, clauseOptions, inPivotAggregate, valueOptions, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 import { sqlText, inJavaScript } from './sqlx.js';
 import { pathSource, unlessPaths, pathExtensions } from './source-paths.js';
 
@@ -401,9 +401,11 @@ async function columnSource(context) {
   // After a $ comes a ref, which serverSource offers.
   if (state.doc.sliceString(tok.from - 1, tok.from) === '$') return null;
   if (inLiteral(state, pos)) return null;
-  // An argument of fixed values gets them alone, from functionSource.
+  // An argument of fixed values gets them alone, from functionSource, as do
+  // PIVOT and UNPIVOT after a table.
   const fn = functionPlace(state, tok);
   if (fn && fn.values) return null;
+  if (clauseSpot(state, tok) || (fn && pivotAggregate(state, tok))) return null;
   if (tok.from === tok.to && !context.explicit) return null;
   const text = state.doc.toString();
   const res = await refsOf(text);
@@ -438,6 +440,15 @@ async function columnSource(context) {
     if (quoteIdent(o.label) !== o.label) o.apply = quoteIdent(o.label);
     options.push(o);
   }
+  const sql = sqlOf(state);
+  if (!qual.length && sql !== null) {
+    // The columns a PIVOT or UNPIVOT makes.
+    for (const c of madeColumns(sql, blank(sql))) {
+      if (names.has(c.name.toLowerCase())) continue;
+      names.add(c.name.toLowerCase());
+      options.push({ label: c.name, detail: c.by, type: 'property', boost: 2, apply: quoteIdent(c.name) !== c.name ? quoteIdent(c.name) : undefined });
+    }
+  }
   if (!qual.length) {
     for (const w of words(text, from, pos)) {
       if (!names.has(w.toLowerCase())) options.push({ label: w, type: 'text', boost: 0 });
@@ -460,6 +471,23 @@ function functionPlace(state, tok) {
   return values ? { from: tok.from, values } : { from: tok.from };
 }
 
+// beginsClause is whether text begins PIVOT or UNPIVOT, in any case.
+const beginsClause = (text) => /^\w*$/.test(text) && ['PIVOT', 'UNPIVOT'].some((c) => c.startsWith(text.toUpperCase()));
+const AFTER_REF = new RegExp('\\b(?:from|join)\\s+\\$\\{[^{}]*\\}(?:\\s+(?:as\\s+)?(?!(?:' + [...NOT_ALIAS].join('|') + ')\\b)[A-Za-z_]\\w*)?\\s+$', 'i');
+
+// clauseSpot is whether tok is where PIVOT and UNPIVOT go, after a table in
+// the SQL's FROM or JOIN (a ${ref(…)} too), and begins one of them.
+function clauseSpot(state, tok) {
+  if (!beginsClause(tok.text)) return false;
+  const sql = sqlOf(state);
+  if (sql === null || inJavaScript(state, tok.from)) return false;
+  return afterTable(blank(sql), tok.from) || AFTER_REF.test(state.doc.sliceString(Math.max(0, tok.from - 400), tok.from));
+}
+
+// pivotAggregate is whether tok is where PIVOT( takes its aggregate call,
+// which is all functionSource offers there.
+const pivotAggregate = (state, tok) => !tok.text.includes('.') && inPivotAggregate(sqlOf(state).slice(0, tok.from));
+
 // functionSource offers BigQuery's functions below the columns, as soon as
 // they are here: an argument's values alone, as soon as it begins.
 async function functionSource(context) {
@@ -467,10 +495,17 @@ async function functionSource(context) {
   if (!SRC.view || isPy()) return null;
   const tok = context.matchBefore(/[A-Za-z_][\w]*(?:\.[\w]*)*$|[A-Za-z_]?$/);
   if (!tok || state.doc.sliceString(tok.from - 1, tok.from) === '$' || inLiteral(state, pos)) return null;
-  // The function list first, so an argument's values are known.
-  const fns = await functionOptions(1);
+  if (clauseSpot(state, tok)) {
+    if (tok.from === tok.to && !context.explicit) return null;
+    const clauses = await clauseOptions(9);
+    return clauses.length ? { from: tok.from, options: clauses, validFor: beginsClause } : null;
+  }
+  // The function list first, so an argument's values are known; in PIVOT(
+  // the aggregates alone.
+  await loadFunctions();
   const at = functionPlace(state, tok);
   if (!at) return null;
+  const fns = await functionOptions(1, !at.values && pivotAggregate(state, tok));
   if (at.values) return { from: at.from, options: at.values, validFor: /^[\w()]*$/ };
   if (tok.from === tok.to && !context.explicit) return null;
   return fns.length ? { from: at.from, options: fns, validFor: /^\w*$/ } : null;

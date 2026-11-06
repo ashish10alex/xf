@@ -1,11 +1,14 @@
 // Package bqfuncs is what xf knows of BigQuery's functions, for the
 // completion, hover and signature help of xf web's Scratch editor.
 //
-// Both files are vscode-dataform-tools' own, copied unchanged by
+// Two files are vscode-dataform-tools' own, copied unchanged by
 // `just bigquery-functions`: bigquery-functions.json is its catalog, each
 // function's typed arguments, the values they take, what it returns, an
 // example and its docs; bigquery.code-snippets.json the snippets it borrowed,
 // which still describe the functions the catalog has not taken in yet.
+// clauses.json is xf's own, in the catalog's format: PIVOT and UNPIVOT,
+// written as a call after a table, so they get the same snippet, card and
+// signature help.
 // Snippets here are CodeMirror's: `${1:name}` is a field, and there is no
 // dropdown, so a field of fixed values holds the first and the editor offers
 // the rest.
@@ -29,6 +32,9 @@ var catalogJSON []byte
 //go:embed bigquery.code-snippets.json
 var snippetsJSON []byte
 
+//go:embed clauses.json
+var clausesJSON []byte
+
 // Func is a function as the editor shows it.
 type Func struct {
 	Name string `json:"name"`
@@ -49,6 +55,9 @@ type Func struct {
 	// Searched says URL searches the docs for the name: the snippet had no
 	// link of its own.
 	Searched bool `json:"searched,omitempty"`
+	// Clause says it is an operator after a table in FROM, as PIVOT: it is
+	// offered there, not where a function goes.
+	Clause bool `json:"clause,omitempty"`
 }
 
 // Signature is one way to call a function.
@@ -84,8 +93,8 @@ type Example struct {
 	Result string `json:"result"`
 }
 
-// All is every function, in name order: the catalog's and, after those, the
-// borrowed snippets' it has not taken in.
+// All is every function, in name order: the catalog's, the borrowed
+// snippets' it has not taken in, and the clauses.
 var All = sync.OnceValues(load)
 
 func load() ([]Func, error) {
@@ -93,10 +102,19 @@ func load() ([]Func, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bigquery-functions.json: %w", err)
 	}
+	clauses, err := loadCatalog(clausesJSON)
+	if err != nil {
+		return nil, fmt.Errorf("clauses.json: %w", err)
+	}
 	have := map[string]bool{}
 	for _, f := range cat {
 		have[f.Name] = true
 	}
+	for i := range clauses {
+		clauses[i].Clause = true
+		have[clauses[i].Name] = true
+	}
+	cat = append(cat, clauses...)
 	borrowed, err := loadBorrowed(snippetsJSON, have)
 	if err != nil {
 		return nil, fmt.Errorf("bigquery.code-snippets.json: %w", err)
@@ -338,8 +356,8 @@ func loadBorrowed(data []byte, have map[string]bool) ([]Func, error) {
 			continue
 		}
 		name := strings.ToUpper(m[1])
-		// PIVOT() and SAFE.prefix() are a clause and a prefix: what their
-		// snippet writes is no call of them.
+		// PIVOT() and SAFE.prefix() are a clause (clauses.json has it) and a
+		// prefix: what their snippet writes is no call of them.
 		if have[name] || !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(firstLine(snippets[k].Body))), name+"(") {
 			continue
 		}

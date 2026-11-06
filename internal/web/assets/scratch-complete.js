@@ -12,7 +12,7 @@
 import * as cm from './vendor/codemirror.mjs';
 import { get, copy, openLink } from './state.js';
 import { SC, fmtBytes, onClearMeta } from './scratch.js';
-import { functionOptions, valueOptions, isFunctionName, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
+import { functionOptions, clauseOptions, inPivotAggregate, valueOptions, isFunctionName, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 
 const TTL = 5 * 60 * 1000;
 const cache = new Map();
@@ -82,7 +82,7 @@ export function blank(sql) {
   return out.join('');
 }
 
-export const NOT_ALIAS = new Set('where on join left right inner outer cross full natural lateral group order limit union intersect except using window qualify having tablesample for set select from partition when then else end and or not in is as'.split(' '));
+export const NOT_ALIAS = new Set('where on join left right inner outer cross full natural lateral group order limit union intersect except using window qualify having tablesample pivot unpivot for set select from partition when then else end and or not in is as'.split(' '));
 const REF = '(`[^`\\n]+`|[A-Za-z_][\\w-]*(?:\\.[A-Za-z_0-9][\\w-]*){0,2})(?!\\s*\\()';
 // An alias is never a keyword, so FROM a JOIN b leaves JOIN b to be read.
 const ALIAS = '(?:\\s+(?:as\\s+)?(?!(?:' + [...NOT_ALIAS].join('|') + ')\\b)([A-Za-z_]\\w*))?';
@@ -340,6 +340,118 @@ export function inFromList(clean, start) {
   return !!kw && /^(from|join)$/i.test(kw[1]);
 }
 
+// AFTER_TABLE is the end of a table in FROM or JOIN (or a list of them),
+// with its alias: where PIVOT and UNPIVOT go.
+const NOT_KEYWORD = '(?!(?:' + [...NOT_ALIAS].join('|') + ')\\b)';
+const AFTER_TABLE = new RegExp('\\b(?:from|join)\\s+' + NOT_KEYWORD + REF + ALIAS + '(?:\\s*,\\s*' + REF + ALIAS + ')*\\s+$', 'i');
+const TRAILING_ALIAS = new RegExp('(?:\\s+(?:as\\s+)?(?!(?:' + [...NOT_ALIAS].join('|') + ')\\b)[A-Za-z_]\\w*)?\\s+$', 'i');
+
+// afterTable is whether the text before start ends with a table in FROM or
+// JOIN, a subquery or UNNEST(…) there, and its alias: where PIVOT and
+// UNPIVOT go, as in FROM t PIVOT(…) or FROM (SELECT …) AS s UNPIVOT(…).
+export function afterTable(clean, start) {
+  const before = clean.slice(Math.max(0, start - 400), start);
+  if (AFTER_TABLE.test(before)) return true;
+  // A bracket closed after FROM or JOIN.
+  const m = TRAILING_ALIAS.exec(clean.slice(0, start));
+  let i = (m ? m.index : start) - 1;
+  if (clean[i] !== ')') return false;
+  for (let depth = 0; i >= 0; i--) {
+    if (clean[i] === ')') depth++;
+    else if (clean[i] === '(' && --depth === 0) break;
+  }
+  return i > 0 && /\b(?:from|join)\s*(?:unnest\s*)?$/i.test(clean.slice(Math.max(0, i - 40), i));
+}
+
+// madeColumns are the columns the PIVOTs and UNPIVOTs in clean[from, to)
+// make, as { name, by }: sql gives the strings' text, which clean blanks.
+// A PIVOT names a column for each value as BigQuery does: by its alias or
+// the value itself ('Q1' gives Q1, 1 gives _1, -1 minus_1, DATE
+// '2024-01-31' _2024_01_31), after the aggregate's prefix and _ when it has
+// one; a value of any other kind with no alias names none. An UNPIVOT makes
+// its values and name columns.
+export function madeColumns(sql, clean, from = 0, to = clean.length) {
+  const out = [];
+  const add = (name, by) => { if (name && !out.some((c) => c.name === name)) out.push({ name, by }); };
+  const re = /\b(un)?pivot(?:\s+(?:include|exclude)\s+nulls)?\s*\(/gi;
+  re.lastIndex = from;
+  for (let m; (m = re.exec(clean)) && m.index < to;) {
+    const open = m.index + m[0].length - 1;
+    const close = closeOf(clean, open);
+    const forAt = close < 0 ? -1 : keywordAt(clean, open + 1, close, 'for');
+    const inAt = forAt < 0 ? -1 : keywordAt(clean, forAt, close, 'in');
+    if (inAt < 0) continue;
+    if (m[1]) {
+      for (const n of clean.slice(open + 1, forAt).match(/[A-Za-z_]\w*/g) || []) add(n, 'unpivot');
+      add((/^\s*for\s+([A-Za-z_]\w*)\s*$/i.exec(clean.slice(forAt, inAt)) || [])[1], 'unpivot');
+      continue;
+    }
+    const list = clean.indexOf('(', inAt);
+    const listEnd = list < 0 ? -1 : closeOf(clean, list);
+    if (listEnd < 0 || listEnd > close) continue;
+    const prefixes = splitTop(clean, open + 1, forAt).filter(([a, b]) => clean.slice(a, b).trim()).map(([a, b]) => {
+      const p = /(?:\bas\s+|\)\s*)([A-Za-z_]\w*)\s*$/i.exec(clean.slice(a, b));
+      return p ? p[1] : '';
+    });
+    for (const [a, b] of splitTop(clean, list + 1, listEnd)) {
+      const name = pivotName(sql.slice(a, b), clean.slice(a, b));
+      for (const p of prefixes) if (name) add(p ? p + '_' + name : name, 'pivot');
+    }
+  }
+  return out;
+}
+
+// pivotName is the column a value of a PIVOT's IN list names, or ''.
+function pivotName(raw, clean) {
+  const t = raw.trim();
+  const alias = (rest) => (/^\s*(?:as\s+)?([A-Za-z_]\w*)\s*$/i.exec(rest) || [])[1];
+  const two = (n) => n.padStart(2, '0');
+  let m, lit = null;
+  if ((m = /^(['"])((?:\\.|(?!\1)[^\\])*)\1/.exec(t))) lit = m[2];
+  else if ((m = /^date\s*(['"])(\d{4})-(\d{1,2})-(\d{1,2})\1/i.exec(t))) lit = '_' + m[2] + '_' + two(m[3]) + '_' + two(m[4]);
+  else if ((m = /^(-)?\s*(\d+)(?![\w.])/.exec(t))) lit = (m[1] ? 'minus_' : '_') + m[2];
+  else if ((m = /^(true|false|null)\b/i.exec(t))) lit = m[1].toUpperCase();
+  if (lit === null) return (/\bas\s+([A-Za-z_]\w*)\s*$/i.exec(clean) || [])[1] || '';
+  const rest = t.slice(m[0].length);
+  return rest.trim() ? alias(rest) || '' : lit;
+}
+
+// keywordAt is where the word kw is in clean[a, b), at the level of a, or -1.
+function keywordAt(clean, a, b, kw) {
+  const re = new RegExp('\\b' + kw + '\\b', 'iy');
+  for (let i = a, depth = 0; i < b; i++) {
+    const c = clean[i];
+    if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    else if (depth === 0) { re.lastIndex = i; if (re.test(clean)) return i; }
+  }
+  return -1;
+}
+
+// closeOf is where the bracket at open closes in clean, or -1.
+function closeOf(clean, open) {
+  for (let i = open, depth = 0; i < clean.length; i++) {
+    if (clean[i] === '(') depth++;
+    else if (clean[i] === ')' && --depth === 0) return i;
+  }
+  return -1;
+}
+
+// splitTop is [from, to) of each comma-separated part of clean[a, b), at
+// the level of a. A string is blank in clean, so a part may look empty.
+function splitTop(clean, a, b) {
+  const out = [];
+  let start = a;
+  for (let i = a, depth = 0; i < b; i++) {
+    const c = clean[i];
+    if (c === '(' || c === '[') depth++;
+    else if (c === ')' || c === ']') depth--;
+    else if (c === ',' && depth === 0) { out.push([start, i]); start = i + 1; }
+  }
+  out.push([start, b]);
+  return out;
+}
+
 // statementAt is where the statement the cursor is in begins and ends: the
 // text between the semicolons around it, whatever the rest of a script is.
 export function statementAt(sql, pos) {
@@ -408,6 +520,16 @@ async function columnOptions(tok, tokStart, sql, pos) {
     if (quoteIdent(o.label) !== o.label) o.apply = (view, _c, a, b) => view.dispatch({ changes: { from: a, to: b, insert: quoteIdent(o.label) } });
     options.push(o);
   }
+  // The columns a PIVOT or UNPIVOT of the statement makes.
+  if (!qual.length) {
+    for (const c of madeColumns(sql, blank(sql), from0, to0)) {
+      if (names.has(c.name.toLowerCase())) continue;
+      names.add(c.name.toLowerCase());
+      const o = { label: c.name, detail: c.by, type: 'property', boost: 2 };
+      if (quoteIdent(c.name) !== c.name) o.apply = (view, _c, a, b) => view.dispatch({ changes: { from: a, to: b, insert: quoteIdent(c.name) } });
+      options.push(o);
+    }
+  }
   // BigQuery's functions, below the columns, unless a backticked name is
   // being typed.
   if (!qual.length && !tok.startsWith('`')) options.push(...await functionOptions(1));
@@ -443,6 +565,16 @@ async function source(context) {
     const options = byParts(r.options, typed);
     if (!options.length) return null;
     return { from: r.from, options, filter: false, getMatch: (o) => o.ranges };
+  }
+  // After a table in FROM, PIVOT and UNPIVOT, while what is typed begins one.
+  if (!tok.includes('.') && !tok.startsWith('`') && afterTable(clean, tokStart)) {
+    const clauses = await clauseOptions(9);
+    const begins = (text) => clauses.some((c) => c.label.startsWith(text.toUpperCase()));
+    if (begins(tok)) return { from: tokStart, options: clauses, validFor: (text) => /^\w*$/.test(text) && begins(text) };
+  }
+  // PIVOT( takes an aggregate call, and nothing else, before FOR.
+  if (!tok.includes('.') && !tok.startsWith('`') && inPivotAggregate(sql.slice(0, tokStart))) {
+    return { from: tokStart, options: await functionOptions(1, true), validFor: /^\w*$/ };
   }
   const r = await columnOptions(tok, tokStart, sql, pos);
   if (!r || !r.options.length) return null;
