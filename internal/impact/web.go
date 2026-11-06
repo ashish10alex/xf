@@ -103,9 +103,9 @@ var markStyles = map[string][2]string{
 }
 
 // explanation is the context line in words, as Markdown: the branch the
-// models came from, the base it was diffed against and the tables they
-// were checked against. It is "" when rows is 0 or the report has no
-// comparison.
+// models came from, the base it was diffed against and the projects of
+// the tables they were checked against (the context line has the
+// dataset). It is "" when rows is 0 or the report has no comparison.
 func explanation(r *Report, rows int) string {
 	c := r.Comparison
 	if c == nil || rows == 0 {
@@ -119,13 +119,9 @@ func explanation(r *Report, rows int) string {
 	if r.Unset != "" {
 		tables = "the default target tables"
 	}
-	n := newNamer(r)
-	switch {
-	case n.shared != "" && (len(r.Against) == 0 || len(r.Against) == 1 && r.Against[0] == n.project):
-		tables += " in `" + n.shared + "`"
-	case len(r.Against) > 0:
+	if len(r.Against) > 0 {
 		tables += " in " + codeList(r.Against)
-	default:
+	} else {
 		tables += " in BigQuery"
 	}
 	return "The models came from " + from + " diffed against `" + strings.TrimPrefix(c.BaseRef, "origin/") +

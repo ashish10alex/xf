@@ -51,12 +51,14 @@ func TestPageDataExplainsWhatWasCompared(t *testing.T) {
 		want string
 	}{
 		"one dataset": {&Report{Comparison: cmp, Against: []string{"p"}, Safe: safe},
-			"The models came from <code>feat/x</code> diffed against <code>develop</code>, and their new columns were checked against the live tables in <code>p.<wbr>marts</code>."},
+			"The models came from <code>feat/x</code> diffed against <code>develop</code>, and their new columns were checked against the live tables in <code>p</code>."},
 		"default targets": {&Report{Comparison: cmp, Against: []string{"p"}, Safe: safe, Unset: "prodCompilerOptions"},
-			"The models came from <code>feat/x</code> diffed against <code>develop</code>, and their new columns were checked against the default target tables in <code>p.<wbr>marts</code>."},
+			"The models came from <code>feat/x</code> diffed against <code>develop</code>, and their new columns were checked against the default target tables in <code>p</code>."},
 		"two projects": {&Report{Comparison: &Comparison{HeadRef: "feat", BaseRef: "main", HeadLabel: "pushed commit abc1234"}, Against: []string{"p", "q"},
 			Safe: []Table{{Table: "p.a.t", Type: "table", Columns: []Column{}}, {Table: "q.b.u", Type: "table", Columns: []Column{}}}},
 			"The models came from the pushed <code>feat</code> diffed against <code>main</code>, and their new columns were checked against the live tables in <code>p</code>, <code>q</code>."},
+		"no projects known": {&Report{Comparison: cmp, Safe: safe},
+			"The models came from <code>feat/x</code> diffed against <code>develop</code>, and their new columns were checked against the live tables in BigQuery."},
 		"nothing changed": {&Report{Comparison: cmp, Against: []string{"p"}}, ""},
 	} {
 		if got := pageData(c.r).Explain; got != c.want {
