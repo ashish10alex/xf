@@ -469,6 +469,10 @@ func TestMarkdown(t *testing.T) {
 			t.Errorf("Markdown missing %q:\n%s", want, got)
 		}
 	}
+	// The sentence the page shows under its dry-run line comes with the copy.
+	if explain := Explanation(r); explain == "" || !strings.Contains(got, "| working tree\n\n"+explain+"\n") {
+		t.Errorf("Markdown lacks the explanation %q under its branch line:\n%s", explain, got)
+	}
 
 	notFound := func(table string) string {
 		return "dry run failed: Not found: Table acme:" + table + " was not found in location EU"

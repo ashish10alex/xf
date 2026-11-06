@@ -350,6 +350,9 @@ func Markdown(r *Report, o Options) string {
 	lines := []string{"### Query Cost of Branch Changes", ""}
 	if c := r.Comparison; c != nil {
 		lines = append(lines, fmt.Sprintf("**Branch:** `%s` vs `%s` @ `%s` | %s", c.HeadRef, c.BaseRef, c.MergeBase[:min(len(c.MergeBase), 7)], c.HeadLabel), "")
+		if explain := Explanation(r); explain != "" {
+			lines = append(lines, explain, "")
+		}
 	}
 	total, bound := r.Total()
 	lines = append(lines, fmt.Sprintf("**Total scanned:** %s%s | **Estimated cost:** %s%s (on demand, at %s per TiB)",

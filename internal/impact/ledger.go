@@ -587,6 +587,9 @@ func BuildLedger(r *Report) Ledger {
 func Markdown(r *Report) string {
 	l := BuildLedger(r)
 	lines := []string{"### " + l.Title, "", "**" + l.Summary + "** " + l.Context}
+	if explain := explanation(r, len(l.Rows)); explain != "" {
+		lines = append(lines, "", explain)
+	}
 	if len(l.Rows) == 0 {
 		lines = append(lines, "", "No table, view or incremental table changed.")
 	} else {

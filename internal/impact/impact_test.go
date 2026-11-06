@@ -390,13 +390,15 @@ func TestMarkdownIsALedgerOfModels(t *testing.T) {
 		"",
 		"**1 to fix before merging.** 5 models compared with production schemas · 1 not checked · dataset `marts` · base `52863aa`",
 		"",
+		"The models came from `feat/x` diffed against `main`, and their new columns were checked against the live tables in BigQuery.",
+		"",
 		"| # | | Model | What changed | Who is affected |",
 		"| --: | :-: | --- | --- | --- |",
 	}
-	if !reflect.DeepEqual(lines[:6], want) {
-		t.Errorf("head\n%s", strings.Join(lines[:6], "\n"))
+	if !reflect.DeepEqual(lines[:8], want) {
+		t.Errorf("head\n%s", strings.Join(lines[:8], "\n"))
 	}
-	rows := lines[6:11]
+	rows := lines[8:13]
 	for i, prefix := range []string{
 		// orders: one row for its three columns; readers still to fix
 		// first and in bold, then the settled ones, five at most.
