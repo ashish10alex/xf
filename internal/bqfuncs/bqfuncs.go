@@ -217,7 +217,9 @@ func loadCatalog(data []byte) ([]Func, error) {
 }
 
 // label is a signature with its label written, as the extension writes it:
-// optional arguments in brackets, with the comma or keyword before them.
+// optional arguments in brackets, with the comma or keyword before them. A
+// param with no type is its name alone, and no return type no arrow, as a
+// clause's are.
 func label(name, window string, params []Param, returns string) Signature {
 	var b strings.Builder
 	b.WriteString(name + "(")
@@ -240,7 +242,10 @@ func label(name, window string, params []Param, returns string) Signature {
 			b.WriteString("[" + sep)
 		}
 		start := u16()
-		b.WriteString(p.Name + ": " + p.Type)
+		b.WriteString(p.Name)
+		if p.Type != "" {
+			b.WriteString(": " + p.Type)
+		}
 		p.Span = [2]int{start, u16()}
 		if p.Repeated {
 			b.WriteString(", ...")
@@ -253,7 +258,9 @@ func label(name, window string, params []Param, returns string) Signature {
 	if window == "required" {
 		b.WriteString(" OVER (...)")
 	}
-	b.WriteString(" → " + returns)
+	if returns != "" {
+		b.WriteString(" → " + returns)
+	}
 	return Signature{Label: b.String(), Params: params, Returns: returns}
 }
 

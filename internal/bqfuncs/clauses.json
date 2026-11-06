@@ -1,81 +1,42 @@
 {
-  "$comment": "xf's own, in bigquery-functions.json's format: the operators written as a call after a table in FROM. The editor offers them there alone, not where a function goes.",
+  "$comment": "xf's own, in bigquery-functions.json's format: the operators written as a call after a table in FROM. The editor offers them there alone, not where a function goes. Params with no type and no doc keep the card short.",
   "valueSets": {},
   "functions": [
     {
       "name": "PIVOT",
-      "doc": "Turns rows into columns: a column for each value of `input_column`, holding the aggregate of the rows with that value, grouped by the table's other columns. It goes after a table or a subquery in FROM.",
+      "doc": "Turns rows into columns: one column for each value in IN.",
       "signatures": [
         {
           "params": [
-            {
-              "name": "aggregate",
-              "type": "aggregate call [AS prefix]",
-              "doc": "an aggregate of one column, as SUM(sales); several need a prefix each, which begins their columns' names (total_Q1)",
-              "repeated": true,
-              "snippet": "{SUM}({value_column})"
-            },
-            {
-              "name": "input_column",
-              "type": "column",
-              "doc": "the column whose values become columns",
-              "before": "FOR"
-            },
-            {
-              "name": "values",
-              "type": "(value [AS name], ...)",
-              "doc": "the values that become columns, each a constant, as ('Q1', 'Q2'); a column is named for its value ('Q1' gives Q1, 1 gives _1) unless AS names it",
-              "before": "IN",
-              "snippet": "({value})"
-            }
+            { "name": "aggregate", "type": "", "snippet": "{SUM}({value_column})" },
+            { "name": "column", "type": "", "before": "FOR" },
+            { "name": "(values)", "type": "", "before": "IN", "snippet": "({values})" }
           ],
-          "returns": "the other columns, and a column for each value"
+          "returns": ""
         }
       ],
-      "notes": [
-        "Aggregates that ignore NULL only, and COUNT; each takes one argument.",
-        "The columns the aggregates and `input_column` read are not in the result; every other column groups it, so select only the columns you need in a subquery first."
-      ],
       "example": {
-        "sql": "SELECT * FROM (SELECT product, quarter, sales FROM t) PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2'))",
+        "sql": "SELECT * FROM sales PIVOT(SUM(amount) FOR quarter IN ('Q1', 'Q2'))",
         "result": "product, Q1, Q2"
       },
       "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#pivot_operator"
     },
     {
       "name": "UNPIVOT",
-      "doc": "Turns columns into rows: a row for each of the columns listed, `values_column` holding its value and `name_column` its name. It goes after a table or a subquery in FROM.",
+      "doc": "Turns columns into rows: one row for each column in IN.",
       "signatures": [
         {
           "params": [
-            {
-              "name": "values_column",
-              "type": "new name",
-              "doc": "the name of the new column that holds the values; (a, b) for several, with column sets in IN"
-            },
-            {
-              "name": "name_column",
-              "type": "new name",
-              "doc": "the name of the new column that holds which column each value came from",
-              "before": "FOR"
-            },
-            {
-              "name": "columns",
-              "type": "(column [AS label], ...)",
-              "doc": "the columns to turn into rows, all of one type; a label, a string or an INT64, goes in name_column in place of the column's name",
-              "before": "IN",
-              "snippet": "({columns})"
-            }
+            { "name": "value_column", "type": "" },
+            { "name": "name_column", "type": "", "before": "FOR" },
+            { "name": "(columns)", "type": "", "before": "IN", "snippet": "({columns})" }
           ],
-          "returns": "the other columns, values_column and name_column"
+          "returns": ""
         }
       ],
-      "notes": [
-        "Rows whose value is NULL are left out; `UNPIVOT INCLUDE NULLS (...)` keeps them."
-      ],
       "example": {
-        "sql": "SELECT * FROM t UNPIVOT(sales FOR quarter IN (Q1, Q2))",
-        "result": "product, sales, quarter"
+        "sql": "SELECT * FROM sales UNPIVOT(amount FOR quarter IN (Q1, Q2))",
+        "result": "product, amount, quarter"
       },
       "url": "https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#unpivot_operator"
     }
