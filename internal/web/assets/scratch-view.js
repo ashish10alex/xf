@@ -141,14 +141,74 @@ function Children() {
 
 const lastRows = (children) => children.reduce((acc, c, i) => (c.hasRows ? i : acc), -1);
 
-// widths are the grid's column widths in characters: the longest of the
-// name and the first rows' cells, within bounds.
-function widthsOf(run) {
-  const w = run.schema.map((f) => f.name.length + 1 + Math.min(sc.typeLabel(f).length, 16) + 4);
-  for (const row of run.rows.slice(0, 100)) {
-    row.forEach((v, i) => { w[i] = Math.max(w[i], sc.preview(run.schema[i], v).length + 4); });
+// shortType is a column's type in the header, short: ARRAY<STRUCT> for
+// an array of structs whose fields the full name would list.
+const shortType = (f) => {
+  const t = sc.typeLabel(f);
+  if (t.length <= 16) return t;
+  return f.mode === 'REPEATED' ? 'ARRAY<' + sc.baseType(f) + '>' : sc.baseType(f);
+};
+
+// leavesFor is the grid's columns for run (sc.leavesOf), kept with it.
+function leavesFor(run) {
+  if (run.leavesSchema !== run.schema) { run.leaves = sc.leavesOf(run.schema); run.leavesSchema = run.schema; }
+  return run.leaves;
+}
+
+// spans is leaves in runs of one result column: [start, end, col].
+function spans(leaves) {
+  const out = [];
+  for (let i = 0; i < leaves.length;) {
+    let j = i;
+    while (j < leaves.length && leaves[j].col === leaves[i].col) j++;
+    out.push([i, j, leaves[i].col]);
+    i = j;
   }
-  return w.map((n) => Math.min(Math.max(n, MIN_COL), MAX_COL));
+  return out;
+}
+
+const headWidth = (name, f) => name.length + 1 + shortType(f).length + 4;
+
+// widths are the grid's column widths in characters, one per leaf: the
+// longest of the name and the first rows' cells, within bounds; a
+// STRUCT's columns together at least as wide as its name.
+function widthsOf(run, leaves) {
+  const schema = run.schema;
+  const w = leaves.map((lf) => (lf.sub ? headWidth(lf.sub, lf.f) : headWidth(schema[lf.col].name, schema[lf.col])));
+  for (const row of run.rows.slice(0, 100)) {
+    for (const line of sc.linesOf(schema, row).slice(0, 50)) {
+      line.forEach((x, i) => { if (x) w[i] = Math.max(w[i], sc.preview(x.f, x.v).length + 4); });
+    }
+  }
+  const out = w.map((n) => Math.min(Math.max(n, MIN_COL), MAX_COL));
+  for (const [i, j, c] of spans(leaves)) {
+    if (!leaves[i].sub) continue;
+    const have = out.slice(i, j).reduce((x, y) => x + y, 0);
+    const need = Math.min(headWidth(schema[c].name, schema[c]), MAX_COL);
+    if (have < need) out[j - 1] += need - have;
+  }
+  return out;
+}
+
+// offsetsOf is the line each shown row starts on, and past the last the
+// lines in all; null when every row is one line.
+function offsetsOf(run, vis, count) {
+  if (!sc.anyArrays(run.schema)) return null;
+  if (run.offs && run.offsVis === vis && run.offsN === count && run.offsRows === run.rows) return run.offs;
+  const o = new Int32Array(count + 1);
+  for (let p = 0; p < count; p++) o[p + 1] = o[p] + sc.heightOf(run.schema, run.rows[vis ? vis[p] : p]);
+  Object.assign(run, { offs: o, offsVis: vis, offsN: count, offsRows: run.rows });
+  return o;
+}
+
+// rowAt is the shown row line L is in, by offsets o.
+function rowAt(o, L) {
+  let lo = 0, hi = o.length - 2;
+  while (lo < hi) {
+    const m = (lo + hi + 1) >> 1;
+    if (o[m] <= L) lo = m; else hi = m - 1;
+  }
+  return lo;
 }
 
 function Grid({ ctx = SC }) {
@@ -166,50 +226,70 @@ function Grid({ ctx = SC }) {
   useEffect(() => { if (box.current && Math.abs(box.current.scrollTop - ctx.scrollTop) > 1) box.current.scrollTop = ctx.scrollTop; });
   if (!run || !run.schema) return null;
   const schema = run.schema, rows = run.rows;
-  if (!run.widths || run.widths.length !== schema.length || (!run.widthsSettled && rows.length)) {
-    run.widths = widthsOf(run);
+  const leaves = leavesFor(run);
+  if (!run.widths || run.widths.length !== leaves.length || (!run.widthsSettled && rows.length)) {
+    run.widths = widthsOf(run, leaves);
     run.widthsSettled = rows.length > 0;
   }
   const vis = sc.visibleRows(run, ctx); // the loaded rows the filters keep; null: all
   const count = vis ? vis.length : rows.length;
+  const offs = offsetsOf(run, vis, count);
+  const lines = offs ? offs[count] : count;
   const numW = Math.max(4, String(run.total || rows.length).length + 1);
   const cols = `${numW}ch ${run.widths.map((n) => n + 'ch').join(' ')}`;
   const first = Math.max(0, Math.floor(ctx.scrollTop / ROW_H) - 8);
-  const last = Math.min(count, Math.ceil((ctx.scrollTop + h2) / ROW_H) + 8);
-  const total = count + (run.next ? 1 : 0);
+  const last = Math.min(lines, Math.ceil((ctx.scrollTop + h2) / ROW_H) + 8);
+  const total = lines + (run.next ? 1 : 0);
   const onScroll = (e) => {
     ctx.scrollTop = e.currentTarget.scrollTop;
-    if (run.next && ctx.scrollTop + h2 > (count - 60) * ROW_H) sc.loadMore(ctx);
+    if (run.next && ctx.scrollTop + h2 > (lines - 60) * ROW_H) sc.loadMore(ctx);
     redraw();
   };
   const width = `calc(${numW}ch + ${run.widths.reduce((a, b) => a + b, 0)}ch)`;
+  const sel = ctx.sel;
   const out = [];
-  for (let p = first; p < last; p++) {
+  // A row is as many lines as its arrays need (sc.linesOf); L counts lines.
+  for (let L = first, p = offs ? rowAt(offs, first) : first; L < last; p++) {
     const r = vis ? vis[p] : p;
-    const row = rows[r];
-    out.push(html`<div class=${'sc-row' + (p % 2 ? ' odd' : '')} style=${`grid-template-columns:${cols}`}>
-      <span class="sc-num dim">${r + 1}</span>
-      ${row.map((v, c) => {
-        const f = schema[c];
-        const sel = ctx.sel && ctx.sel.r === r && ctx.sel.c === c;
-        const cls = 'sc-cell' + (sc.isNumeric(f) ? ' num' : '') + (v === null ? ' null' : '') + (sc.isNested(f) ? ' nested' : '') + (sel ? ' sel' : '');
-        return html`<span class=${cls} onClick=${() => { ctx.sel = { r, c }; redraw(); }}>${sc.preview(f, v)}</span>`;
-      })}
-    </div>`);
+    const block = sc.linesOf(schema, rows[r]);
+    for (let k = offs ? L - offs[p] : 0; k < block.length && L < last; k++, L++) {
+      const cells = block[k];
+      out.push(html`<div class=${'sc-row' + (p % 2 ? ' odd' : '') + (k < block.length - 1 ? ' more' : '')} style=${`grid-template-columns:${cols}`}>
+        <span class="sc-num dim">${k ? '' : r + 1}</span>
+        ${leaves.map((lf, i) => {
+          const x = cells[i];
+          const on = sel && sel.r === r && sel.c === lf.col && (sel.l === undefined || (sel.l === i && sel.k === k));
+          const cls = 'sc-cell' + (lf.arr ? ' arr' : '') + (x && sc.isNumeric(x.f) ? ' num' : '') + (x && x.v === null ? ' null' : '') + (x && sc.isNested(x.f) ? ' nested' : '') + (on ? ' sel' : '');
+          return html`<span class=${cls} onClick=${() => { ctx.sel = { r, c: lf.col, l: i, k }; redraw(); }}>${x ? sc.preview(x.f, x.v) : ''}</span>`;
+        })}
+      </div>`);
+    }
+  }
+  // A STRUCT's header spans its fields' columns, which name them below it.
+  const two = leaves.some((lf) => lf.sub);
+  const heads = [];
+  for (const [i, j, c] of spans(leaves)) {
+    const f = schema[c], struct = !!leaves[i].sub;
+    heads.push(html`<span class=${'sc-cell sc-hcell' + (sc.isNumeric(f) ? ' num' : '')} style=${two ? `grid-column:${i + 2} / span ${j - i};grid-row:${struct ? '1' : '1 / span 2'}` : ''} title=${f.name + ' · ' + sc.typeLabel(f) + (f.description ? '\n' + f.description : '')}>
+      <span class=${'sc-hname' + (sc.isSortable(f) ? ' sortable' : '')} onClick=${() => sc.setSort(c, ctx)} title=${sc.isSortable(f) ? 'Click to sort: ascending, descending, off' : "BigQuery can't order by this column"}><b>${f.name}</b> <span class="dim t">${shortType(f)}</span>${ctx.sort && ctx.sort.c === c ? html` <span class="sc-sort">${ctx.sort.desc ? '▼' : '▲'}</span>` : ''}</span>
+      <input class=${'sc-filter' + (ctx.filters[c] ? ' on' : '')} placeholder="filter" spellcheck="false" autocomplete="off" value=${ctx.filters[c] || ''}
+        onInput=${(e) => sc.setFilter(c, e.currentTarget.value, ctx)}
+        onKeyDown=${(e) => {
+          if (e.key === 'Escape') { e.stopPropagation(); sc.setFilter(c, '', ctx); e.currentTarget.blur(); }
+          else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); sc.searchNow(ctx); }
+        }} />
+    </span>`);
+    if (!struct) continue;
+    for (let k = i; k < j; k++) {
+      const lf = leaves[k];
+      heads.push(html`<span class=${'sc-cell sc-subh' + (sc.isNumeric(lf.f) ? ' num' : '')} style=${`grid-column:${k + 2};grid-row:2`} title=${f.name + '.' + lf.sub + ' · ' + sc.typeLabel(lf.f)}><b>${lf.sub}</b> <span class="dim t">${shortType(lf.f)}</span></span>`);
+    }
   }
   return html`<div class="sc-grid" ref=${box} onScroll=${onScroll} tabindex="-1">
     <div class="sc-grid-inner" style=${`width:${width}`}>
       <div class="sc-row sc-head" style=${`grid-template-columns:${cols}`}>
-        <span class="sc-num"></span>
-        ${schema.map((f, i) => html`<span class=${'sc-cell sc-hcell' + (sc.isNumeric(f) ? ' num' : '')} title=${f.name + ' · ' + sc.typeLabel(f) + (f.description ? '\n' + f.description : '')}>
-          <span class=${'sc-hname' + (sc.isSortable(f) ? ' sortable' : '')} onClick=${() => sc.setSort(i, ctx)} title=${sc.isSortable(f) ? 'Click to sort: ascending, descending, off' : "BigQuery can't order by this column"}><b>${f.name}</b> <span class="dim t">${sc.typeLabel(f).length > 16 ? sc.baseType(f) : sc.typeLabel(f)}</span>${ctx.sort && ctx.sort.c === i ? html` <span class="sc-sort">${ctx.sort.desc ? '▼' : '▲'}</span>` : ''}</span>
-          <input class=${'sc-filter' + (ctx.filters[i] ? ' on' : '')} placeholder="filter" spellcheck="false" autocomplete="off" value=${ctx.filters[i] || ''}
-            onInput=${(e) => sc.setFilter(i, e.currentTarget.value, ctx)}
-            onKeyDown=${(e) => {
-              if (e.key === 'Escape') { e.stopPropagation(); sc.setFilter(i, '', ctx); e.currentTarget.blur(); }
-              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); sc.searchNow(ctx); }
-            }} />
-        </span>`)}
+        <span class="sc-num" style=${two ? 'grid-column:1;grid-row:1 / span 2' : ''}></span>
+        ${heads}
       </div>
       <div style=${`height:${first * ROW_H}px`}></div>
       ${out}
@@ -320,7 +400,7 @@ function Detail({ ctx = SC }) {
   const scalar = !sc.isNested(f);
   return html`<aside class="sc-detail" style=${ctx.size.detail ? `flex:0 0 ${ctx.size.detail}px` : ''}>
     <${Sash} which="detail" axis="x" dir=${-1} max=${(el) => el.parentElement.getBoundingClientRect().width - 160} />
-    <div class="sc-detail-head"><b>${f.name}</b> <span class="dim" title=${sc.typeLabel(f)}>row ${r + 1} · ${sc.typeLabel(f).length > 24 ? sc.baseType(f) : sc.typeLabel(f)}</span>
+    <div class="sc-detail-head"><b>${f.name}</b> <span class="dim" title=${sc.typeLabel(f)}>row ${r + 1} · ${sc.typeLabel(f).length > 24 ? shortType(f) : sc.typeLabel(f)}</span>
       <span class="spacer"></span>
       <button class="link" onClick=${() => sc.copyCell(r, c, ctx)}>copy cell</button>
       <button class="link" onClick=${() => sc.copyRow(r, ctx)}>copy row</button>

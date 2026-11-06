@@ -1111,6 +1111,12 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .sc-cell.nested { color: var(--purple); }
 .sc-cell.sel { outline: 1px solid var(--focus); outline-offset: -1px; background: var(--sel); }
 .sc-hcell .t { font-size: 10px; }
+/* A row of arrays is a line per element: lines inside it are ruled only
+   in the array's columns, so the others read as one cell. */
+.sc-row.more { border-bottom-color: transparent; }
+.sc-row.more .sc-cell.arr { box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--rule) 35%, transparent); }
+.sc-subh { padding: 2px 8px 3px; font-size: 11px; line-height: 16px; border-top: 1px solid color-mix(in srgb, var(--rule) 55%, transparent); white-space: pre; }
+.sc-subh .t { font-size: 10px; }
 .sc-error { margin: 0; padding: 8px 12px; color: var(--red); white-space: pre-wrap; font: inherit; flex: 1; overflow: auto; }
 .sc-detail { flex: 0 0 min(380px, 38%); border-left: 1px solid var(--rule); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
 .sc-detail-head { display: flex; gap: 8px; align-items: center; padding: 3px 10px; border-bottom: 1px solid var(--rule); }

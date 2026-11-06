@@ -778,6 +778,89 @@ function named(f, v) {
 }
 export { named };
 
+// ---- nested cells laid out as BigQuery's console does ----
+//
+// A STRUCT column shows as a column per field (EVENT.ID, EVENT.AT), and an
+// array's elements as lines down its row, so a row with an array of 3
+// structs is 3 lines tall; columns outside the array show on its first
+// line. Two arrays side by side share lines, the taller setting the
+// height.
+
+const isStruct = (f) => baseType(f) === 'STRUCT' && (f.fields || []).length > 0;
+
+// leavesOf is the grid's columns: a column per field a STRUCT holds, at
+// any depth, and one for every other column. Each says which result
+// column it is part of (col), its name below that column's (sub, '' for a
+// column that isn't a STRUCT), its field (f, without REPEATED) and
+// whether it is in an array, so its lines are its own (arr).
+export function leavesOf(schema) {
+  const out = [];
+  const walk = (f, col, sub, arr) => {
+    arr = arr || f.mode === 'REPEATED';
+    if (!isStruct(f)) { out.push({ col, sub, f: element(f), arr }); return; }
+    for (const s of f.fields) walk(s, col, sub ? sub + '.' + s.name : s.name, arr);
+  };
+  schema.forEach((f, c) => walk(f, c, '', false));
+  return out;
+}
+
+const widthOf = (f) => (isStruct(f) ? f.fields.reduce((n, s) => n + widthOf(s), 0) : 1);
+
+// put lays out value v of field f from leaf `at` and line `line` of
+// lines, an array of lines each an array of cells by leaf, and gives how
+// many lines it took. A cell is { v, f }: its value and its field; a
+// leaf with nothing on a line has no cell there.
+function put(f, v, at, line, lines) {
+  const cell = (i, x, g) => { (lines[line + i] ||= [])[at] = { v: x, f: g }; };
+  if (f.mode === 'REPEATED') {
+    if (!v || !v.length) {
+      if (!isStruct(f)) cell(0, v === null || v === undefined ? null : v, f);
+      return 1;
+    }
+    const e = element(f);
+    let n = 0;
+    for (const x of v) n += put(e, x, at, line + n, lines);
+    return n;
+  }
+  if (!isStruct(f)) { cell(0, v === undefined ? null : v, f); return 1; }
+  let n = 1, a = at;
+  f.fields.forEach((s, i) => {
+    n = Math.max(n, put(s, v === null || v === undefined ? null : v[i], a, line, lines));
+    a += widthOf(s);
+  });
+  return n;
+}
+
+// rowLines is row as the grid's lines, by leavesOf(schema).
+export function rowLines(schema, row) {
+  const lines = [];
+  let a = 0;
+  schema.forEach((f, c) => { put(f, row[c], a, 0, lines); a += widthOf(f); });
+  for (let i = 0; i < lines.length; i++) lines[i] ||= [];
+  return lines;
+}
+
+const hasArrays = (schema) => schema.some((f) => f.mode === 'REPEATED' || (isStruct(f) && hasArrays(f.fields)));
+
+// linesOf is row's lines, kept with the row while it lives.
+const linesKept = new WeakMap();
+export function linesOf(schema, row) {
+  let l = linesKept.get(row);
+  if (!l) { l = rowLines(schema, row); linesKept.set(row, l); }
+  return l;
+}
+
+// heightOf is how many lines row takes.
+export const heightOf = (schema, row) => (anyArrays(schema) ? linesOf(schema, row).length : 1);
+
+// anyArrays says whether a row of schema can take more than one line.
+const arraysOf = new WeakMap();
+export function anyArrays(schema) {
+  let b = arraysOf.get(schema);
+  if (b === undefined) { b = hasArrays(schema); arraysOf.set(schema, b); }
+  return b;
+}
+
 export function copyCell(r, c, ctx = SC) {
   const run = viewRun(ctx);
   if (!run || !run.schema) return;
