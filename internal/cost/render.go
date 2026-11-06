@@ -184,6 +184,46 @@ func UnsetHint(r *Report) string {
 	return "Dry run against the project's default targets, which may be dev tables. Set `" + r.Unset + "` to dry run against prod."
 }
 
+// Explanation says in a sentence, as Markdown, what was dry run: the
+// branch the actions came from, the base it was diffed against and the
+// tables and project the dry runs read. It is "" when the report has no
+// comparison or no action was estimated.
+func Explanation(r *Report) string {
+	c := r.Comparison
+	if c == nil || !r.anyEstimated() {
+		return ""
+	}
+	from := "`" + c.HeadRef + "`"
+	if strings.HasPrefix(c.HeadLabel, "pushed") {
+		from = "the pushed " + from
+	}
+	when := ", on the branch and at the merge-base,"
+	if r.BaseError != "" {
+		when = ""
+	}
+	tables := "the live tables"
+	if r.Unset != "" {
+		tables = "the default target tables"
+	}
+	where := " in BigQuery"
+	if project, location, ok := strings.Cut(r.DryRunIn, " ("); ok {
+		where = " in `" + project + "` (" + location
+	} else if r.DryRunIn != "" {
+		where = " in `" + r.DryRunIn + "`"
+	}
+	return "The actions came from " + from + " diffed against `" + strings.TrimPrefix(c.BaseRef, "origin/") +
+		"`, and their queries" + when + " were dry run against " + tables + where + "; nothing was run."
+}
+
+func (r *Report) anyEstimated() bool {
+	for _, a := range r.Actions {
+		if a.Estimate != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // heading is "feat vs origin/main @ abc1234 (working tree)".
 func heading(c *impact.Comparison) string {
 	return fmt.Sprintf("%s vs %s @ %s (%s)", c.HeadRef, c.BaseRef, c.MergeBase[:min(len(c.MergeBase), 7)], c.HeadLabel)

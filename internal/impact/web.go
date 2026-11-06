@@ -56,6 +56,9 @@ var (
 	inlineEm     = regexp.MustCompile(`\*([^*]+)\*`)
 )
 
+// InlineHTML is inlineHTML for another report's Markdown sentence.
+func InlineHTML(md string) string { return inlineHTML(md) }
+
 // inlineHTML is a ledger cell's Markdown as HTML: its text escaped, then
 // `code`, **bold** and *italic*, the only Markdown the ledger writes.
 func inlineHTML(md string) string {

@@ -484,6 +484,9 @@ type CostView struct {
 	// FromDev how many tables the branch adds were read from dev, and
 	// Unset the warning that the defaults were.
 	Compared string `json:"compared,omitempty"`
+	// Explain says in a sentence what was dry run, as HTML; "" when
+	// nothing was.
+	Explain  string `json:"explain,omitempty"`
 	Compiled string `json:"compiled,omitempty"`
 	DryRunIn string `json:"dryRunIn,omitempty"`
 	FromDev  string `json:"fromDev,omitempty"`
@@ -541,7 +544,8 @@ func CostReport(r *cost.Report) CostView {
 	// Rows is never nil, so a report whose every action failed to estimate
 	// sends [], not null, which xf web's cost tab could not draw.
 	v := CostView{Compiled: r.Compiled, DryRunIn: r.DryRunIn, FromDev: cost.FromDevLine(r), Total: cost.TotalLine(r, cost.Options{}),
-		Footnote: CostFootnote, Markdown: cost.Markdown(r, cost.Options{}), Rows: []CostRow{}}
+		Footnote: CostFootnote, Markdown: cost.Markdown(r, cost.Options{}), Rows: []CostRow{},
+		Explain: impact.InlineHTML(cost.Explanation(r))}
 	if c := r.Comparison; c != nil {
 		v.Compared = c.HeadRef + " vs " + c.BaseRef + " @ " + c.MergeBase[:min(len(c.MergeBase), 7)]
 	}

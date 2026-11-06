@@ -12,6 +12,7 @@ import (
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/gcpauth"
+	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/runhistory"
 )
@@ -253,6 +254,17 @@ func TestCostReportNoEstimates(t *testing.T) {
 
 // A first build and a table read from dev are noted on the row, and how
 // many tables were read from dev is said once above.
+func TestCostReportExplain(t *testing.T) {
+	v := CostReport(&cost.Report{DryRunIn: "acme-prod (EU)",
+		Comparison: &impact.Comparison{HeadRef: "feat_x", BaseRef: "origin/develop", MergeBase: "abc1234", HeadLabel: "working tree"},
+		Actions:    []cost.Action{{Name: "p.marts.agg", Type: "table", Estimate: &cost.Estimate{Bytes: 1 << 30}}}})
+	want := "The actions came from <code>feat_<wbr>x</code> diffed against <code>develop</code>, and their queries, on the branch and at the merge-base, " +
+		"were dry run against the live tables in <code>acme-prod</code> (EU); nothing was run."
+	if v.Explain != want {
+		t.Errorf("Explain:\n got %s\nwant %s", v.Explain, want)
+	}
+}
+
 func TestCostReportFirstBuildAndFromDev(t *testing.T) {
 	checked := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	read := cost.DevRead{Table: "prod.marts.agg", Dev: "dev.marts_dev.agg", BuiltAt: checked.Add(-12 * time.Minute)}

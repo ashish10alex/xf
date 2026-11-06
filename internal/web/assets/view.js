@@ -1679,6 +1679,7 @@ function CostReport({ o }) {
         r.dryRunIn && html`dry run in <span class="fg">${r.dryRunIn}</span>`,
         r.compiled && `compiled with ${r.compiled}`,
       ].filter(Boolean).map((x, i) => html`${i ? ' · ' : ''}${x}`)}</div>`}
+      ${r.explain && html`<p class="explain">${raw(r.explain)}</p>`}
       ${r.fromDev && html`<div class="dim">${r.fromDev}</div>`}
       ${r.unset && html`<p class="warn">${r.unset}</p>`}
       <p class="total"><b>${r.total}</b>${r.later && html`<br /><span class="dim">${r.later}</span>`}</p>

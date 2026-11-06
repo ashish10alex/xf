@@ -771,3 +771,27 @@ func TestRunReadsATableTheBranchAddsFromDev(t *testing.T) {
 		t.Fatalf("a table not on the branch isn't looked for in dev: %+v, asked %v", a, asked)
 	}
 }
+
+func TestExplanation(t *testing.T) {
+	r := testReport()
+	r.DryRunIn = "acme-prod (EU)"
+	if got, want := Explanation(r), "The actions came from `feat/v2` diffed against `main`, and their queries, on the branch and at the merge-base, were dry run against the live tables in `acme-prod` (EU); nothing was run."; got != want {
+		t.Errorf("Explanation:\n got %s\nwant %s", got, want)
+	}
+
+	// No merge-base, the defaults, a pushed branch, and no one project.
+	r.BaseError, r.Unset, r.DryRunIn = "boom", "prodCompilerOptions", ""
+	r.Comparison.HeadLabel = "pushed commit abc1234"
+	if got, want := Explanation(r), "The actions came from the pushed `feat/v2` diffed against `main`, and their queries were dry run against the default target tables in BigQuery; nothing was run."; got != want {
+		t.Errorf("Explanation:\n got %s\nwant %s", got, want)
+	}
+
+	r.Actions = []Action{{Name: "acme.marts.load", Reason: "BigQuery gives no estimate for a script"}}
+	if got := Explanation(r); got != "" {
+		t.Errorf("Explanation with nothing estimated = %q, want \"\"", got)
+	}
+	r.Comparison = nil
+	if got := Explanation(r); got != "" {
+		t.Errorf("Explanation without a comparison = %q, want \"\"", got)
+	}
+}
