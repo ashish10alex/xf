@@ -549,6 +549,12 @@ function ConfirmBox() {
   </div>`;
 }
 
+// fieldSize is how many characters wide a project or location field is:
+// its value, or its placeholder while empty. growField keeps it so as it
+// is typed in.
+function fieldSize(v, placeholder) { return (v || placeholder).length + 1; }
+function growField(e) { const el = e.currentTarget; el.size = fieldSize(el.value, el.placeholder); }
+
 export function ScratchPage() {
   useEffect(() => { document.title = 'xf · scratch'; return () => { document.title = 'xf · ' + S.boot.name; }; }, []);
   const k = (list) => list.map(([a, b]) => html`<span class="key"><kbd>${a}</kbd> ${b}</span>`);
@@ -556,7 +562,7 @@ export function ScratchPage() {
   return html`<div class="app scratch-app">
     <div class="status">
       ${SC.standalone ? html`<span class="badge">XF</span>` : html`<button class="link" onClick=${() => sc.closeScratchView()} title="Back to the project (ctrl+q)">← ${S.boot.name}</button><span class="dim"> · </span><button class="link" onClick=${() => { openProjects(); redraw(); }} title="Switch or add a project">⇄ projects</button><span class="dim"> · </span>`}<button class="link" onClick=${() => sc.toggleList()} title="Show or hide the scratch list (cmd+b)">☰ scratches</button>
-      <span class="dim"> · </span><span>scratch</span>
+      <span class="dim"> · </span><span title="The scratch file">${SC.cur && SC.cur.id ? SC.cur.id + '.sql' : SC.cur ? 'new scratch' : 'scratch'}</span>
       ${SC.cur && SC.cur.from && html`<span class="dim"> · from ${SC.cur.from}</span>`}
       <span class="spacer"></span>
       <${WindowsPill} /><${ThemeButton} />
@@ -573,13 +579,15 @@ export function ScratchPage() {
             <${DryChip} />
             <span class="spacer"></span>
             ${SC.cur && html`<span class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
-              <input class="sc-target-in" value=${SC.cur.project || ''} placeholder="project" spellcheck="false" autocomplete="off" onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), SC.cur.location || '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
-              <input class="sc-target-in loc" value=${SC.cur.location || ''} placeholder="location" spellcheck="false" autocomplete="off" onChange=${(e) => sc.setTarget(SC.cur.project || '', e.currentTarget.value.trim())} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+              <input class="sc-target-in" value=${SC.cur.project || ''} placeholder="project" size=${fieldSize(SC.cur.project, 'project')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), SC.cur.location || '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+              <span class="dim">·</span>
+              <input class="sc-target-in" value=${SC.cur.location || ''} placeholder="location" size=${fieldSize(SC.cur.location, 'location')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(SC.cur.project || '', e.currentTarget.value.trim())} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
             </span>`}
-            ${SC.recent.length > 0 && html`<button class="link" onClick=${() => sc.toggleRecent()} title="The last ${SC.recent.length} results, to open again (h)">◷ recent</button>`}
-            <button class="link" onClick=${() => sc.refreshMeta()} title="Forget what is known of tables and columns, for completion and hover (:refresh)">↻</button>
-            ${SC.run && html`<button class="link" onClick=${() => sc.toggleResults()} title="Show or hide the results (cmd+j)">${SC.hideResults ? '▴ show results' : '▾ hide results'}</button>`}
-            ${SC.cur && html`<span class="dim" title="The scratch file">${SC.cur.id ? SC.cur.id + '.sql' : 'new · saved when you type'}</span>`}
+            <span class="sc-tools">
+              ${SC.recent.length > 0 && html`<button class="tool" onClick=${() => sc.toggleRecent()} title="The last ${SC.recent.length} results, to open again (h)">◷ recent</button>`}
+              <button class="tool" onClick=${() => sc.refreshMeta()} title="Forget what is known of tables and columns, for completion and hover (:refresh)">↻</button>
+              ${SC.run && html`<button class="tool" onClick=${() => sc.toggleResults()} title=${(SC.hideResults ? 'Show' : 'Hide') + ' the results (cmd+j)'}>${SC.hideResults ? '▴ results' : '▾ results'}</button>`}
+            </span>
           </div>
           ${SC.cur ? html`<${Editor} />` : null}
         </section>
