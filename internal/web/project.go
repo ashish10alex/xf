@@ -513,12 +513,16 @@ type capabilities struct {
 type resumeView struct {
 	Selected project.ActionID   `json:"selected,omitempty"`
 	Recent   []project.ActionID `json:"recent"`
+	// File is the file with no action shown last (session.Session.File),
+	// sent only while it is still there.
+	File string `json:"file,omitempty"`
 	// Buffers are the source pane's, which POST /api/buffers keeps.
 	Buffers *buffersView `json:"buffers,omitempty"`
 }
 
 func (p *projectState) boot() *projectBoot {
 	d := p.deps
+	lastFile := p.lastFileThere()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	d.DefaultBranch = p.base
@@ -535,7 +539,7 @@ func (p *projectState) boot() *projectBoot {
 			Branches: d.Branches != nil, Terminal: termSupported, Watch: d.WatchWorkflow != nil, Defer: p.deferCaps(),
 			Inspector: p.bigquery != nil && d.DryRun != nil && !p.standalone,
 		},
-		Resume: resumeView{Selected: p.sess.Selected, Recent: append([]project.ActionID{}, p.sess.Recent...),
+		Resume: resumeView{Selected: p.sess.Selected, Recent: append([]project.ActionID{}, p.sess.Recent...), File: lastFile,
 			Buffers: &buffersView{List: append([]buffer{}, p.bufs.List...), Next: p.bufs.Next}},
 		State:            p.stateViewLocked(),
 		Run:              p.runViewLocked(true),
@@ -707,7 +711,28 @@ type okView struct {
 	Kind string `json:"kind,omitempty"`
 }
 
-// session keeps the page's selection, for when xf next opens the project.
+// lastFileThere is the session's file with no action when it is still a
+// file in the project, else "".
+func (p *projectState) lastFileThere() string {
+	p.mu.Lock()
+	file := p.sess.File
+	p.mu.Unlock()
+	if file == "" {
+		return ""
+	}
+	path, err := p.projectPath(file)
+	if err != nil {
+		return ""
+	}
+	if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	return file
+}
+
+// session keeps the page's selection, for when xf next opens the project:
+// the action selected, or the file with no action shown, which leaves the
+// last action as it was.
 func (p *projectState) session(w http.ResponseWriter, r *http.Request) {
 	var req resumeView
 	if !readJSON(w, r, &req) {
@@ -717,7 +742,10 @@ func (p *projectState) session(w http.ResponseWriter, r *http.Request) {
 		req.Recent = req.Recent[:maxRecent]
 	}
 	p.mu.Lock()
-	p.sess.Selected, p.sess.Recent = req.Selected, req.Recent
+	if req.Selected != "" {
+		p.sess.Selected = req.Selected
+	}
+	p.sess.File, p.sess.Recent = req.File, req.Recent
 	p.mu.Unlock()
 	writeJSON(w, okView{OK: true})
 }

@@ -626,6 +626,7 @@ func TestCompileAndSession(t *testing.T) {
 	}
 	postJSON(t, c, ts.URL+"/api/session", resumeView{Selected: "p.mart.orders", Recent: []project.ActionID{"p.mart.orders"}}, nil)
 	var b bootView
+	b = bootView{}
 	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &b)
 	if b.Project == nil || b.Project.Resume.Selected != "p.mart.orders" || !b.Project.State.HasGraph || b.Project.State.Actions != 4 {
 		t.Errorf("boot = %+v", b.Project)
@@ -1258,5 +1259,55 @@ func TestOperationWithOutputShowsUpdated(t *testing.T) {
 	defer mu.Unlock()
 	if looked["cleanup"] != 0 {
 		t.Errorf("looked up %v: cleanup has no table", looked)
+	}
+}
+
+// A file with no action shown last opens again when xf next opens the
+// project, while it is still there; the last action stays for the TUI.
+func TestSessionFileWithNoAction(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "includes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "includes", "consts.js"), []byte("module.exports = {};\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var saved session.Session
+	s, ts, c := newTestProject(t, &Project{
+		Deps: frontend.Deps{Engine: newFakeEngine(testGraph()), Root: root, Resume: session.Session{Selected: "p.mart.orders"}},
+		SaveSession: func(sess session.Session) {
+			mu.Lock()
+			defer mu.Unlock()
+			saved = sess
+		},
+	})
+	postJSON(t, c, ts.URL+"/api/session", resumeView{File: "includes/consts.js", Recent: []project.ActionID{"p.mart.orders"}}, nil)
+	var b bootView
+	b = bootView{}
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &b)
+	if r := b.Project.Resume; r.File != "includes/consts.js" || r.Selected != "p.mart.orders" {
+		t.Errorf("resume = %+v, want the file and the last action", r)
+	}
+	if err := os.Remove(filepath.Join(root, "includes", "consts.js")); err != nil {
+		t.Fatal(err)
+	}
+	b = bootView{}
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &b)
+	if r := b.Project.Resume; r.File != "" || r.Selected != "p.mart.orders" {
+		t.Errorf("resume once the file is gone = %+v, want the action alone", r)
+	}
+	postJSON(t, c, ts.URL+"/api/session", resumeView{File: "../outside.js"}, nil)
+	b = bootView{}
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &b)
+	if b.Project.Resume.File != "" {
+		t.Errorf("a file outside the project came back: %q", b.Project.Resume.File)
+	}
+	postJSON(t, c, ts.URL+"/api/session", resumeView{Selected: "p.raw.orders"}, nil)
+	s.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if saved.File != "" || saved.Selected != "p.raw.orders" {
+		t.Errorf("saved = %+v, want the action and no file", saved)
 	}
 }

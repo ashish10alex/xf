@@ -26,6 +26,10 @@ type Session struct {
 	Root string `json:"root"`
 	// Selected is the action that was selected.
 	Selected project.ActionID `json:"selected,omitempty"`
+	// File is the file with no action (an include, a README) xf web
+	// showed last, which it opens again in place of Selected; "" when an
+	// action was last. Selected stays the last action, for the TUI.
+	File string `json:"file,omitempty"`
 	// Recent are the recently selected actions, most recent first.
 	Recent []project.ActionID `json:"recent,omitempty"`
 	// Python is the interpreter xf web's pyrefly checks the project's

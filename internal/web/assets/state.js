@@ -775,6 +775,8 @@ export function setState(st, first) {
   }
   if (st.hasGraph && (first || !hadGraph) && !S.sel) {
     if (S.restoring && takeRestoring(st)) return;
+    // The file with no action shown last, when it is still there.
+    if (S.boot.resume.file) { showPlainFile(S.boot.resume.file); return; }
     const resume = S.boot.resume.selected;
     if (resume) { selectAction(resume, { fallback: st.focus }); return; }
     if (st.focus) { selectAction(st.focus); return; }
@@ -831,6 +833,7 @@ export function showPlainFile(file) {
   vim.setText(S.buf, [], true);
   fitFocus();
   if (hooks.sourceView) hooks.sourceView();
+  saveSession();
   redraw();
 }
 
@@ -849,9 +852,9 @@ async function adoptPlainFile() {
 
 let sessionTimer = null;
 function saveSession() {
-  if (!S.sel) return;
+  if (!S.sel && !S.plainFile) return;
   clearTimeout(sessionTimer);
-  sessionTimer = setTimeout(() => post('/api/session', { selected: S.sel, recent: S.recent }).catch(() => {}), 400);
+  sessionTimer = setTimeout(() => post('/api/session', { selected: S.sel || '', file: S.sel ? '' : S.plainFile, recent: S.recent }).catch(() => {}), 400);
 }
 
 function viewQuery() {
