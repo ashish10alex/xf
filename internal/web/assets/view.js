@@ -1646,6 +1646,7 @@ function ImpactReport({ o }) {
   return html`<div class=${'report' + (o.loading ? ' dimmed' : '')}>
       <h2 class="report-title">${raw(pg.Title)}</h2>
       <p class=${'verdict v-' + pg.Verdict}><b>${raw(pg.Summary)}</b> <span class="dim">${raw(pg.Context)}</span></p>
+      ${pg.Explain && html`<p class="explain">${raw(pg.Explain)}</p>`}
       ${r.unset && html`<p class="warn">${r.unset}</p>`}
       ${r.empty ? html`<p class="dim">No table, view or incremental table changed.</p>` : wrapTable(html`<table class="grid ledger">
         <thead><tr><th>#</th><th></th><th>Model</th><th>What changed</th><th>Who is affected</th></tr></thead>

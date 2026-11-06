@@ -43,6 +43,28 @@ func TestPageDataDrawsTheLedger(t *testing.T) {
 	}
 }
 
+func TestPageDataExplainsWhatWasCompared(t *testing.T) {
+	cmp := &Comparison{HeadRef: "feat/x", BaseRef: "origin/develop", MergeBase: "52863aa0c1", HeadLabel: "working tree"}
+	safe := []Table{{Table: "p.marts.daily", Type: "view", Columns: []Column{}}, {Table: "p.marts.weekly", Type: "table", Columns: []Column{}}}
+	for name, c := range map[string]struct {
+		r    *Report
+		want string
+	}{
+		"one dataset": {&Report{Comparison: cmp, Against: []string{"p"}, Safe: safe},
+			"The models came from <code>feat/x</code> diffed against <code>develop</code>, and their new columns were checked against the live tables in <code>p.<wbr>marts</code>."},
+		"default targets": {&Report{Comparison: cmp, Against: []string{"p"}, Safe: safe, Unset: "prodCompilerOptions"},
+			"The models came from <code>feat/x</code> diffed against <code>develop</code>, and their new columns were checked against the default target tables in <code>p.<wbr>marts</code>."},
+		"two projects": {&Report{Comparison: &Comparison{HeadRef: "feat", BaseRef: "main", HeadLabel: "pushed commit abc1234"}, Against: []string{"p", "q"},
+			Safe: []Table{{Table: "p.a.t", Type: "table", Columns: []Column{}}, {Table: "q.b.u", Type: "table", Columns: []Column{}}}},
+			"The models came from the pushed <code>feat</code> diffed against <code>main</code>, and their new columns were checked against the live tables in <code>p</code>, <code>q</code>."},
+		"nothing changed": {&Report{Comparison: cmp, Against: []string{"p"}}, ""},
+	} {
+		if got := pageData(c.r).Explain; got != c.want {
+			t.Errorf("%s: %q\nwant %q", name, got, c.want)
+		}
+	}
+}
+
 func TestPageDataWithNothingChanged(t *testing.T) {
 	if d := pageData(&Report{}); d.Verdict != "ok" || len(d.Rows) != 0 {
 		t.Errorf("%+v", d)

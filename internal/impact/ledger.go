@@ -581,15 +581,12 @@ func BuildLedger(r *Report) Ledger {
 	return l
 }
 
-// Markdown is the report for a pull request: a verdict, then one row per
-// model with what it changes and who that affects, then every reader.
+// Markdown is the report for a pull request: a title and summary, then one
+// row per model with what it changes and who that affects, then every
+// reader.
 func Markdown(r *Report) string {
 	l := BuildLedger(r)
-	mark := "✅"
-	if l.HasVerdict && l.Verdict != SeverityLow {
-		mark = severityMarks[l.Verdict]
-	}
-	lines := []string{"### " + mark + " " + l.Title, "", "**" + l.Summary + "** " + l.Context}
+	lines := []string{"### " + l.Title, "", "**" + l.Summary + "** " + l.Context}
 	if len(l.Rows) == 0 {
 		lines = append(lines, "", "No table, view or incremental table changed.")
 	} else {

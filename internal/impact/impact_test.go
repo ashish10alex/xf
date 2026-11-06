@@ -386,7 +386,7 @@ func markdownReport() *Report {
 func TestMarkdownIsALedgerOfModels(t *testing.T) {
 	lines := strings.Split(Markdown(markdownReport()), "\n")
 	want := []string{
-		"### 🚨 Column impact · `feat/x` → `main`",
+		"### Column impact · `feat/x` → `main`",
 		"",
 		"**1 to fix before merging.** 5 models compared with production schemas · 1 not checked · dataset `marts` · base `52863aa`",
 		"",
@@ -669,7 +669,7 @@ func TestRunDryRunsChangedTablesAndComparesWithProd(t *testing.T) {
 	if phases[0] != "Dry running 0/3" || phases[len(phases)-1] != "Looking up readers 2/2" {
 		t.Errorf("phases %v", phases)
 	}
-	if !strings.Contains(Markdown(report), "### 🚨 Column impact · `feat` → `main`\n\n**1 to fix before merging.** 4 models compared with prod tables in `p` · 1 not checked · dataset `marts` · base `abcdef1`") {
+	if !strings.Contains(Markdown(report), "### Column impact · `feat` → `main`\n\n**1 to fix before merging.** 4 models compared with prod tables in `p` · 1 not checked · dataset `marts` · base `abcdef1`") {
 		t.Error(Markdown(report))
 	}
 }

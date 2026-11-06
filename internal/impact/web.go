@@ -34,13 +34,16 @@ type webReader struct {
 // Verdict is HTML.
 type webData struct {
 	Title, Summary, Context string
-	Verdict                 string // fix, review, unknown or ok
-	Rows                    []webRow
-	Readers                 []webReader
-	ReadersTotal            int
-	MoreReaders             int
-	Legend                  []webLegend
-	Notes                   []string
+	// Explain says in a sentence what was compared with what; "" when
+	// no model was.
+	Explain      string
+	Verdict      string // fix, review, unknown or ok
+	Rows         []webRow
+	Readers      []webReader
+	ReadersTotal int
+	MoreReaders  int
+	Legend       []webLegend
+	Notes        []string
 }
 
 type webLegend struct {
@@ -99,6 +102,36 @@ var markStyles = map[string][2]string{
 	"🔁": {"renamed", "Renamed"}, "🆕": {"new", "New"}, "✅": {"ok", "OK"},
 }
 
+// explanation is the context line in words, as Markdown: the branch the
+// models came from, the base it was diffed against and the tables they
+// were checked against. It is "" when rows is 0 or the report has no
+// comparison.
+func explanation(r *Report, rows int) string {
+	c := r.Comparison
+	if c == nil || rows == 0 {
+		return ""
+	}
+	from := "`" + c.HeadRef + "`"
+	if strings.HasPrefix(c.HeadLabel, "pushed") {
+		from = "the pushed " + from
+	}
+	tables := "the live tables"
+	if r.Unset != "" {
+		tables = "the default target tables"
+	}
+	n := newNamer(r)
+	switch {
+	case n.shared != "" && (len(r.Against) == 0 || len(r.Against) == 1 && r.Against[0] == n.project):
+		tables += " in `" + n.shared + "`"
+	case len(r.Against) > 0:
+		tables += " in " + codeList(r.Against)
+	default:
+		tables += " in BigQuery"
+	}
+	return "The models came from " + from + " diffed against `" + strings.TrimPrefix(c.BaseRef, "origin/") +
+		"`, and their new columns were checked against " + tables + "."
+}
+
 // PageData is the report as the page lays it out, its cells as HTML, for
 // xf web's I overlay to draw.
 func PageData(r *Report) any { return pageData(r) }
@@ -109,6 +142,7 @@ func pageData(r *Report) webData {
 		Title:        inlineHTML(l.Title),
 		Summary:      inlineHTML(l.Summary),
 		Context:      inlineHTML(l.Context),
+		Explain:      inlineHTML(explanation(r, len(l.Rows))),
 		Verdict:      "ok",
 		ReadersTotal: l.ReadersTotal,
 		MoreReaders:  l.MoreReaders,

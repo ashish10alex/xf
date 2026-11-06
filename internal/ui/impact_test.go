@@ -99,7 +99,7 @@ func TestImpactShowsTheReportAndCopiesItsMarkdown(t *testing.T) {
 		"y copy Markdown", "c check again", "esc close")
 
 	m = drive(t, m, nil, press("y")...)
-	if got := lastCopy(t, copied); got != impact.Markdown(m.impact.report) || !strings.HasPrefix(got, "### 🚨 Column impact") {
+	if got := lastCopy(t, copied); got != impact.Markdown(m.impact.report) || !strings.HasPrefix(got, "### Column impact") {
 		t.Errorf("copied %q", got)
 	}
 	assertContains(t, screen(m), "copied the column impact report as Markdown")
