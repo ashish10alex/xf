@@ -672,6 +672,7 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 	route("POST /api/source/refs", (*projectState).sourceRefs)
 	route("POST /api/source/definition", (*projectState).sourceDefinition)
 	route("POST /api/source/include", (*projectState).sourceInclude)
+	route("POST /api/source/configkey", (*projectState).sourceConfigKey)
 	route("GET /api/source/diagnostics", (*projectState).sourceDiagnostics)
 	route("POST /api/source/symbols", (*projectState).sourceSymbols)
 	route("POST /api/source/findfile", (*projectState).sourceFindFile)

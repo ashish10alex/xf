@@ -412,6 +412,17 @@ func TestServeHover(t *testing.T) {
 			text:     "SELECT 1 -- ${se|lf()}",
 			contains: []string{"#### [demo-project.analytics.dev_report]("},
 		},
+		{
+			name:      "a config key",
+			text:      "config {\n  type: \"view\",\n  bigquery: { partit|ionBy: \"d\" },\n  protected: true\n}",
+			contains:  []string{"#### `bigquery.partitionBy: string`", "PARTITION BY", "For: table, view, incremental"},
+			wantRange: Range{Start: Position{2, 14}, End: Position{2, 25}},
+		},
+		{
+			name:     "a config key its type doesn't read",
+			text:     "config {\n  type: \"view\",\n  prot|ected: true\n}",
+			contains: []string{"#### `protected: bool`", "For: incremental", "⚠ a view doesn't read it"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

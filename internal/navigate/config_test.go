@@ -124,3 +124,45 @@ func TestConfigKeyInsert(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestConfigKeyAt(t *testing.T) {
+	tests := []struct {
+		name, text string // ^ before the character hovered
+		want       string // path · kind · for · config type, or "" for none
+	}{
+		{name: "a top-level key", text: "config {\n  type: \"incremental\",\n  ^uniqueKey: [\"id\"],\n}", want: "uniqueKey · string[] · incremental · incremental"},
+		{name: "the key's last letter", text: "config { type: \"view\", schem^a: \"x\" }", want: "schema · string ·  · view"},
+		{name: "a bigquery key", text: "config { bigquery: {\n  cluster^By: [\"a\"] } }", want: "bigquery.clusterBy · string[] · table view incremental · "},
+		{name: "assertions' uniqueKey is its own", text: "config { assertions: { ^uniqueKey: [\"a\"] } }", want: "assertions.uniqueKey · string[] · table view incremental · "},
+		{name: "iceberg in bigquery", text: "config { bigquery: { iceberg: { ^fileFormat: \"PARQUET\" } } }", want: "bigquery.iceberg.fileFormat · string · table incremental · "},
+		{name: "a quoted key", text: "config { \"^type\": \"view\" }", want: "type · string ·  · view"},
+		{name: "a value", text: "config { schema: \"^x\" }", want: ""},
+		{name: "a key Dataform doesn't take", text: "config { ^foo: 1 }", want: ""},
+		{name: "a bigquery key out of place", text: "config { ^partitionBy: \"d\" }", want: ""},
+		{name: "in a labels object", text: "config { bigquery: { labels: { ^type: \"x\" } } }", want: ""},
+		{name: "in SQL", text: "config { type: \"view\" }\nSELECT ^type: 1", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			at := strings.IndexByte(tt.text, '^')
+			src := []byte(tt.text[:at] + tt.text[at+1:])
+			k, ok := ConfigKeyAt(Project{Root: "/p"}, "/p/definitions/x.sqlx", src, at)
+			got := ""
+			if ok {
+				got = strings.Join([]string{k.Path, k.Kind, strings.Join(k.For, " "), k.ConfigType}, " · ")
+				if k.Doc == "" || k.Start > at || k.End < at {
+					t.Errorf("doc %q, span %d-%d around %d", k.Doc, k.Start, k.End, at)
+				}
+			}
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+	// Every key has a description.
+	for _, k := range configKeys {
+		if k.doc == "" {
+			t.Errorf("%s.%s has no doc", k.in, k.name)
+		}
+	}
+}

@@ -496,6 +496,31 @@ func TestSourceInclude(t *testing.T) {
 	}
 }
 
+// TestSourceConfigKey answers a config key's hover, in UTF-16 offsets.
+func TestSourceConfigKey(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "definitions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "definitions", "orders.sqlx"), []byte("SELECT 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, ts, c := newTest(t, frontend.Deps{Root: root, Engine: newFakeEngine(testGraph())})
+	text := "config {\n  description: \"é\",\n  type: \"view\",\n  uniqueKey: [\"id\"]\n}"
+	at := len([]rune(text[:strings.Index(text, "uniqueKey")])) + 3
+	var res struct{ Key *configKeyView }
+	postJSON(t, c, ts.URL+"/api/source/configkey", map[string]any{"file": "definitions/orders.sqlx", "text": text, "offset": at}, &res)
+	k := res.Key
+	if k == nil || k.Path != "uniqueKey" || k.From != at-3 || k.To != at-3+len("uniqueKey") || k.ConfigType != "view" || !k.Unread || k.Doc == "" {
+		t.Fatalf("got %+v", k)
+	}
+	res.Key = nil
+	postJSON(t, c, ts.URL+"/api/source/configkey", map[string]any{"file": "definitions/orders.sqlx", "text": text, "offset": 2}, &res)
+	if res.Key != nil {
+		t.Errorf("off a key: %+v", res.Key)
+	}
+}
+
 func TestSourceSymbols(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{

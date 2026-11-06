@@ -9,6 +9,8 @@
 //     Scratch view's table cards: after alias. only that table's
 //   - K (or the mouse) on a ref shows its table's card, or says why it
 //     has no schema
+//   - K (or the mouse) on a config key shows what it does (navigate's
+//     config.go), its values and the action types that read it
 //   - K (or the mouse) on an includes name in JavaScript (parameters.X,
 //     X declared in includes/parameters.js) shows its declaration as
 //     written, and the comment above it; the server reads that one file
@@ -225,8 +227,61 @@ function includeCard(inc) {
   return root;
 }
 
-// cardAtCursor is K: the card of the ref, function or includes name the
-// cursor is on, or off again.
+// ---- config keys ----
+
+// configKeyWord is where the key starts when pos is on one in a .sqlx
+// file's JavaScript: a word, quoted or not, before a colon on its line;
+// else -1. It reads the line only, so a hover anywhere else asks the
+// server nothing; the server says whether it is a config's key.
+function configKeyWord(state, pos) {
+  if (!SRC.view || SRC.view.lang !== 'sqlx') return -1;
+  const line = state.doc.lineAt(pos);
+  const t = line.text;
+  let a = pos - line.from, b = a;
+  while (a > 0 && /\w/.test(t[a - 1])) a--;
+  while (b < t.length && /\w/.test(t[b])) b++;
+  if (a === b || !/^["']?\s*:/.test(t.slice(b))) return -1;
+  const at = line.from + a;
+  return inJavaScript(state, at + 1) ? at : -1;
+}
+
+// configKeyAt asks for the config key at pos: {from, to, path, kind, doc,
+// values, for, configType, unread}, or null; once for each text and key.
+let lastKey = { text: null, at: -1, p: null };
+function configKeyAt(state, pos) {
+  const at = configKeyWord(state, pos);
+  if (at < 0) return null;
+  const text = state.doc.toString();
+  if (lastKey.text === text && lastKey.at === at) return lastKey.p;
+  const p = post('/api/source/configkey', { file: SRC.file, text, offset: at }).then((r) => r.key, () => null);
+  lastKey = { text, at, p };
+  return p;
+}
+
+// configKeyCard shows a config key: where it goes and its value's kind,
+// what it does, the values it takes and the action types that read it.
+function configKeyCard(k) {
+  const root = document.createElement('div');
+  root.className = 'sc-card sc-fn sc-cfg';
+  const sig = document.createElement('pre');
+  sig.className = 'sc-fn-sig';
+  sig.textContent = k.path + ': ' + k.kind;
+  root.append(sig);
+  const line = (text, cls) => {
+    const d = document.createElement('div');
+    d.className = cls || 'sc-card-line';
+    d.textContent = text;
+    root.append(d);
+  };
+  line(k.doc);
+  if (k.values) line('values: ' + k.values.join(' · '));
+  if (k.for) line('for: ' + k.for.join(' · '));
+  if (k.unread) line('a ' + k.configType + ' doesn\'t read it', 'sc-card-warn');
+  return root;
+}
+
+// cardAtCursor is K: the card of the ref, function, includes name or
+// config key the cursor is on, or off again.
 async function cardAtCursor(view) {
   if (isPy()) { if (hooks.pythonCard) hooks.pythonCard(view); return; }
   if (view.state.field(cardField, false)) { view.dispatch({ effects: setCard.of(null) }); return; }
@@ -240,6 +295,11 @@ async function cardAtCursor(view) {
     if (inc) view.dispatch({ effects: setCard.of({ pos: inc.from, end: inc.to, make: keyed(() => includeCard(inc)) }) });
     else say('nothing in includes/ declares that');
     return;
+  }
+  const askKey = configKeyAt(view.state, head);
+  if (askKey) {
+    const k = await askKey;
+    if (k) { view.dispatch({ effects: setCard.of({ pos: k.from, end: k.to, make: keyed(() => configKeyCard(k)) }) }); return; }
   }
   const r = await refAt(view.state, head);
   if (!r.hit) { say(sqlOf(view.state) === null ? r.why : 'no table or function under the cursor'); return; }
@@ -256,6 +316,11 @@ const hover = cm.hoverTooltip(async (view, pos, side) => {
   if (ask) {
     const inc = await ask;
     return inc ? { pos: inc.from, end: inc.to, above: true, create: () => ({ dom: pinHover(view, inc.from, inc.to, includeCard(inc)) }) } : null;
+  }
+  const askKey = configKeyAt(view.state, pos);
+  if (askKey) {
+    const k = await askKey;
+    if (k) return { pos: k.from, end: k.to, above: true, create: () => ({ dom: pinHover(view, k.from, k.to, configKeyCard(k)) }) };
   }
   const r = await refAt(view.state, pos);
   return r.hit ? { pos: r.hit.from, end: r.hit.to, above: true, create: () => ({ dom: pinHover(view, r.hit.from, r.hit.to, r.make()) }) } : null;

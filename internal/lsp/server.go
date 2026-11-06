@@ -396,9 +396,14 @@ func (s *server) toDocumentSymbols(text []byte, syms []navigate.Symbol) []Docume
 // at pos, or each macro a dbt macro call may run. It runs on its own
 // goroutine: it must not touch docs.
 func (s *server) hover(ctx context.Context, path string, text []byte, pos Position) *Hover {
+	off := byteOffset(text, pos, s.utf16)
+	// A config's keys need no compile.
+	if k, ok := navigate.ConfigKeyAt(navigate.Project{Root: s.root, Dbt: s.dbt}, path, text, off); ok {
+		r := Range{Start: positionAt(text, k.Start, s.utf16), End: positionAt(text, k.End, s.utf16)}
+		return &Hover{Contents: MarkupContent{Kind: "markdown", Value: configKeyCard(k)}, Range: &r}
+	}
 	s.awaitFirstCompile(ctx)
 	proj := navigate.Project{Root: s.root, Graph: s.currentGraph(), Dbt: s.dbt}
-	off := byteOffset(text, pos, s.utf16)
 	if macros := navigate.MacrosAt(proj, path, text, off); len(macros) > 0 {
 		cards := make([]string, len(macros))
 		for i, m := range macros {

@@ -255,3 +255,20 @@ func macroCard(m navigate.MacroRef) string {
 	}
 	return b.String()
 }
+
+// configKeyCard is a sqlx config key's hover: where it goes, what its
+// value is, what it does, and the action types that take it.
+func configKeyCard(k navigate.ConfigKey) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "#### `%s: %s`\n\n%s", k.Path, k.Kind, k.Doc)
+	if len(k.Values) > 0 {
+		b.WriteString("\n\nValues: `" + strings.Join(k.Values, "` · `") + "`")
+	}
+	if len(k.For) > 0 {
+		b.WriteString("\n\nFor: " + strings.Join(k.For, ", "))
+	}
+	if k.Unread() {
+		fmt.Fprintf(&b, "\n\n⚠ a %s doesn't read it", k.ConfigType)
+	}
+	return b.String()
+}

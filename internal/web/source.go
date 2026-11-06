@@ -657,6 +657,37 @@ func (p *projectState) sourceInclude(w http.ResponseWriter, r *http.Request) {
 	}{v})
 }
 
+// configKeyView is a sqlx config key a hover shows (navigate.ConfigKey).
+type configKeyView struct {
+	From       int      `json:"from"`
+	To         int      `json:"to"`
+	Path       string   `json:"path"`
+	Kind       string   `json:"kind"`
+	Doc        string   `json:"doc"`
+	Values     []string `json:"values,omitempty"`
+	For        []string `json:"for,omitempty"`
+	ConfigType string   `json:"configType,omitempty"`
+	Unread     bool     `json:"unread,omitempty"`
+}
+
+// sourceConfigKey answers with the config key at offset in a sqlx file,
+// or null. It needs no compile.
+func (p *projectState) sourceConfigKey(w http.ResponseWriter, r *http.Request) {
+	var req sourceRequest
+	abs, ok := p.readSourceRequest(w, r, &req)
+	if !ok {
+		return
+	}
+	var v *configKeyView
+	if k, found := navigate.ConfigKeyAt(p.navProject(), abs, []byte(req.Text), byteAt(req.Text, req.Offset)); found {
+		v = &configKeyView{From: unitsAt(req.Text, k.Start), To: unitsAt(req.Text, k.End), Path: k.Path, Kind: k.Kind, Doc: k.Doc,
+			Values: k.Values, For: k.For, ConfigType: k.ConfigType, Unread: k.Unread()}
+	}
+	writeJSON(w, struct {
+		Key *configKeyView `json:"key"`
+	}{v})
+}
+
 // lineColAt returns the 0-based line number and 0-based UTF-16 column of the
 // byte offset in s.
 func lineColAt(s string, byteOffset int) (line, col int) {
