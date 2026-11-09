@@ -78,6 +78,8 @@ func (a api) do(ctx context.Context, method, u string, body any, out any) error 
 		return ErrToken
 	case resp.StatusCode == http.StatusNotFound:
 		return errNotFound
+	case resp.StatusCode == http.StatusUnprocessableEntity:
+		return unprocessableError{a.repo.Host + ": " + message(data, resp.Status)}
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
 		if resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.StatusCode == http.StatusTooManyRequests {
 			return fmt.Errorf("%s is limiting how often xf asks: try again later", a.repo.Host)
@@ -100,6 +102,12 @@ func (a api) do(ctx context.Context, method, u string, body any, out any) error 
 
 // errNotFound is a 404, which callers say in their own words.
 var errNotFound = errors.New("not found")
+
+// unprocessableError is a 422: GitHub's answer for a commit it doesn't
+// have, among others.
+type unprocessableError struct{ msg string }
+
+func (e unprocessableError) Error() string { return e.msg }
 
 // message is an error answer's message, else status.
 func message(data []byte, status string) string {

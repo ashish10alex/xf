@@ -25,6 +25,9 @@ type fakeHost struct {
 	base   string
 	found  forge.Found
 	err    error
+	// commitMRs are CommitMR's answers, by SHA.
+	commitMRs   map[string]*forge.MR
+	commitCalls int
 }
 
 func (f *fakeHost) Find(_ context.Context, repo forge.Repo, branch, base string) (forge.Found, error) {
@@ -36,6 +39,13 @@ func (f *fakeHost) Find(_ context.Context, repo forge.Repo, branch, base string)
 }
 
 func (f *fakeHost) Whoami(context.Context, forge.Repo) (string, error) { return "ada", nil }
+
+func (f *fakeHost) CommitMR(_ context.Context, _ forge.Repo, sha string) (*forge.MR, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commitCalls++
+	return f.commitMRs[sha], f.err
+}
 
 func (f *fakeHost) set(found forge.Found, err error) {
 	f.mu.Lock()

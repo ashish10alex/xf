@@ -203,6 +203,9 @@ type Client interface {
 	Find(ctx context.Context, repo Repo, branch, base string) (Found, error)
 	// Whoami is the user the token signs in as.
 	Whoami(ctx context.Context, repo Repo) (string, error)
+	// CommitMR is the merge request that brought commit sha in (see
+	// commit.go); nil for none.
+	CommitMR(ctx context.Context, repo Repo, sha string) (*MR, error)
 }
 
 // ErrToken is a host refusing the token: it is wrong, has expired or has

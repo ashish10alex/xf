@@ -1261,7 +1261,17 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
    characters that differ marked more strongly, and a footer below. */
 .cm-hunk-gutter .cm-gutterElement:has(.cm-hunk) { cursor: pointer; }
 /* Inline blame after the cursor's line (blame.js), as GitLens's. */
-.cm-blame { margin-left: 3em; color: var(--dim); opacity: 0.75; font-style: italic; white-space: pre; user-select: none; }
+.cm-blame { margin-left: 3em; color: var(--dim); opacity: 0.75; font-style: italic; white-space: pre; user-select: none; cursor: default; }
+.cm-blame:hover { opacity: 1; }
+/* Its hover card: the commit, and its page and merge request on the host. */
+.blame-card { position: fixed; z-index: 60; max-width: min(60ch, calc(100vw - 16px)); padding: 8px 10px; background: var(--panel); color: var(--fg); border: 1px solid var(--rule); border-radius: 4px; box-shadow: var(--shadow); font: 12px/1.5 var(--mono); }
+.blame-card-msg { margin: 4px 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.blame-card-row { overflow-wrap: anywhere; }
+.blame-card a { color: var(--blue); text-decoration: none; cursor: pointer; }
+.blame-card a:hover { text-decoration: underline; }
+.blame-card-state { font-size: 11px; color: var(--dim); }
+.blame-card-state.merged { color: var(--green); }
+.blame-card-state.closed { color: var(--red); }
 .cm-peek { font: inherit; }
 .cm-peek-old { max-height: calc(15 * var(--lh)); overflow: auto; background: color-mix(in srgb, var(--red) 12%, transparent); }
 .cm-peek-line { padding: 0 2px 0 6px; white-space: pre; min-height: var(--lh); }

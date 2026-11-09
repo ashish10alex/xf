@@ -96,6 +96,9 @@ type forgeState struct {
 	last   time.Time
 	branch string
 	closed bool
+	// commits are the blame card's answers, by repository and SHA
+	// (forge_commit.go).
+	commits map[string]keptCommit
 }
 
 // forgeTimeout bounds one check, every call to the host in it.
@@ -198,35 +201,17 @@ func (p *projectState) forgeTimed() {
 // reached.
 func (p *projectState) lookForge(ctx context.Context, was forgeView) (v forgeView, unreachable bool) {
 	off := forgeView{State: "off"}
-	g, err := gitscm.Open(ctx, p.deps.Root)
-	if err != nil {
+	branch, repo, a, ok := p.forgeRepo(ctx)
+	if !ok || branch == "" {
 		return off, false
 	}
-	st, err := g.Status(ctx)
-	if err != nil || st.Branch == "" {
-		return off, false
-	}
-	remote := forge.PushRemote(ctx, g.Top, st.Branch)
-	raw, err := forge.RemoteURL(ctx, g.Top, remote)
-	if err != nil {
-		return off, false
-	}
-	r, ok := forge.ParseRemote(raw)
-	if !ok {
-		return off, false
-	}
-	a, ok := forge.Match(ctx, p.forgeCfg.Hosts, r)
-	if !ok {
-		return off, false
-	}
-	repo := forge.RepoAt(a.Kind, a.Name, r.Path)
-	v = forgeView{Kind: a.Kind, Host: repo.Host, Path: repo.Path, Web: repo.Web, Branch: st.Branch, Base: p.baseBranch(),
+	v = forgeView{Kind: a.Kind, Host: repo.Host, Path: repo.Path, Web: repo.Web, Branch: branch, Base: p.baseBranch(),
 		TokenPage: forge.TokenPage(a.Kind, a.Name)}
 	if a.Token == "" {
 		v.State = "connect"
 		return v, false
 	}
-	found, err := p.forgeCfg.client(a.Kind, a.Token).Find(ctx, repo, st.Branch, v.Base)
+	found, err := p.forgeCfg.client(a.Kind, a.Token).Find(ctx, repo, branch, v.Base)
 	same := was.Branch == v.Branch && was.Host == v.Host && was.Path == v.Path
 	switch {
 	case err == nil:
@@ -274,6 +259,7 @@ func forgeRoutes(route routeFunc) {
 	route("GET /api/forge", (*projectState).forgeGet)
 	route("POST /api/forge/check", (*projectState).forgePost)
 	route("POST /api/forge/create", (*projectState).forgeCreate)
+	route("GET /api/forge/commit", (*projectState).forgeCommit)
 }
 
 // forgeGet answers with what is known, and asks the host when nothing
