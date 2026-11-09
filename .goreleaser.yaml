@@ -42,8 +42,32 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"
 
+# The GitHub Release's notes: the commits since the last tag, grouped by
+# their Conventional Commit type (.githooks/commit-msg enforces it). Commits
+# that don't change xf for its users are left out; a reverted commit or
+# another type falls under Others.
 changelog:
-  disable: true
+  use: git
+  sort: asc
+  abbrev: 7
+  filters:
+    exclude:
+      - '^(docs|test|ci|build|chore|style|refactor)(\([^)]*\))?: '
+  groups:
+    - title: Breaking changes
+      regexp: '^[a-z]+(\([^)]*\))?!: '
+      order: 0
+    - title: Features
+      regexp: '^feat(\([^)]*\))?: '
+      order: 1
+    - title: Fixes
+      regexp: '^fix(\([^)]*\))?: '
+      order: 2
+    - title: Performance
+      regexp: '^perf(\([^)]*\))?: '
+      order: 3
+    - title: Others
+      order: 999
 
 # The tap, the bucket and the winget fork are written with
 # XF_PACKAGES_TOKEN, which can push to them; the workflow's own

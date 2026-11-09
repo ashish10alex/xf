@@ -1,0 +1,20 @@
+#!/bin/sh
+# Refuses a commit whose subject isn't a Conventional Commit
+# (https://www.conventionalcommits.org): `type(scope)!: description`, as
+# GoReleaser groups the release notes by type (.goreleaser.yaml).
+# scripts/ship.sh runs it on every commit it ships, so a commit made
+# without the hook is caught there. Enable with `just install-hooks`.
+subject=$(sed -n '/^[^#]/{p;q;}' "$1")
+types='feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert'
+if printf '%s\n' "$subject" | grep -Eq "^(($types)(\([a-z0-9][a-z0-9./-]*\))?!?: [^ ]|Merge |Revert \"|(fixup|squash|amend)! )"; then
+    exit 0
+fi
+cat >&2 <<EOF
+commit-msg: not a Conventional Commit:
+    $subject
+Write it as type(scope): description, e.g.
+    feat(web): inline git blame on the cursor's line
+    fix(engine): dry runs let BigQuery pick the location
+types: $(echo "$types" | sed 's/|/, /g'); a ! before the colon marks a breaking change.
+EOF
+exit 1

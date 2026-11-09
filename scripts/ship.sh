@@ -40,6 +40,15 @@ fi
 say "shipping $(git log --oneline origin/main.."$sha" | wc -l | tr -d ' ') commit(s):"
 git log --oneline origin/main.."$sha" >&2
 
+# Every subject a Conventional Commit, as the release notes group by type;
+# catches a commit made without the commit-msg hook.
+msg=$(mktemp "${TMPDIR:-/tmp}/xf-ship-msg.XXXXXX")
+for c in $(git rev-list origin/main.."$sha"); do
+	git log -1 --format=%s "$c" >"$msg"
+	sh "$main/.githooks/commit-msg" "$msg" || { rm -f "$msg"; die "$(git log -1 --format=%h "$c") needs a Conventional Commit subject; reword it and ship again. Nothing was pushed"; }
+done
+rm -f "$msg"
+
 # pwd -P: macOS's $TMPDIR is under /var, a link to /private/var, and the
 # nvim tests compare the paths they're given with the ones nvim resolves.
 tmp=$(cd "$(mktemp -d "${TMPDIR:-/tmp}/xf-ship.XXXXXX")" && pwd -P)

@@ -2,7 +2,7 @@
 
 A release is a `v*` tag on `main`. The tag runs `.github/workflows/release.yml`: `go vet`, `go test`, then GoReleaser with `.goreleaser.yaml`, which publishes
 
-- the archives for every OS and arch, with `checksums.txt`, as a GitHub Release (what `scripts/install.sh` and `scripts/install.ps1` download);
+- the archives for every OS and arch, with `checksums.txt`, as a GitHub Release (what `scripts/install.sh` and `scripts/install.ps1` download), whose notes are the `feat`, `fix` and `perf` commits since the last tag, grouped by type (`changelog` in `.goreleaser.yaml`);
 - the cask in `ashish10alex/homebrew-tap`;
 - the manifest in `ashish10alex/scoop-bucket`;
 - a pull request to `microsoft/winget-pkgs` from the fork `ashish10alex/winget-pkgs`, which Microsoft's checks and reviewers merge later.
