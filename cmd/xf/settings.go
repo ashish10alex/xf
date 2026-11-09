@@ -306,6 +306,8 @@ usage:
                               Markdown for a pull request (--fail-on to gate CI)
   xf cost [flags]            print what the branch's changed actions would scan in
                               BigQuery and what that costs (--fail-over to gate CI)
+  xf check [flags]           both, in one report for a pull request; --comment posts
+                              it on the pull request (merge request) in CI
   xf run [flags]             dataform run (dbt build) with its own flags; --defer reads
                               upstream tables not built in dev from prod, --dry-run plans
   xf lsp                    language server for editors (LSP on stdin and stdout)

@@ -1,0 +1,135 @@
+# xf check as a GitHub Action (ADR 0040): the column impact and query cost
+# of a pull request's Dataform or dbt changes, as one comment on the pull
+# request and notes on the changed lines. See docs/checks.md.
+name: xf check
+description: Column impact and query cost of a pull request's Dataform or dbt changes, as a comment and notes on the changed lines.
+author: Ashish Alex
+branding:
+  icon: database
+  color: blue
+
+inputs:
+  working-directory:
+    description: The project's folder in the repository.
+    default: "."
+  version:
+    description: The xf release to run, such as v0.0.4. By default the action's own tag, else the latest release.
+    default: ""
+  comment:
+    description: Post the report on the pull request as one comment, edited on each push, when there is something to say. Needs pull-requests write permission.
+    default: "true"
+  fail-on:
+    description: Fail at this column change severity or worse, critical or warning. Off by default.
+    default: ""
+  fail-over:
+    description: Fail when the changed actions scan more than this size between them, such as 100GB. Off by default.
+    default: ""
+  quiet-under:
+    description: A run that grows by less than this size isn't worth a comment on cost alone.
+    default: "1GiB"
+  default-branch:
+    description: The branch to compare with. By default the pull request's base branch.
+    default: ""
+  install-dataform:
+    description: Install the Dataform CLI (and run npm ci when the project has a package.json). auto does it unless the folder is a dbt project.
+    default: auto
+  args:
+    description: More flags for xf check, such as --usd-per-tib 7.5 or --dbt-prod-target prod.
+    default: ""
+  github-token:
+    description: The token that posts the comment.
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: "xf check's exit code: 0, 1 when a gate tripped, 2 when neither check could be made."
+    value: ${{ steps.check.outputs.exit-code }}
+  report:
+    description: The path of the report as Markdown.
+    value: ${{ steps.check.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - id: fork
+      shell: bash
+      env:
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        REPO: ${{ github.repository }}
+      run: |
+        if [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" != "$REPO" ]; then
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "**xf check:** not checked. Pull requests from forks get no credentials, so the check can't sign in to Google Cloud." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=xf check::Not checked: pull requests from forks get no credentials."
+        fi
+
+    - if: steps.fork.outputs.skip != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        version="$VERSION"
+        if [ -z "$version" ] && [[ "$ACTION_REF" =~ ^v[0-9] ]]; then version="$ACTION_REF"; fi
+        case "$RUNNER_OS" in Linux) os=linux ;; macOS) os=darwin ;; *) echo "::error::xf check runs on Linux and macOS runners"; exit 2 ;; esac
+        case "$RUNNER_ARCH" in X64) arch=amd64 ;; ARM64) arch=arm64 ;; *) echo "::error::xf check runs on x64 and arm64 runners"; exit 2 ;; esac
+        if [ -n "$version" ]; then
+          url="https://github.com/ashish10alex/xf/releases/download/$version/xf_${os}_${arch}.tar.gz"
+        else
+          url="https://github.com/ashish10alex/xf/releases/latest/download/xf_${os}_${arch}.tar.gz"
+        fi
+        dir="$RUNNER_TEMP/xf-bin"
+        mkdir -p "$dir"
+        curl -fsSL "$url" | tar -xz -C "$dir" xf
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/xf" --version
+
+    - if: steps.fork.outputs.skip != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INSTALL: ${{ inputs.install-dataform }}
+      run: |
+        set -euo pipefail
+        if [ "$INSTALL" = false ] || { [ "$INSTALL" = auto ] && [ -f dbt_project.yml ]; }; then exit 0; fi
+        if [ -f package.json ]; then npm ci; fi
+        version=""
+        if [ -f workflow_settings.yaml ]; then
+          version=$(sed -n 's/^dataformCoreVersion:[[:space:]]*["'\'']\{0,1\}\([^"'\'' ]*\).*/\1/p' workflow_settings.yaml | head -n 1)
+        fi
+        npm i -g "@dataform/cli${version:+@$version}"
+
+    - id: check
+      if: steps.fork.outputs.skip != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        COMMENT: ${{ inputs.comment }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        FAIL_OVER: ${{ inputs.fail-over }}
+        QUIET_UNDER: ${{ inputs.quiet-under }}
+        BASE: ${{ inputs.default-branch || github.base_ref }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        set -uo pipefail
+        if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+          echo "::warning title=xf check::The checkout is shallow, so the merge-base may not be found: set fetch-depth: 0 on actions/checkout."
+        fi
+        flags=(--output "$RUNNER_TEMP/xf-check.md" --quiet-under "$QUIET_UNDER")
+        if [ -n "$BASE" ]; then
+          git fetch --no-tags --quiet origin "+refs/heads/$BASE:refs/remotes/origin/$BASE" || true
+          flags+=(--default-branch "$BASE")
+        fi
+        [ "$COMMENT" = true ] && flags+=(--comment)
+        [ -n "$FAIL_ON" ] && flags+=(--fail-on "$FAIL_ON")
+        [ -n "$FAIL_OVER" ] && flags+=(--fail-over "$FAIL_OVER")
+        # ARGS is split on spaces, as a command line would be.
+        xf check "${flags[@]}" $ARGS
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "report=$RUNNER_TEMP/xf-check.md" >> "$GITHUB_OUTPUT"
+        if [ -f "$RUNNER_TEMP/xf-check.md" ]; then cat "$RUNNER_TEMP/xf-check.md" >> "$GITHUB_STEP_SUMMARY"; fi
+        if [ "$code" -eq 2 ]; then cat "${TMPDIR:-/tmp}"/xf-*.log 2>/dev/null | tail -n 50 || true; fi
+        exit "$code"

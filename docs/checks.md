@@ -109,6 +109,144 @@ With `a` on in a Dataform project, it estimates what you pushed.
 
 `xf cost` prints the same report from the command line, and can fail a CI job over a limit; see [below](#query-cost-in-cicd).
 
+## Pull requests: xf check
+
+`xf check` runs both checks, column impact and query cost, in one report for a pull request (a merge request on GitLab).
+In CI it puts what it finds where the review happens:
+
+- **One comment on the pull request**, with `--comment`, edited in place on each push.
+  It opens with one line, the worst column change and what the branch adds to a run's cost, such as `🚨 1 dropped column still read · +4.20 TiB per run (≈ +$26.25) · 4.40 TiB total`; the two reports follow, folded.
+- **Notes on the changed lines**: in GitHub Actions they show in the pull request's Files changed tab, on the line that drops the column or reads the table; for GitLab, `--codequality path` writes a Code Quality report the merge request shows.
+
+It reports and passes by default; `--fail-on` and `--fail-over` gate a build as they do for `xf impact` and `xf cost`.
+
+### GitHub Actions
+
+The xf repository is a GitHub Action.
+Add `.github/workflows/xf-check.yml`:
+
+```yaml
+name: xf check
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # for workload identity federation
+      pull-requests: write   # to post the comment
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # xf needs history to find the merge-base
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/github/providers/github
+          service_account: dataform-ci@my-project.iam.gserviceaccount.com
+
+      - uses: ashish10alex/xf@<tag>
+        # with:
+        #   working-directory: analytics/dataform
+        #   fail-on: critical
+        #   fail-over: 1TB
+```
+
+The action downloads the xf release of its tag, installs the Dataform CLI at the project's `dataformCoreVersion` (and runs `npm ci` when the project has a `package.json`), and runs `xf check --comment` against the pull request's base branch, with `GITHUB_TOKEN`.
+It writes the report to the job summary too.
+For dbt, add the steps that install dbt and its packages (`dbt deps`) before it; the action doesn't install the Dataform CLI in a folder with a `dbt_project.yml`.
+Google credentials are your own step, as above: the identity needs what [the CI job needs](#what-the-ci-job-needs).
+A pull request from a fork gets no credentials, so the action skips it, says so in the job summary, and passes.
+
+| Input | |
+|---|---|
+| `working-directory` | the project's folder, `.` by default |
+| `version` | the xf release to run, by default the action's own tag (else the latest release) |
+| `comment` | `false` to leave the pull request alone and only write the job summary and the notes |
+| `fail-on`, `fail-over` | the gates, off by default: `critical` or `warning`, and a size such as `100GB` |
+| `quiet-under` | how much a run must grow for cost alone to be worth a comment, `1GiB` by default |
+| `default-branch` | the branch to compare with, by default the pull request's base |
+| `install-dataform` | `auto` (the default), `true` or `false` |
+| `args` | more flags for `xf check`, such as `--usd-per-tib 7.5` or `--dbt-prod-target prod` |
+
+Its outputs are `exit-code` and `report`, the path of the report as Markdown.
+
+### GitLab CI
+
+Include the template from the xf repository at a tag, in `.gitlab-ci.yml`:
+
+```yaml
+include:
+  - remote: https://raw.githubusercontent.com/ashish10alex/xf/<tag>/ci/gitlab/xf-check.yml
+
+xf-check:
+  variables:
+    XF_VERSION: <tag>
+    # XF_DIR: analytics/dataform
+    # XF_FAIL_ON: critical
+```
+
+It runs on merge request pipelines in a `node` image, in the `test` stage, and takes the same settings as the action's inputs as variables (`XF_DIR`, `XF_COMMENT`, `XF_FAIL_ON`, `XF_FAIL_OVER`, `XF_QUIET_UNDER`, `XF_INSTALL_DATAFORM`, `XF_ARGS`); the template's header lists them.
+It keeps the report (`xf-check.md`) and the Code Quality report as artifacts.
+Set two CI/CD variables:
+
+- `XF_FORGE_TOKEN`: a project access token with the `api` scope and the Reporter role, masked. It posts the note; GitLab's job token can't.
+- `GOOGLE_APPLICATION_CREDENTIALS`: a File variable holding a service account key, or a workload identity federation config.
+
+### When it comments
+
+A pull request gets a comment only when there is something to say:
+
+- a column change that something still reads (🚨 or ⚠️), or whose readers couldn't be looked up (❔), or a model that couldn't be compared with its table,
+- a query without a partition filter, or an action BigQuery gave no estimate for,
+- a run that grows by `--quiet-under` (1 GiB) or more, or, when the merge-base couldn't be estimated, a total of that much,
+- a gate that tripped, or a check that couldn't be made.
+
+A pull request that changes no actions gets none.
+When an earlier push left a comment and this one has nothing to say, the comment becomes `✅ Resolved`.
+When neither check can be made on a push, a comment an earlier push left says so, with its last report folded below, under the commit it checked.
+Each project has its own comment, found by a hidden marker with its folder, so a repository with several projects runs `xf check --dir <folder>` (the action's `working-directory`) once for each.
+
+### Notes on the changed lines
+
+| Finding | Goes on |
+|---|---|
+| a dropped column that something reads | the first line of the diff hunk that removed it |
+| a retyped column | the first line that names it |
+| a read without a partition filter | the first line that names the table |
+| a deleted table, an action not estimated | the file's first line |
+| a cost over `--fail-over` | the check as a whole |
+
+A note is an error only for what a set gate trips; otherwise a column change or a missing partition filter is a warning, and readers that couldn't be looked up or an action not estimated a notice.
+So with no gate set nothing is red.
+In GitHub Actions xf prints the notes as workflow commands on stderr, which need no token.
+
+### xf check's flags and output
+
+`xf check` prints the report as Markdown on stdout (or writes it with `--output`), and progress on stderr.
+When one check can't be made, the report has the other and says why, and the exit code is the other's: one missing permission doesn't fail every pull request.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | The report was made, and no gate tripped. |
+| `1` | `--fail-on` or `--fail-over` tripped. |
+| `2` | Neither check could be made, or `--comment` couldn't comment. The reason is on stderr. |
+
+| Flag | |
+|---|---|
+| `--comment` | post the report on the pull request, as above; it needs `XF_FORGE_TOKEN` (or `GITHUB_TOKEN` in GitHub Actions). A job that isn't for a pull request (a push to `main`) says so and doesn't comment |
+| `--codequality path` | also write the notes as a GitLab Code Quality report |
+| `--fail-on critical\|warning` | exit 1 at that column change severity or worse |
+| `--fail-over size` | exit 1 when the changed actions scan more than `size` between them |
+| `--quiet-under size` | how much a run must grow for cost alone to be worth a comment; `1GiB` by default |
+| `--output path` | write the report to `path` instead of stdout |
+| `--json` | print (or write) JSON: `impact` and `cost` hold [the impact JSON](#impact-json) and [the cost JSON](#json), `null` with `impactError` or `costError` beside when one couldn't be made; `verdict` is the first line and `worthAComment` says whether it would comment |
+
+It takes `xf impact`'s and `xf cost`'s other flags too: `--usd-per-tib`, `--default-branch`, `--pushed`, `--prod-compiler-options`, `--dev-compiler-options`, and the tools' (`--dataform-bin`, `--dbt-bin`, `--dbt-target`, `--dbt-prod-target`).
+
 ## Column impact in CI/CD
 
 `xf impact` checks a pull request's column impact and prints the report as Markdown on stdout (or writes it to a file with `--output`), ready to post as a PR comment, with progress on stderr.
@@ -197,7 +335,7 @@ A reader's `filePath` is set when it is an action of this project, and `changedO
 
 ### What the CI job needs
 
-- **A Linux or macOS runner** with **Go 1.26+** to install xf, and **Node** for the `dataform` CLI (`npm i -g @dataform/cli`; run `npm ci` too if the project has a `package.json`).
+- **A Linux or macOS runner** for xf's release binary (the GitHub Action and the GitLab template download it), and **Node** for the `dataform` CLI (`npm i -g @dataform/cli`; run `npm ci` too if the project has a `package.json`).
 - **The default branch's history.** xf never fetches: it needs `origin/main` and enough history to find the merge-base, so fetch everything (`fetch-depth: 0` in GitHub Actions) or at least `git fetch origin main`.
 - **The PR's branch checked out**, so the report names it. A detached checkout still works, but the report shows a commit instead.
 - **Google credentials** through Application Default Credentials: Workload Identity Federation, or a service account key in `GOOGLE_APPLICATION_CREDENTIALS`.
@@ -211,95 +349,32 @@ A reader's `filePath` is set when it is an action of this project, and `changedO
 
   With user credentials rather than a service account, the quota project (`gcloud auth application-default set-quota-project`) needs the Data Lineage API enabled too.
 
-### GitHub Actions example
+### Column impact in a pull request
 
-Add this to `.github/workflows/impact.yml`:
-
-```yaml
-name: Column impact
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-
-jobs:
-  impact:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write          # for workload identity federation
-      pull-requests: write     # for sticky-pull-request-comment
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0       # xf needs history to find the merge-base
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - run: npm i -g @dataform/cli
-      # - run: npm ci  # if the project has a package.json
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-          cache: false
-      - run: go install github.com/ashish10alex/xf/cmd/xf@<tag or commit>
-
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/github/providers/github
-          service_account: dataform-ci@my-project.iam.gserviceaccount.com
-
-      - name: Check column impact
-        id: impact
-        run: |
-          set +e
-          xf impact --fail-on critical --output impact.md
-          code=$?
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          [ "$code" -eq 2 ] && exit 2   # the check couldn't be made
-          cat impact.md >> "$GITHUB_STEP_SUMMARY"
-          exit 0
-
-      - uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: column-impact
-          path: ${{ github.workspace }}/impact.md  # adjust if working-directory isn't the root
-
-      - name: Fail on critical changes
-        if: steps.impact.outputs.code == '1'\
-        run: |\
-          echo "::error::This PR drops columns or deletes tables that are still read. See the column impact comment."
-          exit 1
-
-      - name: Show the engine's log
-        if: failure()
-        run: cat "${TMPDIR:-/tmp}"/xf-*.log || true
-```
-
-Pull requests from forks get no `id-token` or secrets, so the check can't log in there. Run it on branches in the repository.
+[`xf check`](#pull-requests-xf-check) runs this check and query cost together, and its [GitHub Action](#github-actions) and [GitLab template](#gitlab-ci) post the report on the pull request and its notes on the changed lines.
+Use them rather than wiring `xf impact` into a workflow yourself.
 
 ### Other CI systems
 
-The same steps work anywhere a shell does. In GitLab CI, Cloud Build, Jenkins and the like:
+The same steps work anywhere a shell does. In Cloud Build, Jenkins and the like:
 
 ```bash
 git fetch origin main                     # xf needs origin/main; it never fetches
 git checkout -B "$BRANCH" "$COMMIT"       # optional: the report names the branch
 npm i -g @dataform/cli
-go install github.com/ashish10alex/xf/cmd/xf@<tag or commit>
+curl -fsSL https://github.com/ashish10alex/xf/releases/download/<tag>/xf_linux_amd64.tar.gz | tar -xz xf
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json  # or workload identity
 
 set +e
-xf impact --fail-on critical --output impact.md
+./xf check --fail-on critical --output check.md
 code=$?
 set -e
 [ "$code" -eq 2 ] && exit 2
-# post impact.md to the merge request, e.g. with glab mr note
+# post check.md to the merge request
 exit "$code"
 ```
 
+`xf impact` and `xf cost` run the same way, each on its own.
 If your default branch isn't `main`, add `--default-branch <name>`, or commit `defaultBranch` in `.xf/config.json` so the TUI and CI agree.
 When a run fails, the engine's log is `xf-<hash>-<tool>-<variant>-v<n>.log` in `$TMPDIR` (or `/tmp`; `%TEMP%` on Windows).
 
@@ -394,35 +469,10 @@ For dbt, install dbt and its packages (`dbt deps`) instead of the `dataform` CLI
 `dryRunIn` is the project the dry runs ran in, with their location (left out when they ran in more than one), and an action's `dryRunAs` is the table they read for it when that isn't its `name` (prod's, with `prodCompilerOptions`).
 When an incremental table's first build is in the total, `laterBytes`, `laterUsd` and `laterBound` give each run after the first, with its incremental run instead.
 
-### GitHub Actions example
+### Query cost in a pull request
 
-The setup steps are those of the [column impact workflow](#github-actions-example); the check itself is:
-
-```yaml
-      - name: Check query cost
-        id: cost
-        run: |
-          set +e
-          xf cost --fail-over 100GB --output cost.md
-          code=$?
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          [ "$code" -eq 2 ] && exit 2   # the check couldn't be made
-          cat cost.md >> "$GITHUB_STEP_SUMMARY"
-          exit 0
-
-      - uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: query-cost
-          path: ${{ github.workspace }}/cost.md  # adjust if working-directory isn't the root
-
-      - name: Fail over the limit
-        if: steps.cost.outputs.code == '1'
-        run: |
-          echo "::error::This PR's changed actions scan more than 100 GB. See the query cost comment."
-          exit 1
-```
-
-Run it after `xf impact` in the same job and the merge-base is compiled once for both.
+[`xf check`](#pull-requests-xf-check) runs this check and column impact together, and its [GitHub Action](#github-actions) and [GitLab template](#gitlab-ci) post the report on the pull request; give them `fail-over` (`XF_FAIL_OVER`) to gate on cost.
+To run `xf cost` alone in a job, set it up as [Other CI systems](#other-ci-systems) says, and run `xf cost --fail-over 100GB --output cost.md`.
 
 ## Agent skill for cost and impact
 

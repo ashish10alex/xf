@@ -33,7 +33,7 @@ The two reports follow in folded `<details>` sections.
 Cost is per run only.
 
 **A pull request with nothing to say gets no comment.**
-Something to say is a critical, warning or unknown column change, a missing partition filter, an action that wasn't estimated, or a total that grows by 1 GiB or more (`--quiet-under` sets the size).
+Something to say is a critical, warning or unknown column change, a model that couldn't be compared with its table, a missing partition filter, an action that wasn't estimated, or a total that grows by 1 GiB or more (`--quiet-under` sets the size).
 A pull request that changes no actions has nothing to say.
 When an earlier push left a comment and this one has nothing to say, the comment becomes one line, `✅ Resolved`.
 When neither check could be made and a comment exists, it becomes `❔ Couldn't check this push: <reason>`, with the last report folded below it under the commit it checked, so nobody reads old findings as current.

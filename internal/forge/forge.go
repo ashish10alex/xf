@@ -1,8 +1,9 @@
 // Package forge finds a branch's merge request and its last pipeline on
 // GitLab, or its pull request and workflow runs on GitHub, for xf web's
-// status line and Source Control (ADR 0020). It only reads: xf calls the
-// hosts' APIs with a token of its own, kept in tokens.json beside the
-// user's config.
+// status line and Source Control (ADR 0020). It only reads there: xf calls
+// the hosts' APIs with a token of its own, kept in tokens.json beside the
+// user's config. Its one write is xf check --comment's comment, from CI
+// with the CI's token (ADR 0040; see Comments).
 package forge
 
 import (

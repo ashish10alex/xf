@@ -80,6 +80,8 @@ func main() {
 			os.Exit(runImpact(args[1:]))
 		case "cost":
 			os.Exit(runCost(args[1:]))
+		case "check":
+			os.Exit(runCheck(args[1:]))
 		case "run":
 			os.Exit(runRun(args[1:]))
 		}
