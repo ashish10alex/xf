@@ -6,15 +6,22 @@ status: accepted, cmd+p half superseded by ADR 0014
 
 # xf web finds actions with cmd+p, and / searches the focused pane
 
-In xf web, cmd+p on a Mac (ctrl+p on Linux and Windows) opens the palette to find an action, as quick open does in VS Code. `/` only searches the focused pane, as it does in vim: the SQL (zoomed or not), the columns, and the source pane, where it starts the editor's own `/`. In a pane with nothing to search (actions, lineage, run, log), `/` says which key finds an action. The overlays that already searched with `/` (`,`, `?`, `T`, the projects list) keep it.
+In xf web, cmd+p on a Mac (ctrl+p on Linux and Windows) opens the palette to find an action, as quick open does in VS Code.
+`/` only searches the focused pane, as it does in vim: the SQL (zoomed or not), the columns, and the source pane, where it starts the editor's own `/`.
+In a pane with nothing to search (actions, lineage, run, log), `/` says which key finds an action.
+The overlays that already searched with `/` (`,`, `?`, `T`, the projects list) keep it.
 
-The key works from anywhere in the project view, the source editor included, as ctrl+shift+o does; not in Scratch, the settings page or the projects list. Off a Mac, an editor or a text box keeps ctrl+p, which moves up in its completions or list there; outside them it no longer moves up, and `k` and `↑` still do. On a Mac ctrl+p still moves up. cmd+p no longer prints the page.
+The key works from anywhere in the project view, the source editor included, as ctrl+shift+o does; not in Scratch, the settings page or the projects list.
+Off a Mac, an editor or a text box keeps ctrl+p, which moves up in its completions or list there; outside them it no longer moves up, and `k` and `↑` still do.
+On a Mac ctrl+p still moves up. cmd+p no longer prints the page.
 
 The TUI keeps `/` for the palette. This is the first key where xf web differs from the TUI on purpose (ADR 0004 says the page has the same keys).
 
 ## Why
 
-`/` meant two things: find another action, or search here. Which one it did depended on the pane and on zoom. In the SQL pane `/` searched only when zoomed, and in the columns pane only when it had fields; otherwise, and in the source pane outside the editor, it opened the palette. xf web has vim-keyed editors beside the panes, so `/` as search is what the hands expect, and a browser has a free, familiar key for go-to.
+`/` meant two things: find another action, or search here.
+Which one it did depended on the pane and on zoom.
+In the SQL pane `/` searched only when zoomed, and in the columns pane only when it had fields; otherwise, and in the source pane outside the editor, it opened the palette. xf web has vim-keyed editors beside the panes, so `/` as search is what the hands expect, and a browser has a free, familiar key for go-to.
 
 The TUI can't follow: a terminal never sends cmd to it, and ctrl+p is its Up key (`keys.go`), as in the lists of other terminal tools.
 
@@ -32,4 +39,5 @@ The TUI can't follow: a terminal never sends cmd to it, and ctrl+p is its Up key
 
 ## Since 2026-10-20
 
-Off a Mac the editors no longer keep ctrl+p: it opens the palette from them, as ⌘p does on a Mac, and is caught before vim, whose ctrl+p only moves up a line. An editor keeps it while its completions show, where it moves up in them, and a text box still keeps it.
+Off a Mac the editors no longer keep ctrl+p: it opens the palette from them, as ⌘p does on a Mac, and is caught before vim, whose ctrl+p only moves up a line.
+An editor keeps it while its completions show, where it moves up in them, and a text box still keeps it.

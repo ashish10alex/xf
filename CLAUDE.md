@@ -4,7 +4,7 @@
 
 - **Checking a change** (Go tests, the TUI in tmux, xf web in the browser preview, BigQuery limits): `docs/agents/checking-changes.md`.
 - **xf web** (`internal/web` and its page): `docs/agents/xf-web.md`.
-- **Parallel sessions** (a worktree per session, merging, committing beside another session's edits): `docs/agents/parallel-sessions.md`.
+- **Parallel sessions** (a worktree per session, shipping with `just ship`, the worktree preview, committing beside another session's edits): `docs/agents/parallel-sessions.md`.
 - **Releasing** (tagging a release, a failed release): `docs/agents/releasing.md`.
 
 ## Agent skills

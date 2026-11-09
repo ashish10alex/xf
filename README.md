@@ -1,12 +1,14 @@
 # xf
 
-A unified interface for [Dataform](https://github.com/dataform-co/dataform) and [dbt](https://www.getdbt.com/) projects on BigQuery. Browse a project's actions with their compiled SQL, columns and lineage, dry run and run them, edit the source with vim keys, and see what your branch changes: the actions it touches, the columns it drops or retypes that something downstream still reads, and what its queries would cost.
+A unified interface for [Dataform](https://github.com/dataform-co/dataform) and [dbt](https://www.getdbt.com/) projects on BigQuery.
+Browse a project's actions with their compiled SQL, columns and lineage, dry run and run them, edit the source with vim keys, and see what your branch changes: the actions it touches, the columns it drops or retypes that something downstream still reads, and what its queries would cost.
 
 xf works out from the files in a project's root whether it is Dataform or dbt. dbt projects get most of what Dataform's do; [dbt projects](docs/dbt.md) lists the differences.
 
 ## What you need
 
-- For Dataform, the `dataform` CLI (`npm i -g @dataform/cli`). For dbt, dbt-core 1.x with the BigQuery adapter (`pip install dbt-core dbt-bigquery`) or dbt v2 (`brew install dbt-labs/dbt/dbt`).
+- For Dataform, the `dataform` CLI (`npm i -g @dataform/cli`).
+  For dbt, dbt-core 1.x with the BigQuery adapter (`pip install dbt-core dbt-bigquery`) or dbt v2 (`brew install dbt-labs/dbt/dbt`).
 - `gcloud`, logged in for Application Default Credentials ([below](#log-in-to-gcp)).
 - macOS, Linux or Windows 10 22H2 / 11 (x64 or ARM64; see [Windows](docs/windows.md)).
 
@@ -40,7 +42,10 @@ Make sure the folder xf is in is on your `PATH`, since neovim starts `xf lsp` fr
 xf --help
 ```
 
-To update later, run `xf update` (or `xf --update`). It updates xf the way it was installed: `brew upgrade --cask` for Homebrew, `go install …@latest` for Go, and otherwise replaces `xf` with the latest release after checking it against the release's checksums. A build from source says to pull and rebuild instead. The neovim plugin warns you if the `xf` on your `PATH` is older than the plugin.
+To update later, run `xf update` (or `xf --update`).
+It updates xf the way it was installed: `brew upgrade --cask` for Homebrew, `go install …@latest` for Go, and otherwise replaces `xf` with the latest release after checking it against the release's checksums.
+A build from source says to pull and rebuild instead.
+The neovim plugin warns you if the `xf` on your `PATH` is older than the plugin.
 
 To build from source, clone the repo and run `go install ./cmd/xf` (or `just install`, with [`just`](https://github.com/casey/just)).
 
@@ -52,7 +57,8 @@ Dry runs, table hovers and API runs call GCP as you, through Application Default
 gcloud auth application-default login
 ```
 
-xf picks up a new login without a restart. `dataform run` uses the Dataform CLI's own credentials, so a Dataform project also needs a `.df-credentials.json` (`dataform init-creds`).
+xf picks up a new login without a restart.
+`dataform run` uses the Dataform CLI's own credentials, so a Dataform project also needs a `.df-credentials.json` (`dataform init-creds`).
 
 ## Quick start
 
@@ -62,9 +68,14 @@ From a project's root (the folder with `workflow_settings.yaml`, `dataform.json`
 xf web
 ```
 
-It opens in your browser. Press `?` for every key: `⌘p` (`ctrl+p`) finds an action, `r` runs it, `R` runs what your branch changed, `I` and `C` check its columns and cost, `E` edits its file. Outside a project, xf web lists the projects you have opened. To try it without a project of your own, use an example: `xf web --dir examples/dataform` or `xf web --dir examples/dbt`.
+It opens in your browser.
+Press `?` for every key: `⌘p` (`ctrl+p`) finds an action, `r` runs it, `R` runs what your branch changed, `I` and `C` check its columns and cost, `E` edits its file.
+Outside a project, xf web lists the projects you have opened.
+To try it without a project of your own, use an example: `xf web --dir examples/dataform` or `xf web --dir examples/dbt`.
 
-Prefer the terminal? `xf` opens the same panes as a TUI, and `xf --nvim` opens neovim with xf in a split beside it. The TUI is in maintenance mode: it keeps working, but new features go to xf web.
+Prefer the terminal?
+`xf` opens the same panes as a TUI, and `xf --nvim` opens neovim with xf in a split beside it.
+The TUI is in maintenance mode: it keeps working, but new features go to xf web.
 
 ## Documentation
 
@@ -80,9 +91,15 @@ Prefer the terminal? `xf` opens the same panes as a TUI, and `xf --nvim` opens n
 
 ## Development
 
-New features go to xf web (`internal/web`) only; the TUI (`internal/ui`) takes fixes for what breaks it and nothing new. What both front ends share (the side effects they're given, and how they find, word and run things) is in `internal/frontend`. xf web must not import `internal/ui` or a terminal library, which a test in `internal/web` checks.
+New features go to xf web (`internal/web`) only; the TUI (`internal/ui`) takes fixes for what breaks it and nothing new.
+What both front ends share (the side effects they're given, and how they find, word and run things) is in `internal/frontend`. xf web must not import `internal/ui` or a terminal library, which a test in `internal/web` checks.
 
-`just test`, `just lint` and `just build` do what they say. GitHub CI runs only on Windows, on pushes to `main`, pull requests and `v*` tags, so `just check` runs `go vet` and `go test` on your machine, and `just check-linux` runs the same in a Linux container (it needs Docker running) for changes that may behave differently there. Run `just install-hooks` once per clone and pushing `main` runs `just check` for you; `git push --no-verify` skips it. The tests read committed compile fixtures, so they need neither CLI; `just fixtures-examples` regenerates the ones in `testdata/examples` from the [example projects](examples), using `dataform`, the `dbt` on your `PATH` (dbt v2) and `$XF_DBT_CORE_BIN` (a dbt-core 1.x). `XF_E2E=1 go test ./...` also compiles the examples with the real CLIs. `just release-snapshot` builds the release archives for every OS and architecture into `dist/` with GoReleaser, as CI does, and `just vsix target=<target>` packs the [VS Code test extension](editors/vscode).
+`just test`, `just lint` and `just build` do what they say.
+GitHub CI runs only on Windows, on pushes to `main`, pull requests and `v*` tags, so `just check` runs `go vet` and `go test` on your machine, and `just check-linux` runs the same in a Linux container (it needs Docker running) for changes that may behave differently there.
+Run `just install-hooks` once per clone and pushing `main` runs `just check` for you; `git push --no-verify` skips it.
+The tests read committed compile fixtures, so they need neither CLI; `just fixtures-examples` regenerates the ones in `testdata/examples` from the [example projects](examples), using `dataform`, the `dbt` on your `PATH` (dbt v2) and `$XF_DBT_CORE_BIN` (a dbt-core 1.x).
+`XF_E2E=1 go test ./...` also compiles the examples with the real CLIs.
+`just release-snapshot` builds the release archives for every OS and architecture into `dist/` with GoReleaser, as CI does, and `just vsix target=<target>` packs the [VS Code test extension](editors/vscode).
 
 ## License
 

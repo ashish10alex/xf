@@ -7,6 +7,8 @@
 #
 #   scripts/preview.sh [project] [port]
 #
+# The port is $PORT when no port is given (launch.json's configs give none,
+# so the app can pick a free one when another session holds 7900), else 7900.
 # project is a name under examples/ (default dataform) or a directory. The copy
 # is a git repo with one commit, so source control, branches and hunks work.
 # It is kept between starts, with its edits and config; XF_PREVIEW_FRESH=1
@@ -21,7 +23,7 @@ set -eu
 
 repo=$(cd "$(dirname "$0")/.." && pwd -P)
 project=${1:-dataform}
-port=${2:-7900}
+port=${2:-${PORT:-7900}}
 case $project in
 /*) src=$project name=$(basename "$project") ;;
 *) src=$repo/examples/$project name=$project ;;
@@ -45,6 +47,12 @@ if [ -z "$bin" ]; then
 	(cd "$repo" && go build -o "$bin" ./cmd/xf)
 fi
 
+# A copy left without its project file (an interrupted start, a test that
+# emptied it) is made again.
+if [ -d "$work" ] && ! ls "$work/workflow_settings.yaml" "$work/dataform.json" "$work/dbt_project.yml" >/dev/null 2>&1; then
+	echo "preview: $work isn't a project any more; making it again" >&2
+	rm -rf "$work"
+fi
 if [ ! -d "$work" ]; then
 	cp -R "$src" "$work"
 	rm -rf "$work/.git"

@@ -35,6 +35,12 @@ check:
     go vet ./...
     go test ./...
 
+# Ship committed work from the main checkout: rebase on origin/main, check that commit in a clean copy, push main,
+# fast-forward this checkout, install xf, remove the branch's worktree (see scripts/ship.sh)
+[unix]
+ship branch="":
+    sh scripts/ship.sh {{branch}}
+
 # Go image `just check-linux` runs in; matches go.mod's go line
 linux_image := "golang:1.26"
 

@@ -4,7 +4,12 @@ status: accepted
 
 # xf web's log pane goes round its tabs with ⌥⌘← and ⌥⌘→
 
-In xf web, ⌥⌘→ shows the log pane's next tab and ⌥⌘← the one before (ctrl+alt+→ and ctrl+alt+← off a Mac), while the log pane has the keys: log → jobs → history → terminal, and round again. Without kept runs it is log ↔ terminal. The key works from inside the terminal: xterm leaves it to xf, as it does ctrl+0…3, ⌘j and ⌘z. Going to the terminal gives it the keys; leaving it gives them back to the log pane. `tab` and `shift+tab` no longer go round the log pane's tabs; `t` still does, and now reaches the terminal too (from the terminal, `t` is the shell's). Pane 2 keeps `tab` (ADR 0009).
+In xf web, ⌥⌘→ shows the log pane's next tab and ⌥⌘← the one before (ctrl+alt+→ and ctrl+alt+← off a Mac), while the log pane has the keys: log → jobs → history → terminal, and round again.
+Without kept runs it is log ↔ terminal.
+The key works from inside the terminal: xterm leaves it to xf, as it does ctrl+0…3, ⌘j and ⌘z.
+Going to the terminal gives it the keys; leaving it gives them back to the log pane.
+`tab` and `shift+tab` no longer go round the log pane's tabs; `t` still does, and now reaches the terminal too (from the terminal, `t` is the shell's).
+Pane 2 keeps `tab` (ADR 0009).
 
 ## Why
 
