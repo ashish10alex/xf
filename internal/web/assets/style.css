@@ -1260,6 +1260,8 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
    red block above the lines it put in, which are tinted green, the
    characters that differ marked more strongly, and a footer below. */
 .cm-hunk-gutter .cm-gutterElement:has(.cm-hunk) { cursor: pointer; }
+/* Inline blame after the cursor's line (blame.js), as GitLens's. */
+.cm-blame { margin-left: 3em; color: var(--dim); opacity: 0.75; font-style: italic; white-space: pre; user-select: none; }
 .cm-peek { font: inherit; }
 .cm-peek-old { max-height: calc(15 * var(--lh)); overflow: auto; background: color-mix(in srgb, var(--red) 12%, transparent); }
 .cm-peek-line { padding: 0 2px 0 6px; white-space: pre; min-height: var(--lh); }

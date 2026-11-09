@@ -19,6 +19,7 @@ import (
 	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/diagnose"
+	"github.com/ashish10alex/xf/internal/gitscm"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
 )
@@ -365,6 +366,39 @@ func (p *projectState) sourceSave(w http.ResponseWriter, r *http.Request) {
 	saved := &sourceFile{raw: out, bom: f.bom, crlf: f.crlf}
 	writeJSON(w, p.viewOf(req.File, path, saved))
 }
+
+// sourceBlame answers with git blame of a file the pane shows, as the
+// editor has it (text), for the inline blame of the cursor's line.
+func (p *projectState) sourceBlame(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File string `json:"file"`
+		Text string `json:"text"`
+	}
+	if !readSourceJSON(w, r, &req) {
+		return
+	}
+	path, err := p.sourcePath(req.File)
+	if err != nil {
+		sourceError(w, err)
+		return
+	}
+	f, err := readSource(path)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), blameTimeout)
+	defer cancel()
+	b, err := gitscm.BlameOf(ctx, path, f.encode(req.Text))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, b)
+}
+
+// blameTimeout bounds git blame, which reads a file's whole history.
+const blameTimeout = 15 * time.Second
 
 // replaceFile writes data to path in one step: a temporary file beside it,
 // renamed over it, with its permissions.

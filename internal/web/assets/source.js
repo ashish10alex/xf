@@ -428,6 +428,7 @@ export async function checkDisk() {
   if (file !== SRC.file || !SRC.view || SRC.saving) return;
   if (v.hash === SRC.view.hash) {
     keepBase(v); // a git add or commit elsewhere
+    if (hooks.sourceRechecked) hooks.sourceRechecked(v);
     if (SRC.stale) { SRC.stale = false; redraw(); }
     return;
   }

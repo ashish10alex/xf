@@ -742,3 +742,28 @@ func TestIndexOf(t *testing.T) {
 		}
 	}
 }
+
+// Blame is of the editor's text, written as the file is (here CRLF): an
+// unsaved edit is a line not committed, the others name their commit.
+func TestSourceBlame(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root, ts, c := newSourceTest(t, map[string]string{"definitions/orders.sqlx": "SELECT 1\r\nFROM a\r\n"})
+	gitRepo(t, root, "init", "-q")
+	gitRepo(t, root, "add", ".")
+	gitRepo(t, root, "commit", "-q", "-m", "orders")
+	var b struct {
+		Lines   []string `json:"lines"`
+		Commits map[string]struct {
+			Summary string `json:"summary"`
+		} `json:"commits"`
+	}
+	postJSON(t, c, ts.URL+"/api/source/blame", map[string]string{"file": "definitions/orders.sqlx", "text": "SELECT 2\nFROM a\n"}, &b)
+	if len(b.Lines) != 2 || b.Lines[0] != "" || b.Commits[b.Lines[1]].Summary != "orders" {
+		t.Errorf("blame = %+v, want line 1 not committed and line 2 of orders", b)
+	}
+	if code := postStatus(t, c, ts.URL+"/api/source/blame", map[string]string{"file": "../x.sqlx", "text": ""}, nil); code != http.StatusForbidden {
+		t.Errorf("blame outside the project = %d, want 403", code)
+	}
+}

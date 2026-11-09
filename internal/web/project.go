@@ -682,6 +682,7 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 	route("POST /api/source/symbols", (*projectState).sourceSymbols)
 	route("POST /api/source/findfile", (*projectState).sourceFindFile)
 	route("POST /api/source/paths", (*projectState).sourcePaths)
+	route("POST /api/source/blame", (*projectState).sourceBlame)
 	route("POST /api/markdown", (*projectState).markdownPreview)
 	// An <img> sends no header, so its URL names the project.
 	mux.HandleFunc("GET /api/markdown/image", func(w http.ResponseWriter, r *http.Request) {

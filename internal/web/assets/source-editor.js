@@ -7,8 +7,7 @@
 import * as cm from './vendor/codemirror.mjs';
 import { createEditor, formatText, jumpToError } from './editor.js';
 import { languageFor } from './sqlx.js';
-import { gitHunks, jumpToHunk, undoHunk, stageHunk } from './git-hunks.js';
-import { SRC, setSourceEditor, save, discard, onEdit, onMode, onLeave, sourceJumps, altFile, altFileName } from './source.js';
+import { gitHunks, jumpToHunk, undoHunk, stageHunk } from './git-hunks.js';import { SRC, setSourceEditor, save, discard, onEdit, onMode, onLeave, sourceJumps, altFile, altFileName } from './source.js';
 import { S, redraw, setFocus, hooks, say, openPalette, post } from './state.js';
 import { onContextMenu, onMenuKey, openAtCursor } from './source-menu.js';
 import { stepBuffer, openBuffers, bufferCommand, deleteCommand } from './buffers.js';
@@ -58,8 +57,38 @@ hooks.sourceCommands = () => {
   out.push(['Buffers: previous buffer', '', () => stepBuffer(-1)]);
   out.push(['Buffers: remove the buffer shown', '', () => deleteCommand('')]);
   if (SRC.dirty) out.push(['File: discard unsaved changes', '', discard, SRC.file]);
+  out.push(['View: inline git blame', '', toggleBlame, blameOn ? 'on' : 'off']);
   return out;
 };
+
+// ---- inline blame (blame.js) ----
+
+// Inline blame is on or off for this browser, off at first. Its module
+// comes once it is on, into blameSlot.
+const blameKey = 'xf-web:blame';
+let blameOn = false;
+try { blameOn = localStorage.getItem(blameKey) === '1'; } catch { /* no storage */ }
+const blameSlot = new cm.Compartment();
+let blameMod = null;
+
+// blameShown asks for the blame of v, the file view shows, or clears it
+// when off.
+function blameShown(view, v) {
+  if (!blameOn && !blameMod) return;
+  const ask = (m) => m.refreshBlame(view, v ? v.file : '', v ? v.base : null, blameOn);
+  if (blameMod) { ask(blameMod); return; }
+  import('./blame.js').then((m) => {
+    if (!blameMod) { blameMod = m; view.dispatch({ effects: blameSlot.reconfigure(m.inlineBlame()) }); }
+    if (SRC.view === v) ask(m);
+  }, (e) => say(e.message));
+}
+
+function toggleBlame() {
+  blameOn = !blameOn;
+  try { localStorage.setItem(blameKey, blameOn ? '1' : '0'); } catch { /* no storage */ }
+  if (made) blameShown(made.view, SRC.view);
+  say(blameOn ? 'inline git blame on' : 'inline git blame off');
+}
 
 // sourceEditorDOM is the editor's element, made on first use.
 export function sourceEditorDOM() {
@@ -123,7 +152,7 @@ function mountSourceEditor(parent) {
     // gsh stages through Source Control (scm.js).
     // A right-click, the menu key and shift+F10 open the context menu
     // (source-menu.js).
-    extensions: [cm.EditorView.domEventHandlers({ contextmenu: onContextMenu, keydown: onMenuKey }), gitHunks(say, (view, text, base) => (hooks.stageText ? hooks.stageText(view, text, base) : say('no git here'))), ...(hooks.sourceExtensions ? hooks.sourceExtensions() : [])],
+    extensions: [cm.EditorView.domEventHandlers({ contextmenu: onContextMenu, keydown: onMenuKey }), gitHunks(say, (view, text, base) => (hooks.stageText ? hooks.stageText(view, text, base) : say('no git here'))), blameSlot.of([]), ...(hooks.sourceExtensions ? hooks.sourceExtensions() : [])],
     onFocus: () => { SRC.editing = true; setFocus('source'); redraw(); },
     onBlur: () => { SRC.editing = false; onLeave(); redraw(); },
     onUpdate: (u) => {
@@ -137,7 +166,12 @@ function mountSourceEditor(parent) {
     },
     say,
   });
-  hooks.sourceShown = (v) => ed.setLanguage(languageFor(v.lang, dbt()));
+  hooks.sourceShown = (v) => {
+    ed.setLanguage(languageFor(v.lang, dbt()));
+    blameShown(ed.view, v);
+  };
+  // The file is as it was, but a commit may have changed its blame.
+  hooks.sourceRechecked = () => blameShown(ed.view, SRC.view);
   // Autosave waits for the end of insert mode; without vim, for a pause
   // in typing (source.js). Vim switched on afresh is a new adapter.
   const followMode = () => { const adapter = cm.getCM(ed.view); if (adapter) adapter.on('vim-mode-change', (e) => onMode(e.mode)); };
