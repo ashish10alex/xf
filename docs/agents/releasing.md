@@ -13,7 +13,15 @@ A release is a `v*` tag on `main`. The tag runs `.github/workflows/release.yml`:
    Done when `just check` and `just release-check` pass, `just release-snapshot` writes every package into `dist/`, and the Windows workflow is green on `main`'s last commit.
 2. **Tag it.**
    Ask the user for the version, then `git tag -a vX.Y.Z -m vX.Y.Z` on `main` and push the tag.
-   Done when the release workflow is green, the GitHub Release has every archive and `checksums.txt`, the tap and the bucket have a commit for the version, and the winget pull request is open.
+   Done when the release workflow is green, the GitHub Release has every archive and `checksums.txt`, the tap and the bucket have a commit for the version, and the winget pull request is open (unless winget is skipped, below).
+
+## While a winget pull request is pending
+
+Each release opens a pull request on `microsoft/winget-pkgs`, which waits for a volunteer moderator, a new package longest.
+A release while one is open would queue a second beside it.
+So while one is open, set the repository variable `XF_SKIP_WINGET` to `1` (`gh variable set XF_SKIP_WINGET --body 1`): the release workflow passes it to GoReleaser, which then leaves winget out and publishes the rest.
+Once the pull request merges, delete it (`gh variable delete XF_SKIP_WINGET`), and the next release goes to winget again.
+Winget users skip the versions released in between.
 
 ## When a release fails
 

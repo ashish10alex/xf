@@ -38,3 +38,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           XF_PACKAGES_TOKEN: ${{ secrets.XF_PACKAGES_TOKEN }}
+          # Set the repository variable while a winget pull request is
+          # pending, to leave winget out of this release.
+          XF_SKIP_WINGET: ${{ vars.XF_SKIP_WINGET }}

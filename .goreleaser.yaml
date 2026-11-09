@@ -94,6 +94,11 @@ winget:
       run `xf stop`, which stops the engines and lists the xf windows still
       open; quit xf in them first.
     ids: [xf]
+    # XF_SKIP_WINGET (the repository variable of that name, in the release
+    # workflow) leaves winget out while an earlier version's pull request
+    # still waits on microsoft/winget-pkgs: a second one would queue beside
+    # it (docs/agents/releasing.md).
+    skip_upload: '{{ if index .Env "XF_SKIP_WINGET" }}true{{ end }}'
     repository:
       owner: ashish10alex
       name: winget-pkgs
