@@ -109,3 +109,4 @@ VS Code's extensions show both beside Source Control; xf web had Source Control 
 - xf keeps secrets for the first time, in a file of their own, in plain text as glab and gh keep theirs.
 - A self-hosted host needs an entry in Settings before xf shows anything for it.
 - Without a token that writes, the section can show manual jobs but not start them.
+- ADR 0040 amends "never writes": `xf check --comment` posts and edits one comment on a pull request in CI. xf web still never writes to the host.
