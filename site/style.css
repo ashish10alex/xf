@@ -320,8 +320,9 @@ kbd {
   font-size: 15.5px;
 }
 
-/* ---- Stylized Browser Frame for xf web ---- */
+/* ---- Screenshot Frame for xf web ---- */
 .browser-frame {
+  margin: 0;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: var(--surface);
@@ -329,160 +330,35 @@ kbd {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
 }
 
-.browser-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 14px;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border);
-  font: 12px/1 var(--mono);
-  color: var(--muted);
+.web-screenshot {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
-.browser-dots {
-  display: flex;
-  gap: 6px;
-}
-.browser-dots span {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--border-strong);
+.screenshot-light {
+  display: none;
 }
 
-.browser-url {
-  color: var(--muted);
-}
-
-.web-layout {
-  display: grid;
-  grid-template-columns: 38px 250px 1fr;
-  min-height: 300px;
-  font: 12.5px/1.55 var(--mono);
-}
-@media (max-width: 780px) {
-  .web-layout {
-    grid-template-columns: 1fr;
-  }
-  .web-rail {
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .screenshot-dark {
     display: none;
   }
+  :root:not([data-theme="dark"]) .screenshot-light {
+    display: block;
+  }
 }
 
-.web-rail {
-  border-right: 1px solid var(--border);
-  padding: 12px 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  color: var(--dim);
-  font-size: 13px;
+:root[data-theme="light"] .screenshot-dark {
+  display: none;
 }
-.web-rail .on {
-  color: var(--accent);
+:root[data-theme="light"] .screenshot-light {
+  display: block;
 }
 
-.web-sidebar {
-  border-right: 1px solid var(--border);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.pane-caption {
-  font: 600 10.5px/1 var(--chrome);
-  color: var(--dim);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 8px;
-  display: flex;
-  justify-content: space-between;
-}
-
-.model-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.model-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 5px;
-  color: var(--muted);
-}
-.model-list li.active {
-  background: var(--accent-bg);
-  color: var(--fg);
-  font-weight: 600;
-}
-.badge {
-  font: 600 10px/1 var(--chrome);
-  color: var(--dim);
-  width: 4.5ch;
-}
-.active .badge {
-  color: var(--accent);
-}
-
-.web-main {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.web-tabs {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--muted);
-  flex-wrap: wrap;
-}
-.web-tabs-left {
-  display: flex;
-  gap: 14px;
-}
-.web-tabs-left .active {
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.sql-pre {
-  margin: 0;
-  padding: 16px;
-  overflow-x: auto;
-  font: 12.5px/1.6 var(--mono);
-  color: var(--fg);
-}
-.kw { color: var(--red); }
-.fn { color: var(--purple); }
-.str { color: var(--blue); }
-.com { color: var(--dim); }
 .ok { color: var(--accent); }
 .warn { color: var(--amber); }
 .err { color: var(--red); }
-
-.web-footer {
-  padding: 8px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--surface-2);
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 11.5px;
-  color: var(--muted);
-}
 
 /* ---- Two-column Checks Grid (Impact & Cost) ---- */
 .checks-grid {

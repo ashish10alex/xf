@@ -94,84 +94,23 @@
         </p>
       </div>
 
-      <div class="browser-frame" role="region" aria-label="xf web browser workspace preview">
-        <div class="browser-bar">
-          <div class="browser-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-          <span class="browser-url">127.0.0.1:7777 · examples/dataform</span>
-          <span>⎇ feat/orders vs main · <span class="ok">→ prod</span></span>
-        </div>
-
-        <div class="web-layout">
-          <div class="web-rail" aria-hidden="true">
-            <span class="on" title="Explorer">▤</span>
-            <span title="Search">⌕</span>
-            <span title="Source Control">⎇</span>
-            <span title="Scratch">✦</span>
-          </div>
-
-          <div class="web-sidebar">
-            <div>
-              <div class="pane-caption">
-                <span>Actions</span>
-                <span>⌘P</span>
-              </div>
-              <ul class="model-list">
-                <li class="active"><span class="badge">INCR</span> <span>fct_orders</span></li>
-                <li><span class="badge">TABLE</span> <span>dim_customers</span></li>
-                <li><span class="badge">VIEW</span> <span>stg_orders</span></li>
-                <li><span class="badge">VIEW</span> <span>stg_payments</span></li>
-                <li><span class="badge">ASSRT</span> <span>assert_positive_totals</span></li>
-              </ul>
-            </div>
-
-            <div>
-              <div class="pane-caption">
-                <span>Dry run</span>
-                <span>r run · R changed</span>
-              </div>
-              <div style="font-size: 12px; color: var(--muted);">
-                <span class="ok">✓ valid</span> · scans <strong>420.00 MiB</strong> ($0.003)<br>
-                partitioned by <code>order_date</code>
-              </div>
-            </div>
-          </div>
-
-          <div class="web-main">
-            <div>
-              <div class="web-tabs">
-                <div class="web-tabs-left">
-                  <span class="active">sql</span>
-                  <span>columns (5)</span>
-                  <span>lineage</span>
-                  <span>source (E)</span>
-                </div>
-                <span>definitions/marts/fct_orders.sqlx</span>
-              </div>
-
-<pre class="sql-pre"><span class="kw">DECLARE</span> since <span class="kw">DATE DEFAULT</span> (
-  <span class="kw">SELECT</span> <span class="fn">MAX</span>(order_date) <span class="kw">FROM</span> <span class="str">`acme-dev.marts.fct_orders`</span>
-);
-
-<span class="kw">SELECT</span>
-  o.order_id,
-  o.customer_id,
-  o.order_date,
-  o.status,
-  <span class="fn">SUM</span>(p.amount) <span class="kw">AS</span> amount
-<span class="kw">FROM</span> <span class="str">`acme-prod.staging.stg_orders`</span> <span class="kw">AS</span> o <span class="com">-- → prod</span>
-<span class="kw">LEFT JOIN</span> <span class="str">`acme-prod.staging.stg_payments`</span> <span class="kw">AS</span> p <span class="com">-- → prod</span>
-  <span class="kw">USING</span> (order_id)
-<span class="kw">WHERE</span> o.order_date &gt; since
-<span class="kw">GROUP BY</span> 1, 2, 3, 4</pre>
-            </div>
-
-            <div class="web-footer">
-              <span><kbd>⌘↵</kbd> preview rows · <kbd>s</kbd> scratch query · <kbd>I</kbd> column impact · <kbd>C</kbd> query cost</span>
-              <span><code>xf serve</code> · cached compile</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <figure class="browser-frame">
+        <img
+          class="web-screenshot screenshot-dark"
+          src="xf-web-dark.webp"
+          width="1960"
+          height="1198"
+          alt="xf web workspace showing definitions/marts/dim_customers.sqlx on the left and its actions, dry-run byte estimates, target fields, run toggles, and compiled SQL on the right"
+        >
+        <img
+          class="web-screenshot screenshot-light"
+          src="xf-web-light.webp"
+          width="1960"
+          height="1198"
+          loading="lazy"
+          alt="xf web workspace in light mode showing definitions/marts/dim_customers.sqlx on the left and its actions, dry-run byte estimates, target fields, run toggles, and compiled SQL on the right"
+        >
+      </figure>
     </section>
 
     <!-- PRODUCT MOMENTS 2 & 3: Column Impact & Query Cost -->
