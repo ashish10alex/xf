@@ -310,6 +310,8 @@ usage:
                               it on the pull request (merge request) in CI
   xf run [flags]             dataform run (dbt build) with its own flags; --defer reads
                               upstream tables not built in dev from prod, --dry-run plans
+  xf watch [flags] <id|url>  follow a Dataform workflow by its ID or console URL until it
+                              ends, then print what each action's BigQuery job cost
   xf lsp                    language server for editors (LSP on stdin and stdout)
   xf serve [--dir dir]       the engine xf and xf lsp share; started for you and
                               stopped a few seconds after the last of them leaves

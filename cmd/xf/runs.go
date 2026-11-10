@@ -142,15 +142,21 @@ func addRunJobs(deps *frontend.Deps, root string, b dataform.Backend, client *re
 		}
 	}
 	if watch := deps.WatchWorkflow; watch != nil {
-		deps.WatchWorkflow = func(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository) (*project.Run, *dataformapi.Invocation, error) {
-			run, inv, err := watch(ctx, ref, base)
-			if err != nil {
-				return nil, nil, err
-			}
-			// Watching it again keeps it once: the invocation's ID is the
-			// run's, and it started when the invocation did.
-			e := runhistory.Entry{ID: ref.ID, Via: runhistory.ViaExternal, Started: inv.Started()}
-			return record(e, run), inv, nil
+		deps.WatchWorkflow = keepWatched(watch, record)
+	}
+}
+
+// keepWatched has watch keep each workflow it follows with record, as
+// external.
+func keepWatched(watch watchFunc, record func(runhistory.Entry, *project.Run) *project.Run) watchFunc {
+	return func(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository) (*project.Run, *dataformapi.Invocation, error) {
+		run, inv, err := watch(ctx, ref, base)
+		if err != nil {
+			return nil, nil, err
 		}
+		// Watching it again keeps it once: the invocation's ID is the
+		// run's, and it started when the invocation did.
+		e := runhistory.Entry{ID: ref.ID, Via: runhistory.ViaExternal, Started: inv.Started()}
+		return record(e, run), inv, nil
 	}
 }

@@ -39,12 +39,17 @@ Over the table, `/` searches the jobs: every word typed must be in the target, t
 Elsewhere `/` still finds an action and `S` still shows the columns.
 In `xf web`, clicking a column's header also sorts by it, again turns it round, and a third time goes back to the run's order.
 
-**Watching a workflow xf didn't start (xf web only).**
+**Watching a workflow xf didn't start (xf web and `xf watch`).**
 A scheduled workflow, a colleague's, one started from the console: open the palette (`cmd+shift+p`), pick *Run: watch a workflow by ID or URL*, and paste its ID (`1700000000-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`) or the URL of its page in the Cloud console. xf reads the workflow with the Dataform API and shows the jobs table above, the cost of each action's BigQuery job included, then keeps it in the history as `external`; re-pasting the same workflow updates that row.
 A workflow that is still running is followed until it ends, the table growing as each job finishes.
 `ctrl+c` stops watching it and never cancels it.
 An ID alone is looked for in this project's Dataform repository (`dataformRepo`, else the checkout's `origin`, in `dataformLocation`); a URL (only a `https://console.cloud.google.com` one is read) names its own project, location and repository, so it works for any workflow your login can see, whichever project it is in. xf only reads: it never runs, changes or cancels anything in GCP, and what you paste is checked character by character before it goes into any request.
 A job is looked for in the project's BigQuery location, then the workflow's repository's, then with none.
+
+From the command line, `xf watch <ID or URL>` does the same: it follows the workflow until it ends, the log on stderr, then prints the jobs table (or `--json`, the figures as numbers) on stdout.
+In a Dataform project it keeps the workflow in the history too; outside one, a URL is enough.
+It exits 0 when the workflow succeeded, 1 when it failed or was cancelled, 4 when xf couldn't read it, and 130 when `ctrl+c` stopped watching.
+`xf watch --help` lists the flags (`--dir`, `--dataform-repo`, `--dataform-location`, `--json`).
 
 Personal defaults go in `~/.config/xf/config.json` (`%AppData%\xf\config.json` on Windows).
 Flags win over both files.

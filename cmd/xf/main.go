@@ -84,6 +84,8 @@ func main() {
 			os.Exit(runCheck(args[1:]))
 		case "run":
 			os.Exit(runRun(args[1:]))
+		case "watch":
+			os.Exit(runWatch(args[1:]))
 		}
 	}
 	if err := run(); err != nil {
@@ -351,11 +353,37 @@ func addDataformDeps(deps *frontend.Deps, root, bin string, settings config.Load
 		}
 		return dataformapi.Start(ctx, api, opts), nil
 	}
-	deps.WatchWorkflow = func(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository) (*project.Run, *dataformapi.Invocation, error) {
+	deps.WatchWorkflow = workflowWatcher(root, settings)
+	deps.RunAPI = settings.RunMode == "api"
+	deps.APIGit = func(ctx context.Context) (dataformapi.GitState, error) { return dataformapi.ReadGit(ctx, root) }
+	deps.ColumnImpact = client.ColumnImpact
+	addDeferDeps(deps, client)
+	deps.DevCompilerOptions = settings.DevCompilerOptions
+	deps.ProdCompilerOptions = settings.ProdCompilerOptions
+	deps.Unset = unsetProdOptions(settings)
+	// Asked for only where the answer would be read back: not with
+	// --config, which reads another file than the one it is saved to.
+	if readsProjectFile(settings, root) {
+		deps.SaveProdOptions = func(ctx context.Context, options string) error {
+			return saveProdOptions(ctx, bin, root, options)
+		}
+	}
+	addChangesDeps(deps, root, settings, client)
+}
+
+// watchFunc follows a workflow invocation xf did not start (see
+// frontend.Deps.WatchWorkflow).
+type watchFunc = func(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository) (*project.Run, *dataformapi.Invocation, error)
+
+// workflowWatcher follows the workflow invocations of the Dataform project
+// at root with settings; "" for no project, where a pasted URL names the
+// repository.
+func workflowWatcher(root string, settings config.Loaded) watchFunc {
+	return func(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository) (*project.Run, *dataformapi.Invocation, error) {
 		// A bare ID is in this project's repository; a URL names its own,
 		// whatever it is.
 		name := settings.DataformRepo
-		if name == "" && ref.Repo == "" {
+		if name == "" && ref.Repo == "" && root != "" {
 			if g, err := dataformapi.ReadGit(ctx, root); err == nil {
 				name = dataformapi.RepoNameFromURL(g.Origin)
 			}
@@ -376,21 +404,6 @@ func addDataformDeps(deps *frontend.Deps, root, bin string, settings config.Load
 		}
 		return dataformapi.Watch(ctx, api, opts)
 	}
-	deps.RunAPI = settings.RunMode == "api"
-	deps.APIGit = func(ctx context.Context) (dataformapi.GitState, error) { return dataformapi.ReadGit(ctx, root) }
-	deps.ColumnImpact = client.ColumnImpact
-	addDeferDeps(deps, client)
-	deps.DevCompilerOptions = settings.DevCompilerOptions
-	deps.ProdCompilerOptions = settings.ProdCompilerOptions
-	deps.Unset = unsetProdOptions(settings)
-	// Asked for only where the answer would be read back: not with
-	// --config, which reads another file than the one it is saved to.
-	if readsProjectFile(settings, root) {
-		deps.SaveProdOptions = func(ctx context.Context, options string) error {
-			return saveProdOptions(ctx, bin, root, options)
-		}
-	}
-	addChangesDeps(deps, root, settings, client)
 }
 
 // readsProjectFile reports whether settings were read from root's
