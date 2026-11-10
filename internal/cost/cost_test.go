@@ -473,6 +473,18 @@ func TestMarkdown(t *testing.T) {
 	if explain := Explanation(r); explain == "" || !strings.Contains(got, "| working tree\n\n"+explain+"\n") {
 		t.Errorf("Markdown lacks the explanation %q under its branch line:\n%s", explain, got)
 	}
+	// So does the dry-run line, between them, and the text has it too.
+	r.DryRunIn, r.Compiled = "acme-prod (EU)", "prodCompilerOptions"
+	if got := Markdown(r, Options{}); !strings.Contains(got, "| working tree\n\nDry run in `acme-prod (EU)` · compiled with `prodCompilerOptions`\n\nThe actions came from") {
+		t.Errorf("Markdown lacks the dry-run line under its branch line:\n%s", got)
+	}
+	if got := Text(r, Options{}); !strings.Contains(got, "(working tree)\ndry run in acme-prod (EU) · compiled with prodCompilerOptions\n") {
+		t.Errorf("text lacks the dry-run line under its heading:\n%s", got)
+	}
+	r.DryRunIn, r.Compiled = "", ""
+	if DryRunLine(r, func(s string) string { return s }) != "" || strings.Contains(Markdown(r, Options{}), "Dry run in") {
+		t.Error("a dry-run line with nothing to say")
+	}
 
 	notFound := func(table string) string {
 		return "dry run failed: Not found: Table acme:" + table + " was not found in location EU"

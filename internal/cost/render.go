@@ -215,6 +215,21 @@ func Explanation(r *Report) string {
 		"`, and their queries" + when + " were dry run against " + tables + where + "; nothing was run."
 }
 
+// DryRunLine is where the dry runs ran and what they were compiled with,
+// as the page shows them under its branch line: "dry run in acme-prod (EU)
+// · compiled with prodCompilerOptions". code formats each value, such as
+// in backticks for Markdown. It is "" when the report says neither.
+func DryRunLine(r *Report, code func(string) string) string {
+	var parts []string
+	if r.DryRunIn != "" {
+		parts = append(parts, "dry run in "+code(r.DryRunIn))
+	}
+	if r.Compiled != "" {
+		parts = append(parts, "compiled with "+code(r.Compiled))
+	}
+	return strings.Join(parts, " · ")
+}
+
 func (r *Report) anyEstimated() bool {
 	for _, a := range r.Actions {
 		if a.Estimate != nil {
@@ -253,6 +268,9 @@ func Text(r *Report, o Options) string {
 		fmt.Fprintf(&b, "%s in %s\n", what, heading(c))
 	} else {
 		fmt.Fprintf(&b, "%s\n", what)
+	}
+	if line := DryRunLine(r, func(s string) string { return s }); line != "" {
+		b.WriteString(o.paint(line, ansiDim) + "\n")
 	}
 	if len(r.Actions) == 0 {
 		b.WriteString(o.paint("Nothing to estimate: the branch changes no action with a query to dry run.", ansiDim) + "\n")
@@ -350,6 +368,9 @@ func Markdown(r *Report, o Options) string {
 	lines := []string{"### Query Cost of Branch Changes", ""}
 	if c := r.Comparison; c != nil {
 		lines = append(lines, fmt.Sprintf("**Branch:** `%s` vs `%s` @ `%s` | %s", c.HeadRef, c.BaseRef, c.MergeBase[:min(len(c.MergeBase), 7)], c.HeadLabel), "")
+		if line := DryRunLine(r, func(s string) string { return "`" + s + "`" }); line != "" {
+			lines = append(lines, strings.ToUpper(line[:1])+line[1:], "")
+		}
 		if explain := Explanation(r); explain != "" {
 			lines = append(lines, explain, "")
 		}
