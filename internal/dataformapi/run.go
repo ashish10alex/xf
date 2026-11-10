@@ -301,6 +301,17 @@ func describeCompileError(e CompilationError) string {
 	return where + ": " + e.Message
 }
 
+// IsActionLine says line is one describeAction makes: an action's state,
+// which a run's report also has.
+func IsActionLine(line string) bool {
+	for _, p := range []string{"▶ running ", "✓ ", "✗ failed ", "✗ cancelled ", "– skipped ", "– disabled "} {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // describeAction is the log line for an action's state; "" for states not
 // worth a line (PENDING).
 func describeAction(a Action) string {

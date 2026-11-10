@@ -299,3 +299,17 @@ func TestRunExplainsAWrongLocation(t *testing.T) {
 		t.Errorf("result = %+v", res)
 	}
 }
+
+func TestIsActionLineKnowsEveryActionLine(t *testing.T) {
+	for _, state := range []string{"RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "SKIPPED", "DISABLED"} {
+		line := describeAction(Action{Target: Target{Database: "p", Schema: "ds", Name: "orders"}, State: state, FailureReason: "boom"})
+		if !IsActionLine(line) {
+			t.Errorf("%s: %q is not an action line", state, line)
+		}
+	}
+	for _, line := range []string{"watching workflow 1700-abc in repo (p, eu) · running", "↗ https://console.cloud.google.com/x", "⚠ could not check the invocation: 503", "✗ definitions/a.sqlx: syntax error"} {
+		if IsActionLine(line) {
+			t.Errorf("%q is an action line", line)
+		}
+	}
+}

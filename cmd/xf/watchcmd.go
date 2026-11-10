@@ -46,7 +46,9 @@ URL of its page in the Cloud console, or its resource name. A bare ID is in
 the project's Dataform repository (dataformRepo, else the origin remote's
 name) in dataformLocation, else defaultLocation; a URL names its own.
 
-The log goes to stderr as the workflow goes; the table (or --json) to stdout.
+On a terminal, one line on stderr says how far the workflow has got; else
+stderr has a line for each action as it goes. The table (or --json) goes to
+stdout, with why each failed action failed under it.
 ctrl+c stops watching and prints the table so far: it never cancels the
 workflow. In a Dataform project the workflow is kept in xf's run history, as
 xf web's palette keeps it.
@@ -83,7 +85,7 @@ func runWatch(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	code, err := watchWorkflow(ctx, input[0], *dir, sf, *asJSON, os.Stdout, os.Stderr)
+	code, err := watchWorkflow(ctx, input[0], *dir, sf, *asJSON, os.Stdout, os.Stderr, newProgressPrinter(os.Stderr).terminal)
 	if err != nil {
 		if errors.Is(err, dataformapi.ErrAuth) {
 			err = fmt.Errorf("%w: to log in, %s", err, dataformapi.AuthHint)
@@ -95,8 +97,8 @@ func runWatch(args []string) int {
 }
 
 // watchWorkflow watches the workflow input names, from the project in dir
-// if there is one there.
-func watchWorkflow(ctx context.Context, input, dir string, sf *settingFlags, asJSON bool, out, log io.Writer) (int, error) {
+// if there is one there; live says log is a terminal.
+func watchWorkflow(ctx context.Context, input, dir string, sf *settingFlags, asJSON bool, out, log io.Writer, live bool) (int, error) {
 	ref, err := dataformapi.ParseInvocation(input)
 	if err != nil {
 		return 0, err
@@ -119,12 +121,12 @@ func watchWorkflow(ctx context.Context, input, dir string, sf *settingFlags, asJ
 		store := &runhistory.Store{Dir: filepath.Join(filepath.Dir(d), "runs")}
 		watch = keepWatched(watch, func(e runhistory.Entry, run *project.Run) *project.Run { return store.Record(root, e, run) })
 	}
-	return followWorkflow(ctx, ref, base, watch, asJSON, out, log)
+	return followWorkflow(ctx, ref, base, watch, asJSON, out, log, live)
 }
 
 // followWorkflow watches ref with watch until it ends or ctx is done, the
-// log to log, then writes its report to out.
-func followWorkflow(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository, watch watchFunc, asJSON bool, out, log io.Writer) (int, error) {
+// log to log (a terminal when live), then writes its report to out.
+func followWorkflow(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository, watch watchFunc, asJSON bool, out, log io.Writer, live bool) (int, error) {
 	run, _, err := watch(ctx, ref, base)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -132,17 +134,23 @@ func followWorkflow(ctx context.Context, ref dataformapi.InvocationRef, base dat
 		}
 		return 0, err
 	}
-	for line := range run.Lines {
-		fmt.Fprintln(log, line)
+	report := func() *project.RunReport {
+		if run.Report != nil {
+			if r := run.Report(); r != nil {
+				return r
+			}
+		}
+		return &project.RunReport{}
+	}
+	if live {
+		followLive(run, report, log)
+	} else {
+		for line := range run.Lines {
+			fmt.Fprintln(log, line)
+		}
 	}
 	res := <-run.Done
-	var rep *project.RunReport
-	if run.Report != nil {
-		rep = run.Report()
-	}
-	if rep == nil {
-		rep = &project.RunReport{}
-	}
+	rep := report()
 	if asJSON {
 		err = writeWatchJSON(out, ref.ID, rep)
 	} else {
@@ -164,6 +172,54 @@ func followWorkflow(ctx context.Context, ref dataformapi.InvocationRef, base dat
 		return watchFailed, nil
 	}
 	return watchOK, nil
+}
+
+// followLive reads run's lines to a terminal: in place of a line per
+// action, which the table repeats, one line rewritten as the workflow goes;
+// the others (where it is, its URL, warnings) as they come.
+func followLive(run *project.Run, report func() *project.RunReport, log io.Writer) {
+	pr := &progressPrinter{w: log, terminal: true}
+	defer pr.done()
+	show := func() { pr.say(watchProgress(report(), time.Now())) }
+	tick := time.NewTicker(time.Second) // for the time taken
+	defer tick.Stop()
+	for {
+		select {
+		case line, open := <-run.Lines:
+			if !open {
+				return
+			}
+			if !dataformapi.IsActionLine(line) {
+				pr.done()
+				fmt.Fprintln(log, line)
+			}
+		case <-tick.C:
+		}
+		show()
+	}
+}
+
+// watchProgress is the progress line: how many actions have ended, of how
+// many, and how long the workflow has taken.
+func watchProgress(r *project.RunReport, now time.Time) string {
+	s := frontend.SummarizeJobs(r, now)
+	if s.Actions == 0 {
+		return "waiting for the workflow's actions"
+	}
+	parts := []string{fmt.Sprintf("%d/%d actions done", s.Succeeded+s.Failed+s.Skipped, s.Actions)}
+	if s.Running > 0 {
+		parts = append(parts, fmt.Sprintf("%d running", s.Running))
+	}
+	if s.Failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", s.Failed))
+	}
+	if t := r.Totals(); t.Jobs > 0 {
+		parts = append(parts, frontend.FormatCost(t.CostUSD))
+	}
+	if s.Elapsed != "" {
+		parts = append(parts, s.Elapsed)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // watchRoot is the Dataform project in dir (the working directory when
@@ -285,6 +341,18 @@ func writeJobsTable(w io.Writer, r *project.RunReport, now time.Time) error {
 			}
 		}
 		b.WriteString(strings.TrimRight(line.String(), " ") + "\n")
+	}
+	// The table has no room for why an action failed.
+	first := true
+	for _, row := range rows {
+		if row.Failure == "" {
+			continue
+		}
+		if first {
+			b.WriteString("\nfailures:\n")
+			first = false
+		}
+		b.WriteString("  " + row.Target + ": " + row.Failure + "\n")
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

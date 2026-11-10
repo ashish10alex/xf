@@ -43,7 +43,7 @@ func watchedReport() *project.RunReport {
 func TestFollowWorkflowPrintsTheJobsTableAndExitsWithTheWorkflow(t *testing.T) {
 	var out, log strings.Builder
 	code, err := followWorkflow(context.Background(), dataformapi.InvocationRef{ID: "1700-abc"}, dataformapi.Repository{},
-		fakeWatch("FAILED", watchedReport(), project.RunResult{State: "FAILED", ExitCode: 1}), false, &out, &log)
+		fakeWatch("FAILED", watchedReport(), project.RunResult{State: "FAILED", ExitCode: 1}), false, &out, &log, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestFollowWorkflowExitCodes(t *testing.T) {
 	} {
 		var out, log strings.Builder
 		code, err := followWorkflow(context.Background(), dataformapi.InvocationRef{ID: "x"}, dataformapi.Repository{},
-			fakeWatch(c.res.State, &project.RunReport{State: c.res.State}, c.res), false, &out, &log)
+			fakeWatch(c.res.State, &project.RunReport{State: c.res.State}, c.res), false, &out, &log, false)
 		if err != nil || code != c.want {
 			t.Errorf("%s: exit %d, %v; want %d", c.name, code, err, c.want)
 		}
@@ -90,7 +90,7 @@ func TestFollowWorkflowExitCodes(t *testing.T) {
 	failing := func(ctx context.Context, ref dataformapi.InvocationRef, base dataformapi.Repository) (*project.Run, *dataformapi.Invocation, error) {
 		return nil, nil, errors.New("not found")
 	}
-	if _, err := followWorkflow(context.Background(), dataformapi.InvocationRef{ID: "x"}, dataformapi.Repository{}, failing, false, &strings.Builder{}, &strings.Builder{}); err == nil {
+	if _, err := followWorkflow(context.Background(), dataformapi.InvocationRef{ID: "x"}, dataformapi.Repository{}, failing, false, &strings.Builder{}, &strings.Builder{}, false); err == nil {
 		t.Error("a workflow not found is no error")
 	}
 }
@@ -98,7 +98,7 @@ func TestFollowWorkflowExitCodes(t *testing.T) {
 func TestFollowWorkflowJSON(t *testing.T) {
 	var out strings.Builder
 	if _, err := followWorkflow(context.Background(), dataformapi.InvocationRef{ID: "1700-abc"}, dataformapi.Repository{},
-		fakeWatch("FAILED", watchedReport(), project.RunResult{ExitCode: 1}), true, &out, &strings.Builder{}); err != nil {
+		fakeWatch("FAILED", watchedReport(), project.RunResult{ExitCode: 1}), true, &out, &strings.Builder{}, false); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -149,5 +149,51 @@ func TestWatchRoot(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if root, err := watchRoot(""); err != nil || root != "" {
 		t.Errorf("outside a project: %q, %v", root, err)
+	}
+}
+
+func TestFollowWorkflowOnATerminalDropsTheActionLines(t *testing.T) {
+	var out, log strings.Builder
+	if _, err := followWorkflow(context.Background(), dataformapi.InvocationRef{ID: "1700-abc"}, dataformapi.Repository{},
+		fakeWatch("FAILED", watchedReport(), project.RunResult{ExitCode: 1}), false, &out, &log, true); err != nil {
+		t.Fatal(err)
+	}
+	got := log.String()
+	if !strings.Contains(got, "watching workflow 1700-abc\n") {
+		t.Errorf("the header is gone: %q", got)
+	}
+	if strings.Contains(got, "✓ ds.orders") {
+		t.Errorf("an action line on a terminal: %q", got)
+	}
+	if !strings.Contains(got, "3/3 actions done · 1 failed · $0.0122 · 1m 30s…") {
+		t.Errorf("no progress line: %q", got)
+	}
+	if !strings.HasSuffix(strings.TrimSuffix(got, "xf: couldn't read 1 BigQuery job, so its cost is unknown (BigQuery credentials?)\n"), "\r\x1b[K") {
+		t.Errorf("the progress line is left before the table: %q", got)
+	}
+}
+
+func TestWatchProgress(t *testing.T) {
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+	r := &project.RunReport{State: "RUNNING", Started: t0, Actions: []project.RunAction{
+		{State: "SUCCEEDED"}, {State: "RUNNING"}, {State: "RUNNING"}, {State: "PENDING"},
+	}}
+	if got, want := watchProgress(r, t0.Add(65*time.Second)), "1/4 actions done · 2 running · 1m 05s"; got != want {
+		t.Errorf("%q, want %q", got, want)
+	}
+	if got := watchProgress(&project.RunReport{}, t0); got != "waiting for the workflow's actions" {
+		t.Errorf("no actions yet: %q", got)
+	}
+}
+
+func TestJobsTableListsFailures(t *testing.T) {
+	r := watchedReport()
+	r.Actions[1].FailureReason = "Query error:\n  Unrecognized name: x"
+	var out strings.Builder
+	if err := writeJobsTable(&out, r, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out.String(), "\nfailures:\n  ds.customers: Query error: Unrecognized name: x\n") {
+		t.Errorf("no failures under the table:\n%s", out.String())
 	}
 }

@@ -46,7 +46,8 @@ A workflow that is still running is followed until it ends, the table growing as
 An ID alone is looked for in this project's Dataform repository (`dataformRepo`, else the checkout's `origin`, in `dataformLocation`); a URL (only a `https://console.cloud.google.com` one is read) names its own project, location and repository, so it works for any workflow your login can see, whichever project it is in. xf only reads: it never runs, changes or cancels anything in GCP, and what you paste is checked character by character before it goes into any request.
 A job is looked for in the project's BigQuery location, then the workflow's repository's, then with none.
 
-From the command line, `xf watch <ID or URL>` does the same: it follows the workflow until it ends, the log on stderr, then prints the jobs table (or `--json`, the figures as numbers) on stdout.
+From the command line, `xf watch <ID or URL>` does the same: it follows the workflow until it ends, then prints the jobs table (or `--json`, the figures as numbers) on stdout, with why each failed action failed under it.
+While it waits, a terminal shows one line of how far the workflow has got (actions done, running, failed, the cost so far); piped, stderr has a line per action instead, for CI logs.
 In a Dataform project it keeps the workflow in the history too; outside one, a URL is enough.
 It exits 0 when the workflow succeeded, 1 when it failed or was cancelled, 4 when xf couldn't read it, and 130 when `ctrl+c` stopped watching.
 `xf watch --help` lists the flags (`--dir`, `--dataform-repo`, `--dataform-location`, `--json`).
