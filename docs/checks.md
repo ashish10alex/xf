@@ -194,7 +194,77 @@ It keeps the report (`xf-check.md`) and the Code Quality report as artifacts.
 Set two CI/CD variables:
 
 - `XF_FORGE_TOKEN`: a project access token with the `api` scope and the Reporter role, masked. It posts the note; GitLab's job token can't.
-- `GOOGLE_APPLICATION_CREDENTIALS`: a File variable holding a service account key, or a workload identity federation config.
+- `GOOGLE_APPLICATION_CREDENTIALS`: a File variable holding a service account key, or a workload identity federation config, as [below](#gitlab-ci-with-workload-identity-federation).
+
+Both must be readable by merge request pipelines: a protected variable is hidden from a pipeline on an unprotected branch.
+
+#### GitLab CI with workload identity federation
+
+Workload identity federation signs the job in with GitLab's short-lived OIDC token, so no service account key is stored in GitLab.
+The steps below impersonate a service account; replace `PROJECT_NUMBER`, `my-project`, `xf-check@my-project.iam.gserviceaccount.com` and `my-group/my-repo` with yours.
+
+1. Create a pool and a provider that trusts your GitLab, and limit it to your repository:
+
+   ```sh
+   gcloud iam workload-identity-pools create gitlab \
+     --project=my-project --location=global
+
+   gcloud iam workload-identity-pools providers create-oidc gitlab \
+     --project=my-project --location=global --workload-identity-pool=gitlab \
+     --issuer-uri="https://gitlab.com" \
+     --allowed-audiences="https://gitlab.com" \
+     --attribute-mapping="google.subject=assertion.sub,attribute.project_path=assertion.project_path" \
+     --attribute-condition="assertion.project_path == 'my-group/my-repo'"
+   ```
+
+   On self-managed GitLab, the issuer is your instance's URL, such as `https://gitlab.example.com`.
+   The audience can be any string, as long as step 4 asks for the same one.
+
+2. Let jobs from the repository impersonate the service account, and give the service account what [the CI job needs](#what-the-ci-job-needs):
+
+   ```sh
+   gcloud iam service-accounts add-iam-policy-binding xf-check@my-project.iam.gserviceaccount.com \
+     --role=roles/iam.workloadIdentityUser \
+     --member="principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/gitlab/attribute.project_path/my-group/my-repo"
+   ```
+
+3. Write the credential config. It holds no secret: it says where the job's token is and which service account to impersonate.
+
+   ```sh
+   gcloud iam workload-identity-pools create-cred-config \
+     projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/gitlab/providers/gitlab \
+     --service-account=xf-check@my-project.iam.gserviceaccount.com \
+     --credential-source-file=/tmp/gitlab-oidc-token \
+     --credential-source-type=text \
+     --output-file=xf-check-wif.json
+   ```
+
+   Paste the file's contents into a File variable named `GOOGLE_APPLICATION_CREDENTIALS`.
+
+4. Have the job ask GitLab for a token and write it where the config looks for it:
+
+   ```yaml
+   include:
+     - remote: https://raw.githubusercontent.com/ashish10alex/xf/<tag>/ci/gitlab/xf-check.yml
+
+   xf-check:
+     variables:
+       XF_VERSION: <tag>
+     id_tokens:
+       GITLAB_OIDC_TOKEN:
+         aud: https://gitlab.com   # one of the provider's allowed audiences
+     before_script:
+       - printf '%s' "$GITLAB_OIDC_TOKEN" > /tmp/gitlab-oidc-token
+   ```
+
+   `before_script` runs in the same shell as the template's script, before it.
+
+When the sign-in fails, xf exits 2 and the job prints the end of its log. The usual causes:
+
+- **`invalid_grant` or "audience does not match"**: the `aud` in `id_tokens` isn't one of the provider's allowed audiences.
+- **"The given credential is rejected by the attribute condition"**: the provider's condition doesn't match the job's token. A condition on `assertion.ref` or `assertion.ref_protected` rejects merge request pipelines from unprotected branches; match on `assertion.project_path` instead.
+- **`iam.serviceAccounts.getAccessToken` permission denied**: step 2's binding is missing, or its `principalSet` names another repository path.
+- **"no such file" for `/tmp/gitlab-oidc-token`**: the `before_script` line didn't run, as when the job's own `before_script` replaced it.
 
 ### When it comments
 

@@ -13,7 +13,8 @@
 #   XF_FORGE_TOKEN                  a project access token with the api scope and the
 #                                   Reporter role, masked: it posts the note
 #   GOOGLE_APPLICATION_CREDENTIALS  a File variable: a service account key, or a
-#                                   workload identity federation config
+#                                   workload identity federation config (docs/checks.md,
+#                                   "GitLab CI with workload identity federation")
 xf-check:
   stage: test
   image: node:22
