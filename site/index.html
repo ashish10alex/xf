@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>xf — Unified interface for Dataform and dbt projects on BigQuery</title>
-  <meta name="description" content="A single Go binary giving Dataform and dbt projects on BigQuery a browser UI (xf web), terminal UI, language server, and branch impact checks for column lineage and query cost.">
+  <title>xf — Dataform and dbt on BigQuery, in your browser</title>
+  <meta name="description" content="A single binary giving Dataform and dbt projects on BigQuery a browser UI (xf web) and branch checks for downstream column impact and query cost.">
 
   <!-- Open Graph / Social -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://xf.dataformtools.com/">
   <meta property="og:site_name" content="xf">
-  <meta property="og:title" content="xf — Unified interface for Dataform and dbt on BigQuery">
-  <meta property="og:description" content="Browse actions with compiled SQL, columns and lineage, dry run and run them, edit with vim keys, and check branch column impact and BigQuery cost.">
+  <meta property="og:title" content="xf — Dataform and dbt on BigQuery, in your browser">
+  <meta property="og:description" content="Browse compiled SQL, columns and lineage in xf web, and check what your branch does to downstream columns and BigQuery cost.">
   <meta property="og:image" content="https://xf.dataformtools.com/og.svg">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="xf — Unified interface for Dataform and dbt on BigQuery">
-  <meta name="twitter:description" content="Single Go binary with a browser UI (xf web), terminal UI, language server, and branch impact & query cost checks for Dataform and dbt on BigQuery.">
+  <meta name="twitter:title" content="xf — Dataform and dbt on BigQuery, in your browser">
+  <meta name="twitter:description" content="Browse compiled SQL, columns and lineage in xf web, and check what your branch does to downstream columns and BigQuery cost.">
   <meta name="twitter:image" content="https://xf.dataformtools.com/og.svg">
 
   <link rel="canonical" href="https://xf.dataformtools.com/">
@@ -26,897 +26,289 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <div class="compile-bar" aria-hidden="true"></div>
-
   <header class="site-header">
-    <div class="nav-wrap">
-      <a class="brand" href="#">
-        <img class="brand-logo" src="icon.svg" width="28" height="28" alt="xf logo">
+    <div class="wrap header-inner">
+      <a class="brand" href="/">
+        <img src="icon.svg" width="26" height="26" alt="xf">
         <span>xf</span>
-        <span class="brand-tag">Dataform &amp; dbt · BigQuery</span>
       </a>
 
-      <nav class="nav-links" aria-label="Primary">
-        <a href="#preview">Interface</a>
-        <a href="#features">Features</a>
-        <a href="#install">Install</a>
-        <a href="#quickstart">Quick start</a>
-        <a href="#docs">Docs</a>
-        <a class="ext" href="https://github.com/ashish10alex/xf" target="_blank" rel="noopener">GitHub ↗</a>
-        <a class="ext" href="https://dataformtools.com" target="_blank" rel="noopener">VS Code Extension ↗</a>
-        <button type="button" class="theme-btn" id="theme-toggle" aria-label="Toggle color theme" title="Toggle light/dark theme">
-          <span aria-hidden="true">◐</span>
-          <span id="theme-label">Theme</span>
-        </button>
+      <nav class="nav" aria-label="Primary">
+        <a href="https://github.com/ashish10alex/xf/blob/main/docs/xf-web.md" target="_blank" rel="noopener">Docs</a>
+        <a href="https://github.com/ashish10alex/xf" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://dataformtools.com" target="_blank" rel="noopener">VS Code Extension</a>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme">◐</button>
       </nav>
     </div>
   </header>
 
-  <main id="main" class="container">
+  <main class="wrap">
     <!-- HERO -->
-    <section class="hero" aria-labelledby="hero-heading">
-      <div class="hero-badges">
-        <span class="pill"><span class="pill-dot" aria-hidden="true"></span>Single Go binary</span>
-        <span class="pill">Dataform &amp; dbt on BigQuery</span>
-        <span class="pill">macOS · Linux · Windows</span>
-        <span class="pill">MIT License</span>
-      </div>
-
-      <h1 id="hero-heading">
-        A unified interface for <span class="accent">Dataform</span> and <span class="accent">dbt</span> projects on BigQuery.
-      </h1>
-
-      <p class="hero-pitch">
-        Browse a project's actions with their <strong>compiled SQL, columns and lineage</strong>, dry run and run them, edit source files with vim keys, and see what your branch changes: the actions it touches, the <strong>columns it drops or retypes</strong> that something downstream still reads, and what its <strong>queries would cost</strong>.
+    <section class="hero">
+      <h1>Dataform and dbt on BigQuery, in your browser.</h1>
+      <p class="hero-lead">
+        Browse actions with their compiled SQL, columns and lineage, dry run and run them, edit source files, and see what your branch does to downstream columns and BigQuery query cost.
       </p>
 
-      <div class="hero-install-wrap">
-        <div class="install-switcher" role="tablist" aria-label="Primary install method">
-          <button type="button" class="install-tab" role="tab" aria-selected="true" data-cmd="brew install --cask ashish10alex/tap/xf" data-prompt="$">Homebrew (macOS)</button>
-          <button type="button" class="install-tab" role="tab" aria-selected="false" data-cmd="curl -fsSL https://xf.dataformtools.com/install.sh | sh" data-prompt="$">curl (macOS / Linux)</button>
-          <button type="button" class="install-tab" role="tab" aria-selected="false" data-cmd="go install github.com/ashish10alex/xf/cmd/xf@latest" data-prompt="$">Go 1.26+</button>
-          <button type="button" class="install-tab" role="tab" aria-selected="false" data-cmd="winget install AshishAlex.xf" data-prompt="&gt;">Windows (winget)</button>
+      <div class="install-bar">
+        <div class="install-cmd">
+          <span class="prompt" aria-hidden="true">$</span>
+          <code id="cmd-primary">brew install --cask ashish10alex/tap/xf</code>
         </div>
-
-        <div class="cmd-box">
-          <div class="cmd-line">
-            <span class="cmd-prompt" id="hero-cmd-prompt" aria-hidden="true">$</span>
-            <code class="cmd-text" id="hero-cmd-text">brew install --cask ashish10alex/tap/xf</code>
-          </div>
-          <button type="button" class="copy-btn" data-copy-target="hero-cmd-text" aria-label="Copy install command">
-            <span>Copy</span>
-          </button>
-        </div>
-
-        <div class="hero-links">
-          <span>Run <code>xf web</code> for the browser UI, <code>xf</code> for the TUI, or <code>xf --nvim</code> beside Neovim.</span>
-          <a href="#install">All install options &amp; prerequisites →</a>
-        </div>
+        <button type="button" class="copy-btn" data-copy-target="cmd-primary">Copy</button>
       </div>
+
+      <details class="other-installs">
+        <summary>Other install options (curl, Go, Windows)</summary>
+        <div class="other-installs-body">
+          <div class="alt-row">
+            <span class="alt-label">macOS / Linux</span>
+            <code id="cmd-curl">curl -fsSL https://xf.dataformtools.com/install.sh | sh</code>
+            <button type="button" class="copy-btn" data-copy-target="cmd-curl">Copy</button>
+          </div>
+          <div class="alt-row">
+            <span class="alt-label">Go 1.26+</span>
+            <code id="cmd-go">go install github.com/ashish10alex/xf/cmd/xf@latest</code>
+            <button type="button" class="copy-btn" data-copy-target="cmd-go">Copy</button>
+          </div>
+          <div class="alt-row">
+            <span class="alt-label">Windows</span>
+            <code id="cmd-win">winget install AshishAlex.xf</code>
+            <button type="button" class="copy-btn" data-copy-target="cmd-win">Copy</button>
+          </div>
+          <div class="alt-row">
+            <span class="alt-label">Archives</span>
+            <span>Prebuilt binaries on <a href="https://github.com/ashish10alex/xf/releases" target="_blank" rel="noopener">GitHub Releases</a> · <a href="https://github.com/ashish10alex/xf/blob/main/docs/windows.md" target="_blank" rel="noopener">Windows guide</a></span>
+          </div>
+        </div>
+      </details>
     </section>
 
-    <!-- INTERFACE / TERMINAL & WEB SAMPLE -->
-    <section id="preview" aria-labelledby="preview-heading">
-      <div class="section-head">
-        <p class="section-eyebrow">Workspace Preview</p>
-        <h2 class="section-title" id="preview-heading">The same panes and keys in your browser or terminal</h2>
-        <p class="section-sub">
-          <code>xf web</code> opens the workspace in your browser on <code>127.0.0.1</code>; <code>xf</code> opens the same panes in the terminal. Switch tabs below to inspect the workspace layout, branch column impact ledger, query cost check, and Neovim split.
+    <!-- PRODUCT MOMENT 1: xf web -->
+    <section class="moment" aria-labelledby="moment-web">
+      <div class="moment-header">
+        <p class="moment-tag">xf web</p>
+        <h2 id="moment-web">One browser workspace for your project</h2>
+        <p>
+          Run <code>xf web</code> in any Dataform or dbt repository. Edit source files beside live compiled SQL, inspect schema columns and lineage, run Scratch queries or trace rows in the Dependency Inspector, and defer unbuilt upstream tables to prod.
         </p>
       </div>
 
-      <div class="showcase-bar">
-        <div class="view-tabs" role="tablist" aria-label="xf views">
-          <button type="button" class="view-tab" role="tab" aria-selected="true" aria-controls="panel-web" id="tab-web">
-            <span>1</span> <code>xf web</code> &amp; TUI Panes
-          </button>
-          <button type="button" class="view-tab" role="tab" aria-selected="false" aria-controls="panel-impact" id="tab-impact">
-            <span>I</span> Column Impact (<code>xf impact</code>)
-          </button>
-          <button type="button" class="view-tab" role="tab" aria-selected="false" aria-controls="panel-cost" id="tab-cost">
-            <span>C</span> Query Cost (<code>xf cost</code>)
-          </button>
-          <button type="button" class="view-tab" role="tab" aria-selected="false" aria-controls="panel-nvim" id="tab-nvim">
-            <span>:Xf</span> Neovim Split &amp; LSP (<code>xf --nvim</code>)
-          </button>
+      <div class="browser-frame" role="region" aria-label="xf web browser workspace preview">
+        <div class="browser-bar">
+          <div class="browser-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span class="browser-url">127.0.0.1:7777 · examples/dataform</span>
+          <span>⎇ feat/orders vs main · <span class="ok">→ prod</span></span>
         </div>
-      </div>
 
-      <div class="workspace-frame">
-        <!-- TAB 1: xf web / TUI panes (from examples/dataform) -->
-        <div class="view-panel" id="panel-web" role="tabpanel" aria-labelledby="tab-web">
-          <div class="ws-topbar">
-            <div class="ws-topbar-left">
-              <strong class="ok">xf web</strong>
-              <span>examples/dataform <span class="dim">(dataform)</span></span>
-              <span>⎇ feat/orders vs main <span class="amber">●2</span></span>
-              <span class="blue">→ prod: on</span>
+        <div class="web-layout">
+          <div class="web-rail" aria-hidden="true">
+            <span class="on" title="Explorer">▤</span>
+            <span title="Search">⌕</span>
+            <span title="Source Control">⎇</span>
+            <span title="Scratch">✦</span>
+          </div>
+
+          <div class="web-sidebar">
+            <div>
+              <div class="pane-caption">
+                <span>Actions</span>
+                <span>⌘P</span>
+              </div>
+              <ul class="model-list">
+                <li class="active"><span class="badge">INCR</span> <span>fct_orders</span></li>
+                <li><span class="badge">TABLE</span> <span>dim_customers</span></li>
+                <li><span class="badge">VIEW</span> <span>stg_orders</span></li>
+                <li><span class="badge">VIEW</span> <span>stg_payments</span></li>
+                <li><span class="badge">ASSRT</span> <span>assert_positive_totals</span></li>
+              </ul>
             </div>
-            <div class="ws-topbar-right">
-              <span><kbd>⌘p</kbd> find</span>
-              <span><kbd>R</kbd> run changed</span>
-              <span><kbd>I</kbd> impact</span>
-              <span><kbd>C</kbd> cost</span>
-              <span><kbd>E</kbd> edit source</span>
-              <span><kbd>?</kbd> help</span>
+
+            <div>
+              <div class="pane-caption">
+                <span>Dry run</span>
+                <span>r run · R changed</span>
+              </div>
+              <div style="font-size: 12px; color: var(--muted);">
+                <span class="ok">✓ valid</span> · scans <strong>420.00 MiB</strong> ($0.003)<br>
+                partitioned by <code>order_date</code>
+              </div>
             </div>
           </div>
 
-          <div class="ws-grid">
-            <div class="ws-stack">
-              <div class="ws-pane focused">
-                <div class="ws-pane-title">
-                  <span>1 actions · 11 total</span>
-                  <span><kbd>/</kbd> filter · <kbd>s</kbd> scratch</span>
+          <div class="web-main">
+            <div>
+              <div class="web-tabs">
+                <div class="web-tabs-left">
+                  <span class="active">sql</span>
+                  <span>columns (5)</span>
+                  <span>lineage</span>
+                  <span>source (E)</span>
                 </div>
-                <ul class="action-list">
-                  <li class="action-item sel">
-                    <span class="ok">●</span>
-                    <span class="action-kind amber">INCR</span>
-                    <span>xf_example.fct_orders</span>
-                  </li>
-                  <li class="action-item">
-                    <span class="ok">●</span>
-                    <span class="action-kind blue">TABLE</span>
-                    <span>xf_example.dim_customers</span>
-                  </li>
-                  <li class="action-item">
-                    <span class="dim">·</span>
-                    <span class="action-kind purple">VIEW</span>
-                    <span>xf_example.stg_orders</span>
-                  </li>
-                  <li class="action-item">
-                    <span class="dim">·</span>
-                    <span class="action-kind purple">VIEW</span>
-                    <span>xf_example.stg_payments</span>
-                  </li>
-                  <li class="action-item">
-                    <span class="dim">·</span>
-                    <span class="action-kind ok">ASSRT</span>
-                    <span>xf_example.assert_positive_order_totals</span>
-                  </li>
-                </ul>
+                <span>definitions/marts/fct_orders.sqlx</span>
               </div>
 
-              <div class="ws-pane">
-                <div class="ws-pane-title">
-                  <span>target · dev overrides</span>
-                  <span>.xf/config.json</span>
-                </div>
-                <div class="mono" style="font-size:12px;">
-                  <div><span class="dim">schemaSuffix:</span> <code>ashish</code> <span class="dim">→ xf_example_ashish</span></div>
-                  <div><span class="dim">defer to prod:</span> <span class="ok">2 upstream tables read from prod</span></div>
-                </div>
-              </div>
-
-              <div class="ws-pane">
-                <div class="ws-pane-title">
-                  <span>3 run</span>
-                  <span><kbd>r</kbd> run · <kbd>d</kbd> deps · <kbd>D</kbd> dependents · <kbd>f</kbd> full · <kbd>a</kbd> api</span>
-                </div>
-                <div class="mono" style="font-size:12px;">
-                  <div class="dim">$ dataform run --actions xf_example_ashish.fct_orders</div>
-                  <div style="margin-top:4px;"><span class="ok">✓ dry run valid</span> · scans <strong>420.00 MiB</strong> ($0.003) · partitioned by <code>order_date</code></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="ws-stack">
-              <div class="ws-pane">
-                <div class="ws-pane-title">
-                  <span>2 <u class="ok">sql</u> · columns · lineage <span class="dim">(tab / c)</span></span>
-                  <span>definitions/marts/fct_orders.sqlx · <kbd>i</kbd> incremental</span>
-                </div>
-<pre class="sql-code"><span class="sql-com">-- Compiled incremental query (definitions/marts/fct_orders.sqlx)</span>
-<span class="sql-kw">DECLARE</span> since <span class="sql-type">DATE</span> <span class="sql-kw">DEFAULT</span> (
-  <span class="sql-kw">SELECT</span> <span class="sql-fn">MAX</span>(order_date) <span class="sql-kw">FROM</span> <span class="sql-str">`alex-personal-dev-01.xf_example_ashish.fct_orders`</span>
+<pre class="sql-pre"><span class="kw">DECLARE</span> since <span class="kw">DATE DEFAULT</span> (
+  <span class="kw">SELECT</span> <span class="fn">MAX</span>(order_date) <span class="kw">FROM</span> <span class="str">`acme-dev.marts.fct_orders`</span>
 );
 
-<span class="sql-kw">SELECT</span>
+<span class="kw">SELECT</span>
   o.order_id,
   o.customer_id,
   o.order_date,
   o.status,
-  <span class="sql-fn">SUM</span>(p.amount) <span class="sql-kw">AS</span> amount
-<span class="sql-kw">FROM</span> <span class="sql-str">`alex-personal-dev-01.xf_example.stg_orders`</span> <span class="sql-kw">AS</span> o <span class="sql-com">-- → prod</span>
-<span class="sql-kw">LEFT JOIN</span> <span class="sql-str">`alex-personal-dev-01.xf_example.stg_payments`</span> <span class="sql-kw">AS</span> p <span class="sql-com">-- → prod</span>
-  <span class="sql-kw">USING</span> (order_id)
-<span class="sql-kw">WHERE</span> o.order_date &gt; since
-<span class="sql-kw">GROUP BY</span> <span class="sql-num">1</span>, <span class="sql-num">2</span>, <span class="sql-num">3</span>, <span class="sql-num">4</span></pre>
-              </div>
-
-              <div class="ws-pane">
-                <div class="ws-pane-title">
-                  <span>4 log · <u>jobs</u> · history · preview · terminal <span class="dim">(⌘j)</span></span>
-                  <span>2/2 done · elapsed 4.1s · billed 420.00 MiB · est. $0.0026</span>
-                </div>
-                <div class="mono" style="font-size:12px;">
-                  <div><span class="ok">✓</span> <code>xf_example_ashish.fct_orders</code> <span class="dim">· 3.2s · slot 18.4s · 420.00 MiB · $0.0026</span></div>
-                  <div><span class="ok">✓</span> <code>xf_example_ashish.fct_orders_assertions_uniqueKey_0</code> <span class="dim">· 0.9s · 0 B · $0.0000</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="ws-statusline">
-            <span><strong class="ok">NORMAL</strong> · <code>h/j/k/l</code> move · <code>/</code> search SQL · <code>z</code> zoom pane · <code>⌘↵</code> preview rows</span>
-            <span>Engine: <code>xf serve</code> (cached compile · instant startup)</span>
-          </div>
-        </div>
-
-        <!-- TAB 2: Column Impact (xf impact / I) -->
-        <div class="view-panel" id="panel-impact" role="tabpanel" aria-labelledby="tab-impact" hidden>
-          <div class="ws-topbar">
-            <div class="ws-topbar-left">
-              <strong class="err">🚨 1 to fix before merging</strong>
-              <span><code>feat/orders</code> vs <code>origin/main @ 1125280</code> · Evaluated against: tables in <code>acme-prod</code></span>
-            </div>
-            <div class="ws-topbar-right">
-              <span>Press <kbd>I</kbd> in xf or run <code>xf impact</code> / <code>xf check --comment</code></span>
-            </div>
-          </div>
-
-          <table class="ledger-table" aria-label="Column impact report sample">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Model (<code>marts</code>)</th>
-                <th>Column changes vs BigQuery</th>
-                <th>Downstream readers (Dataplex Data Lineage, last 30d)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>1</td>
-                <td>🚨 <code>orders</code></td>
-                <td>
-                  <div><span class="err">dropped</span> <code>discount</code> <span class="dim">(NUMERIC)</span></div>
-                  <div><span class="ok">added</span> <code>net_amount</code> <span class="dim">(NUMERIC)</span></div>
-                </td>
-                <td>
-                  <div><strong><code>finance.margins</code></strong> · exact copy · <span class="err">still reads it (dry run fails)</span></div>
-                  <div><code>reporting.revenue_report</code> · derived · <span class="ok">no longer reads it (dry run passes)</span></div>
-                </td>
-              </tr>
-              <tr>
-                <td>2</td>
-                <td>⚠️ <code>dim_customers</code></td>
-                <td>
-                  <div><span class="warn">retyped</span> <code>customer_id</code> <span class="dim">(INT64 → STRING)</span></div>
-                </td>
-                <td>
-                  <div><strong><code>marts.customer_segments_v2</code></strong> · exact copy · unchanged on branch</div>
-                </td>
-              </tr>
-              <tr>
-                <td>3</td>
-                <td>✅ <code>daily</code> <span class="dim">(view)</span></td>
-                <td>keeps every column</td>
-                <td class="dim">—</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div class="ws-statusline">
-            <span>Dry-runs changed downstream readers in the branch to verify whether a dropped column is still referenced.</span>
-            <span>CI flags: <code>--fail-on critical|warning</code> · <code>--json</code></span>
-          </div>
-        </div>
-
-        <!-- TAB 3: Query Cost (xf cost / C) -->
-        <div class="view-panel" id="panel-cost" role="tabpanel" aria-labelledby="tab-cost" hidden>
-          <div class="ws-topbar">
-            <div class="ws-topbar-left">
-              <strong class="amber">Query Cost Estimate</strong>
-              <span><code>feature/v2-marts</code> vs <code>origin/main @ 1125280</code> · On-demand ($6.25 / TiB)</span>
-            </div>
-            <div class="ws-topbar-right">
-              <span>Press <kbd>C</kbd> in xf or run <code>xf cost --fail-over 100GB</code></span>
-            </div>
-          </div>
-
-<pre class="sql-code" style="padding: 8px 10px;">$ xf cost --fail-over 100GB
-4 changed actions in feature/v2-marts vs origin/main @ 1125280 (working tree)
-
-<span class="warn">⚠ marts.fct_order_items</span>  ≤ 4.20 TiB  $26.25  <span class="err">+4.20 TiB</span>  (full refresh 9.00 TiB)  <span class="warn">[MISSING PARTITION FILTER: event_date on raw.events]</span>
-<span class="ok">✓ marts.dim_customers</span>      1.80 GiB  $0.011  new
-<span class="ok">✓ staging.stg_pageviews</span>  420.00 MiB  $0.003  no change
-<span class="dim">? ops.audit_log          not estimated: BigQuery gives no estimate for a script</span>
-────────────────────────────────────────────────────────────────────────────────
-Total scanned: ≤ 4.20 TiB | Estimated cost: ≤ $26.26
-<span class="err">✗ Gate failed: 4.20 TiB exceeds the limit of 100.00 GiB</span></pre>
-
-          <div class="ws-statusline">
-            <span>Compares each changed action's bytes against the merge-base dry-run on today's tables, and flags missing partition filters.</span>
-            <span>CI flags: <code>--fail-over 100GB</code> · <code>--usd-per-tib 6.25</code> · <code>--json</code></span>
-          </div>
-        </div>
-
-        <!-- TAB 4: Neovim Split & Language Server -->
-        <div class="view-panel" id="panel-nvim" role="tabpanel" aria-labelledby="tab-nvim" hidden>
-          <div class="ws-topbar">
-            <div class="ws-topbar-left">
-              <strong class="ok">xf --nvim definitions/marts/dim_customers.sqlx</strong>
-              <span>Neovim + <code>xf lsp</code> + <code>:Xf</code> split sharing one <code>xf serve</code> engine</span>
-            </div>
-            <div class="ws-topbar-right">
-              <span><kbd>gd</kbd> definition · <kbd>K</kbd> table card · <kbd>o</kbd> open in editor · <kbd>Z</kbd> full screen</span>
-            </div>
-          </div>
-
-          <div class="ws-grid">
-            <div class="ws-pane">
-              <div class="ws-pane-title">
-                <span>nvim · definitions/marts/dim_customers.sqlx</span>
-                <span>LSP: xf · 1.80 GiB ($0.011)</span>
-              </div>
-<pre class="sql-code"><span class="sql-kw">config</span> {
-  type: <span class="sql-str">"table"</span>,
-  bigquery: { partitionBy: <span class="sql-str">"first_order_date"</span> }
-}
-
-<span class="sql-kw">SELECT</span>
-  c.customer_id,
-  c.email,
-  o.first_order_date,
-  <span class="sql-fn">COALESCE</span>(o.lifetime_value, <span class="sql-num">0</span>) <span class="sql-kw">AS</span> lifetime_value
-<span class="sql-kw">FROM</span> ${<span class="sql-fn">ref</span>(<span class="sql-str">"stg_customers"</span>)} <span class="sql-kw">AS</span> c
-<span class="sql-kw">LEFT JOIN</span> orders <span class="sql-kw">AS</span> o <span class="sql-kw">USING</span> (customer_id)
-
-<span class="sql-com">┌─ Hover (K on "stg_customers") ────────────────────┐</span>
-<span class="sql-com">│ VIEW alex-personal-dev-01.xf_example.stg_customers│</span>
-<span class="sql-com">│ customer_id   STRING   Primary key                │</span>
-<span class="sql-com">│ email         STRING   Customer email address     │</span>
-<span class="sql-com">│ country_code  STRING   ISO 2-letter country       │</span>
-<span class="sql-com">└───────────────────────────────────────────────────┘</span></pre>
+  <span class="fn">SUM</span>(p.amount) <span class="kw">AS</span> amount
+<span class="kw">FROM</span> <span class="str">`acme-prod.staging.stg_orders`</span> <span class="kw">AS</span> o <span class="com">-- → prod</span>
+<span class="kw">LEFT JOIN</span> <span class="str">`acme-prod.staging.stg_payments`</span> <span class="kw">AS</span> p <span class="com">-- → prod</span>
+  <span class="kw">USING</span> (order_id)
+<span class="kw">WHERE</span> o.order_date &gt; since
+<span class="kw">GROUP BY</span> 1, 2, 3, 4</pre>
             </div>
 
-            <div class="ws-pane focused">
-              <div class="ws-pane-title">
-                <span>:Xf split · follows active buffer</span>
-                <span><kbd>&lt;C-w&gt;</kbd> switch window</span>
-              </div>
-<pre class="sql-code"><span class="ok">● TABLE xf_example.dim_customers</span>
-  partitioned by <span class="sql-str">first_order_date</span> · clustered by <span class="sql-str">customer_id</span>
-  assertions: uniqueKey, nonNull
-
-<span class="dim">── Lineage (O / tab) ───────────────────────────────</span>
-  <span class="purple"> upstream:</span>   stg_customers, stg_orders, stg_payments
-  <span class="blue"> downstream:</span> reports.revenue_report
-
-<span class="dim">── Dry Run ─────────────────────────────────────────</span>
-  <span class="ok">✓ Valid SQL</span> · scans 1.80 GiB ($0.011)
-  Saving in Neovim recompiles once for both the split
-  and LSP diagnostics.</pre>
+            <div class="web-footer">
+              <span><kbd>⌘↵</kbd> preview rows · <kbd>s</kbd> scratch query · <kbd>I</kbd> column impact · <kbd>C</kbd> query cost</span>
+              <span><code>xf serve</code> · cached compile</span>
             </div>
-          </div>
-
-          <div class="ws-statusline">
-            <span>Works out of the box with <code>xf --nvim</code>, or permanently via the <code>nvim/</code> plugin directory and <code>vim.lsp.enable("xf")</code>.</span>
-            <span>Attaches only inside Dataform and dbt projects.</span>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- FEATURES -->
-    <section id="features" aria-labelledby="features-heading">
-      <div class="section-head">
-        <p class="section-eyebrow">Capabilities</p>
-        <h2 class="section-title" id="features-heading">Everything in one binary for local dev and CI</h2>
-        <p class="section-sub">
-          <code>xf</code> detects whether a directory is a Dataform project (<code>workflow_settings.yaml</code> or <code>dataform.json</code>) or a dbt project (<code>dbt_project.yml</code>) and shares a single background engine (<code>xf serve</code>) across interfaces.
-        </p>
-      </div>
-
-      <div class="features-grid">
-        <article class="pane feature-card">
-          <div class="pane-title">
-            <span class="pt-main">1 · xf web &amp; Terminal UI</span>
-            <span>Browser + TUI</span>
-          </div>
-          <h3>Browse actions, SQL, columns &amp; lineage</h3>
+    <!-- PRODUCT MOMENTS 2 & 3: Column Impact & Query Cost -->
+    <section class="checks-grid" aria-label="Branch checks">
+      <!-- Column Impact -->
+      <div class="check-card">
+        <div class="moment-header" style="margin-bottom: 0;">
+          <p class="moment-tag">Column impact · xf impact</p>
+          <h2>See who reads a column before you drop it</h2>
           <p>
-            Inspect every table, view, incremental model, assertion, test, seed, snapshot, declaration and source. Switch between compiled SQL, BigQuery schema columns, and upstream/downstream lineage with <kbd>Tab</kbd> or <kbd>c</kbd>.
+            Compares changed models with BigQuery and asks Dataplex Data Lineage what reads any dropped or retyped columns. Readers edited on your branch are dry-run to check if they still reference the column.
           </p>
-          <ul>
-            <li><code>xf web</code> runs locally on <code>127.0.0.1</code> (or as a standalone Chrome/Edge <code>--app</code> window).</li>
-            <li><code>xf</code> opens the same panes in the terminal (TUI is in maintenance mode; new features land in <code>xf web</code>).</li>
-            <li>Instant startup from cached compiles while a fresh compile runs in the background.</li>
-          </ul>
-        </article>
+        </div>
 
-        <article class="pane feature-card">
-          <div class="pane-title">
-            <span class="pt-main">2 · Dry Run, Run &amp; Defer to Prod</span>
-            <span>BigQuery Execution</span>
+        <div class="report-box">
+          <div class="report-head">
+            <strong class="err">🚨 1 to fix before merging</strong>
+            <span class="mono" style="color: var(--dim);">feat/orders vs main</span>
           </div>
-          <h3>Run actions, tags, or only what changed</h3>
+          <div class="report-body">
+            <div class="impact-row">
+              <div>🚨 <strong>marts.orders</strong> · <span class="err">dropped</span> <code>discount</code></div>
+              <div class="impact-sub">
+                ↳ <strong>finance.margins</strong> · exact copy · <span class="err">still reads it (dry run fails)</span><br>
+                ↳ reporting.revenue_report · <span class="ok">no longer reads it (dry run passes)</span>
+              </div>
+            </div>
+            <div class="impact-row">
+              <div>⚠️ <strong>marts.dim_customers</strong> · <span class="warn">retyped</span> <code>customer_id</code> <span style="color: var(--dim);">(INT64 → STRING)</span></div>
+              <div class="impact-sub">
+                ↳ <strong>marts.customer_segments</strong> · unchanged on branch
+              </div>
+            </div>
+            <div class="impact-row">
+              <div>✅ <strong>marts.daily_revenue</strong> · <span style="color: var(--muted);">keeps every column</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Query Cost -->
+      <div class="check-card">
+        <div class="moment-header" style="margin-bottom: 0;">
+          <p class="moment-tag">Query cost · xf cost</p>
+          <h2>Know what a branch adds to your BigQuery bill</h2>
           <p>
-            Every action is dry-run automatically as you browse and save. Press <kbd>r</kbd> to run an action (with dependencies <kbd>d</kbd>, dependents <kbd>D</kbd>, or full refresh <kbd>f</kbd>), <kbd>T</kbd> to run tags, or <kbd>R</kbd> to run only actions modified on your branch.
+            Dry-runs every changed action against prod tables, compares bytes scanned against the merge-base on <code>main</code>, and flags queries reading partitioned tables without a partition filter.
           </p>
-          <ul>
-            <li><strong>Defer to prod</strong> (<code>xf web</code> &amp; <code>xf run --defer</code>): read unbuilt upstream tables from prod via proxy views in Dataform or <code>--defer</code> in dbt.</li>
-            <li><strong>Dataform API runs</strong> (<kbd>a</kbd>) &amp; <code>xf watch</code>: trigger or watch remote GCP workflows with live per-job slot time, bytes billed, and cost.</li>
-          </ul>
-        </article>
-
-        <article class="pane feature-card">
-          <div class="pane-title">
-            <span class="pt-main">3 · Branch Impact &amp; Cost Checks</span>
-            <span>Local &amp; Pull Requests</span>
-          </div>
-          <h3>Catch broken downstream readers &amp; costly scans</h3>
-          <p>
-            Compare your branch against <code>origin/main</code> before merging—interactively with <kbd>I</kbd> and <kbd>C</kbd>, from the CLI with <code>xf impact</code> and <code>xf cost</code>, or combined with <code>xf check</code>.
-          </p>
-          <ul>
-            <li><strong>Column impact</strong>: queries Dataplex Data Lineage for downstream readers of dropped or retyped columns and dry-runs readers modified on the branch.</li>
-            <li><strong>Query cost</strong>: estimates bytes scanned and on-demand USD delta vs merge-base, flagging missing partition filters.</li>
-            <li><strong>CI integration</strong>: GitHub Action (<code>ashish10alex/xf</code>) and GitLab CI template post in-place PR comments and line notes.</li>
-          </ul>
-        </article>
-
-        <article class="pane feature-card">
-          <div class="pane-title">
-            <span class="pt-main">4 · Source Editor, Scratch &amp; Inspector</span>
-            <span>xf web tools</span>
-          </div>
-          <h3>Edit with vim keys, run scratch SQL &amp; trace keys</h3>
-          <p>
-            <code>xf web</code> includes a full source editor (<kbd>E</kbd>), file tree (<kbd>⌘b</kbd>), Git source control (<kbd>ctrl+g</kbd>) with hunk staging and branch worktrees, and SQLFluff formatting.
-          </p>
-          <ul>
-            <li><strong>Action preview</strong> (<kbd>⌘↵</kbd>) &amp; <strong>Scratch queries</strong> (<code>s</code> or <code>xf scratch</code>): run ad-hoc BigQuery jobs with schema-aware completion, column filters, sorting, and CSV export.</li>
-            <li><strong>Dependency inspector</strong>: trace a filter (e.g. <code>order_id = 'A1'</code>) across a model and its upstream tables to spot where rows drop out.</li>
-          </ul>
-        </article>
-
-        <article class="pane feature-card">
-          <div class="pane-title">
-            <span class="pt-main">5 · Neovim &amp; Language Server</span>
-            <span>xf --nvim · xf lsp</span>
-          </div>
-          <h3>First-class Neovim split and LSP</h3>
-          <p>
-            Run <code>xf --nvim</code> to launch Neovim with <code>xf</code> in a side split and the language server enabled for the session—no Neovim configuration required—or add the <code>nvim/</code> plugin permanently.
-          </p>
-          <ul>
-            <li><strong>Go to definition</strong> (<kbd>gd</kbd>) on Dataform <code>ref()</code>, JS <code>includes/</code>, dbt <code>ref()</code>, <code>source()</code>, macros, and CTEs.</li>
-            <li><strong>Hover cards</strong> (<kbd>K</kbd>) with BigQuery table columns, partitioning, and function signatures.</li>
-            <li><strong>Live diagnostics</strong> from compile errors and BigQuery dry runs traced back to exact lines, plus query cost hints.</li>
-          </ul>
-        </article>
-
-        <article class="pane feature-card">
-          <div class="pane-title">
-            <span class="pt-main">6 · Fast dbt &amp; Multi-Project Workflow</span>
-            <span>Dataform &amp; dbt</span>
-          </div>
-          <h3>Staged dbt compiles &amp; project discovery</h3>
-          <p>
-            Large dbt projects on BigQuery don't block startup: <code>xf</code> runs <code>dbt parse</code> first to show the graph in about a second, then compiles the focused model ahead of the rest of the project.
-          </p>
-          <ul>
-            <li><strong>Isolated artifacts</strong>: dbt compiles write to <code>xf</code>'s cache directory, never overwriting your project's <code>target/</code>.</li>
-            <li><strong>Project picker &amp; search</strong>: run <code>xf search ~/code</code> to index all Dataform and dbt repos, and switch between them or open branches in git worktrees.</li>
-            <li><strong>Agent skills</strong>: bundled skills in <code>skills/xf-checks</code> and <code>skills/xf-run</code> for Claude Code, Codex, and Antigravity.</li>
-          </ul>
-        </article>
-      </div>
-    </section>
-
-    <!-- INSTALL OPTIONS & PREREQUISITES -->
-    <section id="install" aria-labelledby="install-heading">
-      <div class="section-head">
-        <p class="section-eyebrow">Installation</p>
-        <h2 class="section-title" id="install-heading">Install <code>xf</code></h2>
-        <p class="section-sub">
-          <code>xf</code> ships as a single executable with no runtime dependencies of its own. Later, run <code>xf update</code> (or <code>xf --update</code>) to update it the way it was installed.
-        </p>
-      </div>
-
-      <div class="install-grid">
-        <!-- Homebrew -->
-        <div class="pane install-card focused">
-          <div class="pane-title">
-            <span class="pt-main">macOS · Homebrew</span>
-            <span>Recommended on Mac</span>
-          </div>
-          <h3>Homebrew Cask</h3>
-          <p>Installs the prebuilt macOS binary (Apple Silicon &amp; Intel) and updates via <code>xf update</code> or <code>brew upgrade --cask</code>.</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-brew">brew install --cask ashish10alex/tap/xf</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-brew">Copy</button>
-          </div>
         </div>
 
-        <!-- Install Script -->
-        <div class="pane install-card">
-          <div class="pane-title">
-            <span class="pt-main">macOS &amp; Linux · Shell Script</span>
-            <span>SHA-256 verified</span>
+        <div class="report-box">
+          <div class="report-head">
+            <strong class="warn">≤ 4.20 TiB scanned ($26.26)</strong>
+            <span class="mono" style="color: var(--dim);">+4.20 TiB vs main</span>
           </div>
-          <h3>curl install script</h3>
-          <p>Downloads the latest release for your OS/arch, verifies it against <code>checksums.txt</code>, and installs to <code>~/.local/bin</code> (or <code>$XF_INSTALL_DIR</code>).</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-curl">curl -fsSL https://xf.dataformtools.com/install.sh | sh</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-curl">Copy</button>
-          </div>
-        </div>
-
-        <!-- Go install -->
-        <div class="pane install-card">
-          <div class="pane-title">
-            <span class="pt-main">Go Toolchain</span>
-            <span>macOS · Linux · Windows</span>
-          </div>
-          <h3>Build with <code>go install</code></h3>
-          <p>With Go 1.26+ (Go 1.21+ downloads the 1.26 toolchain automatically), installs into <code>$GOBIN</code> (default <code>~/go/bin</code>).</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-go">go install github.com/ashish10alex/xf/cmd/xf@latest</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-go">Copy</button>
+          <div class="report-body">
+            <ul class="cost-list">
+              <li>
+                <span><span class="warn">⚠</span> <strong>marts.fct_order_items</strong><br><span style="color: var(--amber); font-size: 11.5px;">missing partition filter: event_date on raw.events</span></span>
+                <span style="text-align: right;">≤ 4.20 TiB · $26.25<br><span class="err" style="font-size: 11.5px;">+4.20 TiB</span></span>
+              </li>
+              <li>
+                <span><span class="ok">✓</span> <strong>marts.dim_customers</strong></span>
+                <span style="text-align: right;">1.80 GiB · $0.011<br><span style="color: var(--muted); font-size: 11.5px;">new</span></span>
+              </li>
+              <li>
+                <span><span class="ok">✓</span> <strong>staging.stg_pageviews</strong></span>
+                <span style="text-align: right;">420.00 MiB · $0.003<br><span style="color: var(--muted); font-size: 11.5px;">no change</span></span>
+              </li>
+            </ul>
           </div>
         </div>
-
-        <!-- Windows & Release Archives -->
-        <div class="pane install-card">
-          <div class="pane-title">
-            <span class="pt-main">Windows &amp; Release Archives</span>
-            <span>x64 &amp; ARM64</span>
-          </div>
-          <h3>winget, Scoop, PowerShell or GitHub Releases</h3>
-          <p>Native builds for Windows 10 22H2 / 11, or download prebuilt archives for any platform from <a href="https://github.com/ashish10alex/xf/releases" target="_blank" rel="noopener">GitHub Releases ↗</a>.</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">&gt;</span>
-              <code class="cmd-text" id="cmd-win">winget install AshishAlex.xf</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-win">Copy</button>
-          </div>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">&gt;</span>
-              <code class="cmd-text" id="cmd-ps1">irm https://raw.githubusercontent.com/ashish10alex/xf/main/scripts/install.ps1 | iex</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-ps1">Copy</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Prerequisites -->
-      <div class="prereq-grid">
-        <div class="pane install-card">
-          <div class="pane-title">
-            <span class="pt-main">Prerequisite 1 · Google Cloud ADC</span>
-            <span>Required for BigQuery</span>
-          </div>
-          <h3>Application Default Credentials</h3>
-          <p>
-            Dry runs, table hovers, scratch queries, and API runs call GCP as you through Application Default Credentials (separate from <code>gcloud auth login</code>). <code>xf</code> picks up a new login without a restart.
-          </p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-adc">gcloud auth application-default login</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-adc">Copy</button>
-          </div>
-        </div>
-
-        <div class="pane install-card">
-          <div class="pane-title">
-            <span class="pt-main">Prerequisite 2 · Dataform CLI or dbt</span>
-            <span>Project compiler</span>
-          </div>
-          <h3>Dataform CLI or dbt (dbt-core / dbt v2)</h3>
-          <p>
-            For Dataform, install <code>@dataform/cli</code> (and run <code>dataform init-creds</code> if running via <code>dataform run</code>). For dbt, use <code>dbt-core</code> 1.x with <code>dbt-bigquery</code> (in <code>.venv</code> or on <code>PATH</code>) or dbt v2.
-          </p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-df">npm i -g @dataform/cli</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-df">Copy</button>
-          </div>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-dbt">pip install dbt-core dbt-bigquery</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-dbt">Copy</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- QUICK START -->
-    <section id="quickstart" aria-labelledby="quickstart-heading">
-      <div class="section-head">
-        <p class="section-eyebrow">Quick Start</p>
-        <h2 class="section-title" id="quickstart-heading">Up and running in a minute</h2>
-        <p class="section-sub">
-          Run <code>xf web</code> or <code>xf</code> from a project's root (the folder with <code>workflow_settings.yaml</code>, <code>dataform.json</code>, or <code>dbt_project.yml</code>)—or outside any project to pick or search for one.
-        </p>
-      </div>
-
-      <div class="steps-grid">
-        <div class="pane step-card">
-          <div class="pane-title">
-            <span class="pt-main">Step 1 · Open a project</span>
-            <span>Browser or terminal</span>
-          </div>
-          <h3>Start <code>xf web</code> in your project</h3>
-          <p>Opens the workspace in your browser. Outside a project, it lists the projects you have opened or lets you search a folder.</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-qs-web">xf web</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-qs-web">Copy</button>
-          </div>
-          <p style="margin-top:10px; margin-bottom:6px;">Prefer the terminal or Neovim?</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-qs-nvim">xf --nvim</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-qs-nvim">Copy</button>
-          </div>
-        </div>
-
-        <div class="pane step-card">
-          <div class="pane-title">
-            <span class="pt-main">Step 2 · Try an example or discover repos</span>
-            <span>Optional</span>
-          </div>
-          <h3>Index local projects or open an example</h3>
-          <p>Find every Dataform and dbt project under a directory so the project picker lists them:</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-qs-search">xf search ~/code</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-qs-search">Copy</button>
-          </div>
-          <p style="margin-top:10px; margin-bottom:6px;">Or try the example projects in a clone of the repo:</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-qs-ex">xf web --dir examples/dataform</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-qs-ex">Copy</button>
-          </div>
-        </div>
-
-        <div class="pane step-card">
-          <div class="pane-title">
-            <span class="pt-main">Step 3 · Check a branch from the CLI</span>
-            <span>Local &amp; CI</span>
-          </div>
-          <h3>Run column impact and query cost checks</h3>
-          <p>Print a combined Markdown report comparing your branch against <code>origin/main</code>, or gate CI builds:</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-qs-check">xf check --fail-on critical --fail-over 100GB</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-qs-check">Copy</button>
-          </div>
-          <p style="margin-top:10px; margin-bottom:6px;">Check which settings and Google accounts are active:</p>
-          <div class="cmd-box secondary">
-            <div class="cmd-line">
-              <span class="cmd-prompt">$</span>
-              <code class="cmd-text" id="cmd-qs-auth">xf config --auth</code>
-            </div>
-            <button type="button" class="copy-btn" data-copy-target="cmd-qs-auth">Copy</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Keybindings cheat sheet -->
-      <div class="pane" style="margin-top: 22px;">
-        <div class="pane-title">
-          <span class="pt-main">Essential Keys in <code>xf web</code> &amp; the TUI</span>
-          <span>Press <kbd>?</kbd> anytime for every shortcut</span>
-        </div>
-        <div class="keys-grid">
-          <div class="key-item"><kbd>⌘p</kbd> / <kbd>/</kbd> <span>Find file or action (<code>#</code> for actions)</span></div>
-          <div class="key-item"><kbd>Tab</kbd> / <kbd>c</kbd> <span>Cycle SQL, columns &amp; lineage</span></div>
-          <div class="key-item"><kbd>r</kbd> <span>Run selected action</span></div>
-          <div class="key-item"><kbd>R</kbd> <span>Run what your branch changed</span></div>
-          <div class="key-item"><kbd>T</kbd> <span>Filter and run tags</span></div>
-          <div class="key-item"><kbd>I</kbd> <span>Branch column impact report</span></div>
-          <div class="key-item"><kbd>C</kbd> <span>Branch BigQuery cost estimate</span></div>
-          <div class="key-item"><kbd>E</kbd> <span>Edit source file beside SQL (<code>xf web</code>)</span></div>
-          <div class="key-item"><kbd>s</kbd> <span>New Scratch query from model (<code>xf web</code>)</span></div>
-          <div class="key-item"><kbd>⌘↵</kbd> <span>Preview action rows in BigQuery (<code>xf web</code>)</span></div>
-          <div class="key-item"><kbd>B</kbd> <span>Switch branch or open in worktree</span></div>
-          <div class="key-item"><kbd>o</kbd> <span>Open file in connected editor</span></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- DOCS & ECOSYSTEM LINKS -->
-    <section id="docs" aria-labelledby="docs-heading">
-      <div class="section-head">
-        <p class="section-eyebrow">Documentation &amp; Ecosystem</p>
-        <h2 class="section-title" id="docs-heading">Guides, reference &amp; companion tools</h2>
-        <p class="section-sub">
-          Read the documentation in the GitHub repository or explore the Dataform Tools VS Code extension.
-        </p>
-      </div>
-
-      <div class="docs-grid">
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/xf-web.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>xf web</span> <span>↗</span></div>
-          <p class="doc-link-desc">The browser UI, source editor, file tree, source control, Scratch queries, dependency inspector, and settings.</p>
-        </a>
-
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>Checking a branch</span> <span>↗</span></div>
-          <p class="doc-link-desc">Column impact (<code>xf impact</code>), query cost (<code>xf cost</code>), <code>xf check</code>, GitHub Action, GitLab CI template, and agent skill.</p>
-        </a>
-
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/running.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>Running &amp; branches</span> <span>↗</span></div>
-          <p class="doc-link-desc">Run Changed, tag runs, switching branches, git worktrees, deferring to prod, and <code>xf run --defer</code>.</p>
-        </a>
-
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/neovim.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>Neovim &amp; LSP</span> <span>↗</span></div>
-          <p class="doc-link-desc">Using <code>xf --nvim</code>, installing the <code>nvim/</code> plugin, and configuring the <code>xf lsp</code> language server.</p>
-        </a>
-
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>dbt projects</span> <span>↗</span></div>
-          <p class="doc-link-desc">How <code>xf</code> parses and stages dbt-core 1.x and dbt v2 projects, targets, hooks, and differences from Dataform.</p>
-        </a>
-
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/settings.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>Settings &amp; API runs</span> <span>↗</span></div>
-          <p class="doc-link-desc">Config files (<code>.xf/config.json</code>), running via the GCP Dataform API, watching workflows, and ADC accounts.</p>
-        </a>
-
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/tui.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>The TUI</span> <span>↗</span></div>
-          <p class="doc-link-desc">The terminal UI, action type filters (<code>$table</code>, <code>$view</code>), command palette, and project picker.</p>
-        </a>
-
-        <a class="doc-link" href="https://github.com/ashish10alex/xf/blob/main/docs/windows.md" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>Windows guide</span> <span>↗</span></div>
-          <p class="doc-link-desc">Installing with winget, Scoop, or PowerShell, upgrading with <code>xf stop</code>, and Windows specifics.</p>
-        </a>
-
-        <a class="doc-link" href="https://dataformtools.com" target="_blank" rel="noopener">
-          <div class="doc-link-title"><span>Dataform Tools (VS Code)</span> <span>↗</span></div>
-          <p class="doc-link-desc">Using VS Code? Visit dataformtools.com for the Dataform Tools VS Code extension.</p>
-        </a>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
-    <div class="container footer-inner">
-      <div>
-        <strong>xf</strong> · Released under the <a href="https://github.com/ashish10alex/xf/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.
-      </div>
-      <div class="footer-links">
-        <a href="https://github.com/ashish10alex/xf" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/ashish10alex/xf/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/ashish10alex/xf/blob/main/docs/troubleshooting.md" target="_blank" rel="noopener">Troubleshooting</a>
-        <a href="https://dataformtools.com" target="_blank" rel="noopener">dataformtools.com</a>
-        <a href="/install.sh">install.sh</a>
+    <div class="wrap">
+      <p class="footer-prereq">
+        Requires <code>gcloud auth application-default login</code> and either the <a href="https://github.com/dataform-co/dataform" target="_blank" rel="noopener">Dataform CLI</a> (<code>npm i -g @dataform/cli</code>) or <a href="https://www.getdbt.com/" target="_blank" rel="noopener">dbt</a>. Run both checks on pull requests in CI with <a href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md#pull-requests-xf-check" target="_blank" rel="noopener"><code>xf check</code></a>.
+      </p>
+
+      <div class="footer-bottom">
+        <span>xf · MIT License</span>
+        <div class="footer-links">
+          <a href="https://github.com/ashish10alex/xf" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/ashish10alex/xf/blob/main/docs/xf-web.md" target="_blank" rel="noopener">xf web</a>
+          <a href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md" target="_blank" rel="noopener">Branch Checks &amp; CI</a>
+          <a href="https://github.com/ashish10alex/xf/blob/main/docs/running.md" target="_blank" rel="noopener">Running &amp; Defer</a>
+          <a href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md" target="_blank" rel="noopener">dbt</a>
+          <a href="https://github.com/ashish10alex/xf/blob/main/docs/neovim.md" target="_blank" rel="noopener">Neovim &amp; LSP</a>
+          <a href="https://github.com/ashish10alex/xf/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://dataformtools.com" target="_blank" rel="noopener">dataformtools.com</a>
+        </div>
       </div>
     </div>
   </footer>
 
   <script>
     (function () {
-      // Theme toggle (persists in localStorage, falls back to OS preference)
       var root = document.documentElement;
-      var toggleBtn = document.getElementById("theme-toggle");
-      var themeLabel = document.getElementById("theme-label");
-      var savedTheme = null;
-      try { savedTheme = localStorage.getItem("xf-site-theme"); } catch (e) {}
+      var toggle = document.getElementById("theme-toggle");
+      try {
+        var saved = localStorage.getItem("xf-site-theme");
+        if (saved === "light" || saved === "dark") root.setAttribute("data-theme", saved);
+      } catch (e) {}
 
-      function currentTheme() {
-        var attr = root.getAttribute("data-theme");
-        if (attr === "light" || attr === "dark") return attr;
-        return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-      }
-
-      function applyTheme(t) {
-        root.setAttribute("data-theme", t);
-        if (themeLabel) themeLabel.textContent = t === "light" ? "Light" : "Dark";
-      }
-
-      if (savedTheme === "light" || savedTheme === "dark") {
-        applyTheme(savedTheme);
-      } else {
-        if (themeLabel) themeLabel.textContent = currentTheme() === "light" ? "Light" : "Dark";
-      }
-
-      if (toggleBtn) {
-        toggleBtn.addEventListener("click", function () {
-          var next = currentTheme() === "dark" ? "light" : "dark";
-          applyTheme(next);
+      if (toggle) {
+        toggle.addEventListener("click", function () {
+          var cur = root.getAttribute("data-theme");
+          if (!cur) {
+            cur = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          }
+          var next = cur === "dark" ? "light" : "dark";
+          root.setAttribute("data-theme", next);
           try { localStorage.setItem("xf-site-theme", next); } catch (e) {}
         });
       }
 
-      // Hero install switcher tabs
-      var installTabs = document.querySelectorAll(".install-tab");
-      var heroCmdText = document.getElementById("hero-cmd-text");
-      var heroCmdPrompt = document.getElementById("hero-cmd-prompt");
-      installTabs.forEach(function (tab) {
-        tab.addEventListener("click", function () {
-          installTabs.forEach(function (t) { t.setAttribute("aria-selected", "false"); });
-          tab.setAttribute("aria-selected", "true");
-          if (heroCmdText) heroCmdText.textContent = tab.getAttribute("data-cmd");
-          if (heroCmdPrompt) heroCmdPrompt.textContent = tab.getAttribute("data-prompt") || "$";
-        });
-      });
-
-      // Workspace showcase tabs
-      var viewTabs = document.querySelectorAll(".view-tab");
-      var viewPanels = document.querySelectorAll(".view-panel");
-      viewTabs.forEach(function (tab) {
-        tab.addEventListener("click", function () {
-          var targetId = tab.getAttribute("aria-controls");
-          viewTabs.forEach(function (t) { t.setAttribute("aria-selected", "false"); });
-          viewPanels.forEach(function (p) { p.hidden = p.id !== targetId; });
-          tab.setAttribute("aria-selected", "true");
-        });
-      });
-
-      // Copy buttons
-      function copyText(text, btn) {
-        var done = function () {
-          var orig = btn.innerHTML;
-          btn.classList.add("copied");
-          btn.textContent = "Copied ✓";
-          setTimeout(function () {
-            btn.classList.remove("copied");
-            btn.innerHTML = orig;
-          }, 1600);
-        };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done).catch(function () {
-            fallbackCopy(text, done);
-          });
-        } else {
-          fallbackCopy(text, done);
-        }
-      }
-
-      function fallbackCopy(text, cb) {
-        var ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand("copy"); cb(); } catch (e) {}
-        document.body.removeChild(ta);
-      }
-
       document.querySelectorAll(".copy-btn").forEach(function (btn) {
         btn.addEventListener("click", function () {
-          var targetId = btn.getAttribute("data-copy-target");
-          var el = targetId ? document.getElementById(targetId) : null;
-          if (el) copyText(el.textContent.trim(), btn);
+          var id = btn.getAttribute("data-copy-target");
+          var el = id ? document.getElementById(id) : null;
+          if (!el) return;
+          var text = el.textContent.trim();
+          var done = function () {
+            var orig = btn.textContent;
+            btn.classList.add("copied");
+            btn.textContent = "Copied";
+            setTimeout(function () {
+              btn.classList.remove("copied");
+              btn.textContent = orig;
+            }, 1400);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done);
+          }
         });
       });
     })();
