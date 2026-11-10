@@ -128,7 +128,7 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 	})
 	pr.done()
 	if err != nil {
-		return 0, err
+		return 0, explainCompile(ctx, client, err)
 	}
 	if err := writeReport(os.Stdout, output, report, asJSON); err != nil {
 		return 0, err

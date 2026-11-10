@@ -171,14 +171,14 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
 		}
-		r.ImpactError = err.Error()
+		r.ImpactError = explainCompile(ctx, client, err).Error()
 	}
 	r.Cost, err = client.QueryCost(ctx, creq, func(p cost.Progress) { pr0.say(progressText("Query cost", p.Phase, p.Done, p.Total)) })
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
 		}
-		r.CostError = err.Error()
+		r.CostError = explainCompile(ctx, client, err).Error()
 	}
 	pr0.done()
 

@@ -198,6 +198,9 @@ Set two CI/CD variables:
 
 Both must be readable by merge request pipelines: a protected variable is hidden from a pipeline on an unprotected branch.
 
+An image of your own that already has the Dataform CLI can skip its install with `XF_INSTALL_DATAFORM: "false"`, which skips `npm ci` too.
+A project that takes `@dataform/core` from `package.json` then needs `npm ci` in the job's `before_script`, or every check stops on "Could not find a recent installed version of @dataform/core".
+
 #### GitLab CI with workload identity federation
 
 Workload identity federation signs the job in with GitLab's short-lived OIDC token, so no service account key is stored in GitLab.

@@ -132,7 +132,7 @@ func checkCost(pf projectFlags, sf *settingFlags, pushed bool, opts cost.Options
 	})
 	pr.done()
 	if err != nil {
-		return 0, err
+		return 0, explainCompile(ctx, client, err)
 	}
 
 	if asJSON {
