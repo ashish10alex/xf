@@ -387,14 +387,14 @@
   // ---- the compile ----
 
   var S = {
-    file: 'definitions/marts/dim_customers.sqlx',
-    sel: 'dim_customers',
+    file: 'definitions/marts/fct_order_items.sqlx',
+    sel: 'fct_order_items',
     focus: 'actions',
     tab: 'sql',
     line: 1,
     view: 'files',
     dirs: { definitions: true, 'definitions/marts': true, 'definitions/staging': true, 'definitions/reports': true },
-    treeCursor: 'definitions/marts/dim_customers.sqlx',
+    treeCursor: 'definitions/marts/fct_order_items.sqlx',
     query: '',
     col: { name: '', type: '', cursor: 0 },
     lin: 1,
@@ -1119,6 +1119,7 @@
     drawStatus();
     drawFooter();
     drawFrame();
+    drawCallouts();
     if (fk && (!active || !root.contains(active) || active.getAttribute('data-fk') !== fk || !active.isConnected)) {
       var el = root.querySelector('[data-fk="' + (window.CSS && CSS.escape ? CSS.escape(fk) : fk) + '"]');
       if (el) el.focus({ preventScroll: true });
@@ -1128,6 +1129,26 @@
       if (row) nearest(row);
     }
   }
+
+  // The callouts above the demo pick an action in it: the branch's
+  // costliest dry run, or the reader whose dry run fails. They show which
+  // one is open.
+  var callouts = Array.prototype.slice.call(document.querySelectorAll('[data-xfd-show]'));
+  function drawCallouts() {
+    (callouts || []).forEach(function (b) { b.setAttribute('aria-pressed', String(S.sel === b.getAttribute('data-xfd-show'))); });
+  }
+  callouts.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var name = b.getAttribute('data-xfd-show');
+      var a = A[name];
+      if (!a) return;
+      select(name);
+      S.focus = 'actions';
+      S.tab = 'sql';
+      draw();
+      flash(a.name + ': ' + (a.dryError ? '✗ ' + a.dryError : 'dry run ' + a.dry));
+    });
+  });
 
   // nearest scrolls el into view inside its pane, never the page.
   function nearest(el) {
@@ -1637,7 +1658,7 @@
   }
 
   // A narrow screen starts on the actions and the SQL, a wide one with
-  // the files open beside them, as the screenshot shows dim_customers.
+  // the files open beside them, on the branch's new fct_order_items.
   // Until the rail is used, the width picks.
   var autoView = true;
   var fit = function () {
