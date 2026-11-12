@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>xf — BigQuery cost and breakage checks for Dataform and dbt</title>
+  <meta name="description" content="Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops. For GitHub Actions, GitLab CI and coding agents.">
+  <meta name="theme-color" content="#0b0d0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f2efe7" media="(prefers-color-scheme: light)">
+
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://xf.dataformtools.com/">
+  <meta property="og:site_name" content="xf">
+  <meta property="og:title" content="xf — BigQuery cost and breakage checks for Dataform and dbt">
+  <meta property="og:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, in CI or from a coding agent.">
+  <meta property="og:image" content="https://xf.dataformtools.com/og.svg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="xf — BigQuery cost and breakage checks for Dataform and dbt">
+  <meta name="twitter:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, in CI or from a coding agent.">
+  <meta name="twitter:image" content="https://xf.dataformtools.com/og.svg">
+
+  <link rel="canonical" href="https://xf.dataformtools.com/">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preload" href="fonts/martian-mono.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/newsreader-text.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/fragment-mono.woff2" as="font" type="font/woff2" crossorigin>
+  <script>
+    // Before first paint: a saved theme wins over the system's, and motion waits for JS.
+    (function () {
+      var d = document.documentElement;
+      d.classList.add("js");
+      try {
+        var t = localStorage.getItem("xf-site-theme");
+        if (t === "light" || t === "dark") d.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <div class="wrap top-inner">
+      <a class="brand" href="/" aria-label="xf home">
+        <img src="icon.svg" width="28" height="28" alt="">
+        <span class="brand-word">xf</span>
+        <span class="brand-sub">for Dataform &amp; dbt</span>
+      </a>
+
+      <nav class="nav" aria-label="Primary">
+        <a class="nav-anchor" href="#cost">Cost</a>
+        <a class="nav-anchor" href="#impact">Impact</a>
+        <a class="nav-anchor" href="#ci">CI</a>
+        <a class="nav-anchor" href="#agents">Agents</a>
+        <a class="nav-anchor" href="#web">xf web</a>
+        <a class="nav-anchor" href="https://github.com/ashish10alex/xf#documentation">Docs</a>
+        <a class="nav-gh" href="https://github.com/ashish10alex/xf" aria-label="xf on GitHub">
+          <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to light theme">
+          <svg class="i-sun" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <svg class="i-moon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M20 14.6A8.2 8.2 0 0 1 9.4 4a8.2 8.2 0 1 0 10.6 10.6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- ───────────── Hero ───────────── -->
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="kicker rise" style="--d:0"><span class="pulse" aria-hidden="true"></span>For CI &amp; coding agents · Dataform &amp; dbt · BigQuery</p>
+        <h1 id="hero-title" class="display rise" style="--d:1">Cost and breakage, checked <em>before</em> the&nbsp;merge.</h1>
+        <p class="lede rise" style="--d:2">
+          xf dry runs what a Dataform or dbt branch changes: what its queries will scan and cost in BigQuery, and which downstream tables still read the columns it drops.
+          Gate pull requests on both in GitHub Actions or GitLab CI, and give your coding agent the same checks as JSON.
+        </p>
+
+        <div class="install rise" style="--d:3" data-install data-tabs>
+          <div class="install-tabs" role="tablist" aria-label="Install with">
+            <button type="button" role="tab" id="tab-brew" aria-controls="cmd-brew" aria-selected="true">Homebrew</button>
+            <button type="button" role="tab" id="tab-curl" aria-controls="cmd-curl" aria-selected="false" tabindex="-1">curl</button>
+            <button type="button" role="tab" id="tab-go" aria-controls="cmd-go" aria-selected="false" tabindex="-1">Go</button>
+          </div>
+          <div class="install-line">
+            <span class="prompt" aria-hidden="true">$</span>
+            <div class="install-panels">
+              <code role="tabpanel" id="cmd-brew" aria-labelledby="tab-brew" tabindex="0">brew install --cask ashish10alex/tap/xf</code>
+              <code role="tabpanel" id="cmd-curl" aria-labelledby="tab-curl" tabindex="0" hidden>curl -fsSL https://xf.dataformtools.com/install.sh | sh</code>
+              <code role="tabpanel" id="cmd-go" aria-labelledby="tab-go" tabindex="0" hidden>go install github.com/ashish10alex/xf/cmd/xf@latest</code>
+            </div>
+            <button type="button" class="copy" data-copy-active>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 3.2V3a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3v5.5A1.5 1.5 0 0 0 3.5 10h.2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <p class="install-then">then, on a branch: <code>xf cost</code> · <code>xf impact</code> · <code>xf check</code></p>
+        </div>
+
+        <p class="hero-links rise" style="--d:4">
+          <a class="btn" href="#ci">Drop it into CI<span aria-hidden="true"> →</span></a>
+          <a class="btn btn-quiet" href="#agents">Give it to an agent<span aria-hidden="true"> →</span></a>
+        </p>
+      </div>
+
+      <ol class="index rise" style="--d:5" aria-label="On this page">
+        <li><a href="#cost"><span class="index-n">01</span><span class="index-t">xf cost</span><span class="index-d">what a branch will scan, and cost</span></a></li>
+        <li><a href="#impact"><span class="index-n">02</span><span class="index-t">xf impact</span><span class="index-d">who still reads what it drops</span></a></li>
+        <li><a href="#ci"><span class="index-n">03</span><span class="index-t">xf check</span><span class="index-d">a report and a gate on each pull request</span></a></li>
+        <li><a href="#agents"><span class="index-n">04</span><span class="index-t">Agents</span><span class="index-d">the same checks, as JSON and a skill</span></a></li>
+        <li><a href="#web"><span class="index-n">05</span><span class="index-t">xf web</span><span class="index-d">the companion UI, to look around</span></a></li>
+      </ol>
+    </section>
+
+    <!-- ───────────── 01 · xf cost ───────────── -->
+    <section class="chapter" id="cost" aria-labelledby="cost-title">
+      <div class="wrap">
+        <div class="rule" aria-hidden="true"><span>01</span><span class="rule-line"></span><span>xf cost</span></div>
+        <div class="chapter-head">
+          <h2 id="cost-title" class="title" data-reveal>Know the bill <em>before</em> you run.</h2>
+          <div class="chapter-text" data-reveal>
+            <p>
+              <code>xf cost</code> dry runs every action your branch changes, which is free and runs nothing, and compares the bytes with the same action at the merge-base with <code>main</code>.
+            </p>
+            <p>
+              It flags a partitioned table read without its partition column. <code>--fail-over</code> fails the job over a size limit, and <code>--json</code> hands the figures to a script or an agent.
+            </p>
+          </div>
+        </div>
+
+        <figure class="report term-win" data-reveal aria-label="Example xf cost output in a terminal">
+          <figcaption class="report-head">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="report-meta">analytics — zsh</span>
+            <span class="example">Example</span>
+          </figcaption>
+          <div class="report-scroll" tabindex="0" aria-label="xf cost output, scrolls sideways">
+<pre class="term"><span class="ln" style="--i:0"><span class="t-prompt">$</span> xf cost --fail-over 1TB</span>
+<span class="ln" style="--i:1"><span class="t-bold">4 changed actions</span> in feat/orders-v2 vs origin/main @ 4e1c9a2 (working tree)</span>
+<span class="ln" style="--i:2"><span class="t-dim">dry run in analytics-prod (US) · compiled with prodCompilerOptions</span></span>
+<span class="ln" style="--i:3"><span class="t-yellow">⚠</span> marts.fct_order_items    <span class="t-bold t-yellow">  1.42 TiB</span>  <span class="t-dim"> $8.89</span>  <span class="t-cyan">new</span>                   <span class="t-yellow">[MISSING PARTITION FILTER: order_date on staging.order_lines]</span></span>
+<span class="ln" style="--i:4"><span class="t-green">✓</span> marts.fct_orders         <span class="t-bold">214.08 GiB</span>  <span class="t-dim"> $1.31</span>  <span class="t-green">-96.12 GiB (-$0.587)</span>  <span class="t-dim">(was 310.20 GiB · $1.89)</span></span>
+<span class="ln" style="--i:5"><span class="t-green">✓</span> marts.agg_daily_revenue  <span class="t-bold"> 38.50 GiB</span>  <span class="t-dim">$0.235</span>  <span class="t-red">+12.75 GiB (+$0.078)</span>  <span class="t-dim">(was 25.75 GiB · $0.157)</span></span>
+<span class="ln" style="--i:6"><span class="t-green">✓</span> marts.dim_customers      <span class="t-bold">  4.67 GiB</span>  <span class="t-dim">$0.028</span>  <span class="t-dim">no change</span></span>
+<span class="ln" style="--i:7"><span class="t-dim">────────────────────────────────────────────────────────────</span></span>
+<span class="ln" style="--i:8"><span class="t-bold">Total scanned: 1.67 TiB | Estimated cost: $10.46</span></span>
+<span class="ln" style="--i:9"><span class="t-bold t-red">✗ Gate failed: 1.67 TiB exceeds the limit of 1.00 TiB</span></span></pre>
+          </div>
+        </figure>
+
+        <dl class="facts">
+          <div data-reveal><dt>$0 to check</dt><dd>Dry runs are free in BigQuery, and nothing is run.</dd></div>
+          <div data-reveal><dt>Δ vs <code>main</code></dt><dd>Each action against itself at the merge-base, in bytes and dollars.</dd></div>
+          <div data-reveal><dt>Exit 1 over the limit</dt><dd>On bytes, not dollars, so the price never decides a build.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- ───────────── 02 · xf impact ───────────── -->
+    <section class="chapter" id="impact" aria-labelledby="impact-title">
+      <div class="wrap">
+        <div class="rule" aria-hidden="true"><span>02</span><span class="rule-line"></span><span>xf impact</span></div>
+        <div class="chapter-head">
+          <h2 id="impact-title" class="title" data-reveal>See who breaks <em>before</em> you merge.</h2>
+          <div class="chapter-text" data-reveal>
+            <p>
+              <code>xf impact</code> dry runs each table, view and incremental table your branch changes and compares its columns with the live table. Dataplex Data Lineage names who reads each column it drops or retypes.
+            </p>
+            <p>
+              A reader your branch also edits is dry run against the new table, so <q>still reads it</q> is BigQuery’s answer, not a guess. <code>--fail-on critical</code> fails the job.
+            </p>
+          </div>
+        </div>
+
+        <figure class="report pr" data-reveal aria-label="Example xf impact report, as a pull request shows it">
+          <figcaption class="report-head">
+            <span class="report-cmd"><span class="report-glyph" aria-hidden="true">#</span>xf impact</span>
+            <span class="report-meta">Markdown, as a pull request shows it</span>
+            <span class="example">Example</span>
+          </figcaption>
+          <div class="report-scroll" tabindex="0" aria-label="Column impact table, scrolls sideways">
+            <div class="md">
+              <h3>Column impact · <code>feat/orders-v2</code> → <code>main</code></h3>
+              <p><strong>1 to fix, 1 to review before merging.</strong> 4 models compared with prod tables in <code>analytics-prod</code> · dataset <code>marts</code> · base <code>4e1c9a2</code></p>
+              <p>The models came from <code>feat/orders-v2</code> diffed against <code>main</code>, and their new columns were checked against the live tables in <code>analytics-prod</code>.</p>
+              <table>
+                <thead>
+                  <tr><th class="num">#</th><th class="mark"><span class="sr">Mark</span></th><th>Model</th><th>What changed</th><th>Who is affected</th></tr>
+                </thead>
+                <tbody>
+                  <tr class="row" style="--i:0"><td class="num">1</td><td class="mark">🚨</td><td><code>fct_orders</code></td><td>drops <code>discount_code</code>; retypes <code>order_total</code> (<code>FLOAT64</code> → <code>NUMERIC</code>)</td><td><strong><code>finance.revenue_dashboard</code> reads <code>discount_code</code> · exact copy · outside the project</strong><br><strong><code>rpt_promotions</code> reads <code>discount_code</code> · derived · changed here, still reads it (dry run fails)</strong><br><strong><code>agg_daily_revenue</code> reads <code>order_total</code> · derived · changed here, still names it</strong><br><code>rpt_weekly_sales</code> reads <code>discount_code</code> · derived · no longer reads it (dry run passes)</td></tr>
+                  <tr class="row" style="--i:1"><td class="num">2</td><td class="mark">⚠️</td><td><code>dim_customers</code></td><td>retypes <code>customer_since</code> (<code>TIMESTAMP</code> → <code>DATE</code>)</td><td><strong><code>rpt_cohorts</code> · derived · not changed here</strong></td></tr>
+                  <tr class="row" style="--i:2"><td class="num">3</td><td class="mark">🆕</td><td><code>fct_order_items</code></td><td>new: nothing reads it yet</td><td>—</td></tr>
+                  <tr class="row" style="--i:3"><td class="num">4</td><td class="mark">✅</td><td><code>agg_daily_revenue</code></td><td>keeps every column; adds <code>net_revenue</code></td><td>—</td></tr>
+                </tbody>
+              </table>
+              <p class="sub">🚨 a column or table something still reads is gone · ⚠️ a column something reads changes type · 🆕 new on this branch · ✅ keeps every column</p>
+              <details>
+                <summary>Every reader (5)</summary>
+                <table>
+                  <thead><tr><th>Reader</th><th>Reads</th><th>Of</th><th>On this branch</th></tr></thead>
+                  <tbody>
+                    <tr><td><code>finance.revenue_dashboard</code></td><td><code>discount_code</code>, as an exact copy</td><td>1 · <code>fct_orders</code></td><td>outside the project</td></tr>
+                    <tr><td><code>rpt_promotions</code></td><td><code>discount_code</code>, derived</td><td>1 · <code>fct_orders</code></td><td>changed here, still reads it (dry run fails)</td></tr>
+                    <tr><td><code>agg_daily_revenue</code></td><td><code>order_total</code>, derived</td><td>1 · <code>fct_orders</code></td><td>changed here, still names it</td></tr>
+                    <tr><td><code>rpt_weekly_sales</code></td><td><code>discount_code</code>, derived</td><td>1 · <code>fct_orders</code></td><td>no longer reads it (dry run passes)</td></tr>
+                    <tr><td><code>rpt_cohorts</code></td><td><code>customer_since</code>, derived</td><td>2 · <code>dim_customers</code></td><td>not changed here</td></tr>
+                  </tbody>
+                </table>
+              </details>
+              <p class="sub">Readers come from Dataplex lineage of prod runs in the last 30 days, about 2 h behind. A changed reader that still names a dropped column is dry run against the branch's table: a pass means it no longer reads it.</p>
+            </div>
+          </div>
+        </figure>
+
+        <dl class="facts">
+          <div data-reveal><dt>🚨 to fix</dt><dd>A dropped column something still reads, in this project or outside it.</dd></div>
+          <div data-reveal><dt>⚠️ to review</dt><dd>A retyped column something reads.</dd></div>
+          <div data-reveal><dt>Not your branch’s</dt><dd>A change <code>main</code> already made is listed, and never fails <code>--fail-on</code>.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- ───────────── 03 · xf check in CI ───────────── -->
+    <section class="chapter" id="ci" aria-labelledby="ci-title">
+      <div class="wrap">
+        <div class="rule" aria-hidden="true"><span>03</span><span class="rule-line"></span><span>xf check · CI</span></div>
+        <div class="chapter-head">
+          <h2 id="ci-title" class="title" data-reveal>Drop it into CI. Gate <em>every</em> pull request.</h2>
+          <div class="chapter-text" data-reveal>
+            <p>
+              <code>xf check</code> runs both checks in one report. In CI it posts one comment on the pull request, edited on each push, and notes on the lines that drop a column or read a table.
+            </p>
+            <p>
+              It reports and passes by default. <code>--fail-on</code> and <code>--fail-over</code> make it a gate.
+            </p>
+          </div>
+        </div>
+
+        <figure class="report pr pr-comment" data-reveal aria-label="Example xf check comment and line notes on a pull request">
+          <figcaption class="report-head">
+            <span class="report-cmd"><span class="report-glyph" aria-hidden="true">#</span>xf check --comment</span>
+            <span class="report-meta">the pull request’s comment, and notes on its lines</span>
+            <span class="example">Example</span>
+          </figcaption>
+          <div class="report-scroll" tabindex="0" aria-label="xf check comment, scrolls sideways">
+            <div class="md md-comment">
+              <h3>xf check</h3>
+              <p><strong>🚨 1 dropped column still read · +1.34 TiB per run (≈ +$8.37) · 1.67 TiB total · ⚠️ 1 query without a partition filter · ❌ over the 1.00 TiB limit</strong></p>
+              <p class="fold"><span aria-hidden="true">▸ </span>Column impact <span class="sub">folded: the report above</span></p>
+              <p class="fold"><span aria-hidden="true">▸ </span>Query cost <span class="sub">folded: the <code>xf cost</code> report, as Markdown</span></p>
+              <ul class="notes" aria-label="Notes on the changed lines">
+                <li class="note note-error">
+                  <span class="note-t">Dropped column still read</span>
+                  <span class="note-at">definitions/marts/fct_orders.sqlx</span>
+                  <span class="note-x">This branch drops discount_code from marts.fct_orders, which finance.revenue_dashboard, reports.rpt_promotions (definitions/reports/rpt_promotions.sqlx) read.</span>
+                </li>
+                <li class="note note-warn">
+                  <span class="note-t">No partition filter</span>
+                  <span class="note-at">definitions/marts/fct_order_items.sqlx</span>
+                  <span class="note-x">This query reads staging.order_lines, partitioned by order_date, without naming order_date, so no partition can be pruned.</span>
+                </li>
+                <li class="note note-error">
+                  <span class="note-t">Over the cost limit</span>
+                  <span class="note-at">the check as a whole</span>
+                  <span class="note-x">The changed actions scan 1.67 TiB between them, over the limit of 1.00 TiB.</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </figure>
+
+        <div class="ci-grid">
+          <div class="snips" data-tabs data-reveal>
+            <div class="snip-tabs" role="tablist" aria-label="CI system">
+              <button type="button" role="tab" id="tab-gh" aria-controls="snip-gh" aria-selected="true">GitHub Actions</button>
+              <button type="button" role="tab" id="tab-gl" aria-controls="snip-gl" aria-selected="false" tabindex="-1">GitLab CI</button>
+              <button type="button" role="tab" id="tab-sh" aria-controls="snip-sh" aria-selected="false" tabindex="-1">Any CI</button>
+            </div>
+            <div class="snip" role="tabpanel" id="snip-gh" aria-labelledby="tab-gh" tabindex="0">
+              <div class="snip-head">
+                <span class="snip-file">.github/workflows/xf-check.yml</span>
+                <button type="button" class="copy" data-copy-active aria-label="Copy the GitHub Actions workflow"><span class="copy-label">Copy</span></button>
+              </div>
+<pre class="snip-code"><code>name: xf check
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        <span class="c"># for workload identity federation</span>
+      pull-requests: write   <span class="c"># to post the comment</span>
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     <span class="c"># xf needs history to find the merge-base</span>
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/github/providers/github
+          service_account: xf-check@my-project.iam.gserviceaccount.com
+
+      - uses: ashish10alex/xf@v0.0.5
+        with:
+          fail-on: critical  <span class="c"># a dropped column something still reads</span>
+          fail-over: 1TB     <span class="c"># the changed actions scan more than 1 TiB</span></code></pre>
+              <p class="snip-note">The action downloads the xf release of its tag, installs the Dataform CLI when it isn’t there, and posts with <code>GITHUB_TOKEN</code>. For dbt, install dbt and run <code>dbt deps</code> before it. <a href="https://github.com/ashish10alex/xf/blob/main/action.yml">action.yml</a></p>
+            </div>
+            <div class="snip" role="tabpanel" id="snip-gl" aria-labelledby="tab-gl" tabindex="0" hidden>
+              <div class="snip-head">
+                <span class="snip-file">.gitlab-ci.yml</span>
+                <button type="button" class="copy" data-copy-active aria-label="Copy the GitLab CI include"><span class="copy-label">Copy</span></button>
+              </div>
+<pre class="snip-code"><code>include:
+  - remote: https://raw.githubusercontent.com/ashish10alex/xf/v0.0.5/ci/gitlab/xf-check.yml
+
+xf-check:
+  variables:
+    XF_VERSION: v0.0.5
+    XF_FAIL_ON: critical
+    XF_FAIL_OVER: 1TB
+    <span class="c"># XF_DIR: analytics/dataform</span></code></pre>
+              <p class="snip-note">Runs on merge request pipelines, posts one note, and adds a Code Quality report to the merge request. Set two CI/CD variables: <code>XF_FORGE_TOKEN</code> (a project access token with the <code>api</code> scope, masked) and <code>GOOGLE_APPLICATION_CREDENTIALS</code> (a File variable: a key, or a workload identity federation config). <a href="https://github.com/ashish10alex/xf/blob/main/ci/gitlab/xf-check.yml">The template</a></p>
+            </div>
+            <div class="snip" role="tabpanel" id="snip-sh" aria-labelledby="tab-sh" tabindex="0" hidden>
+              <div class="snip-head">
+                <span class="snip-file">Cloud Build, Jenkins, any shell</span>
+                <button type="button" class="copy" data-copy-active aria-label="Copy the shell steps"><span class="copy-label">Copy</span></button>
+              </div>
+<pre class="snip-code"><code>git fetch origin main                  <span class="c"># xf needs origin/main; it never fetches</span>
+npm i -g @dataform/cli
+curl -fsSL https://github.com/ashish10alex/xf/releases/download/v0.0.5/xf_linux_amd64.tar.gz | tar -xz xf
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json  <span class="c"># or workload identity</span>
+
+set +e
+./xf check --fail-on critical --fail-over 1TB --output check.md
+code=$?
+set -e
+[ "$code" -eq 2 ] &amp;&amp; exit 2
+<span class="c"># post check.md to the merge request</span>
+exit "$code"</code></pre>
+              <p class="snip-note"><code>xf cost</code> and <code>xf impact</code> run the same way, each on its own.</p>
+            </div>
+          </div>
+
+          <aside class="ci-side" aria-label="Setting it up">
+            <div class="side-block" data-reveal>
+              <h3>Or let xf write the job</h3>
+              <p>Asks how CI signs in to Google and which gates to set, prints the workload identity <code>gcloud</code> commands, and checks the setup.</p>
+              <ul class="cmds cmds-tight">
+                <li><code id="init-gh">xf check init github</code><button type="button" class="copy" data-copy="init-gh" aria-label="Copy xf check init github"><span class="copy-label">Copy</span></button></li>
+                <li><code id="init-gl">xf check init gitlab</code><button type="button" class="copy" data-copy="init-gl" aria-label="Copy xf check init gitlab"><span class="copy-label">Copy</span></button></li>
+              </ul>
+            </div>
+            <div class="side-block" data-reveal>
+              <h3>Exit codes</h3>
+              <table class="codes">
+                <tbody>
+                  <tr><th scope="row"><code>0</code></th><td>The report was made, and no gate tripped.</td></tr>
+                  <tr><th scope="row"><code>1</code></th><td><code>--fail-on</code> or <code>--fail-over</code> tripped.</td></tr>
+                  <tr><th scope="row"><code>2</code></th><td>Neither check could be made. A preflight names what is missing first.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <a class="ci-link" href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md#pull-requests-xf-check">Set up <code>xf check</code><span aria-hidden="true"> →</span></a>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── 04 · Agents ───────────── -->
+    <section class="chapter" id="agents" aria-labelledby="agents-title">
+      <div class="wrap">
+        <div class="rule" aria-hidden="true"><span>04</span><span class="rule-line"></span><span>coding agents</span></div>
+        <div class="chapter-head">
+          <h2 id="agents-title" class="title" data-reveal>Give your agent the <em>same</em> checks.</h2>
+          <div class="chapter-text" data-reveal>
+            <p>
+              With <code>--json</code>, <code>xf cost</code>, <code>xf impact</code> and <code>xf check</code> give an agent fields to act on: a <code>severity</code> on every table and column, and <code>null</code> where BigQuery gave no estimate, never <code>0</code>.
+            </p>
+            <p>
+              The <a href="https://github.com/ashish10alex/xf/blob/main/skills/xf-checks/SKILL.md">xf-checks</a> Agent Skill teaches Claude Code, Codex and other agents that read skills to run them on a branch, and to ask you about each critical change before fixing anything.
+            </p>
+          </div>
+        </div>
+
+        <div class="agent-grid">
+          <ol class="steps">
+            <li data-reveal>
+              <span class="step-n">1</span>
+              <div>
+                <h3>Install the skill</h3>
+                <p>From a checkout of xf, for Claude Code. Codex looks in <code>~/.agents/skills/</code>.</p>
+                <div class="one-cmd"><code id="skill-cmd">mkdir -p ~/.claude/skills &amp;&amp; cp -R skills/xf-checks ~/.claude/skills/</code><button type="button" class="copy" data-copy="skill-cmd" aria-label="Copy the skill install command"><span class="copy-label">Copy</span></button></div>
+              </div>
+            </li>
+            <li data-reveal>
+              <span class="step-n">2</span>
+              <div>
+                <h3>Ask what the branch costs, or breaks</h3>
+                <p>The agent dry runs both checks and reads the JSON. Exit <code>0</code> is a report; <code>2</code> a check that couldn’t be made, with the reason on stderr.</p>
+              </div>
+            </li>
+            <li data-reveal>
+              <span class="step-n">3</span>
+              <div>
+                <h3>Decide each critical change</h3>
+                <p>For each dropped column still read, it asks: put it back, update the reader on this branch, or merge and tell its owner. Headless, it lists them as open decisions and changes nothing.</p>
+              </div>
+            </li>
+            <li data-reveal>
+              <span class="step-n">4</span>
+              <div>
+                <h3>Plan a run for free</h3>
+                <p>The <a href="https://github.com/ashish10alex/xf/blob/main/skills/xf-run/SKILL.md">xf-run</a> skill starts every run as <code>xf run --dry-run --json</code>: what it builds, reads from prod and scans. The real run waits for your yes.</p>
+              </div>
+            </li>
+          </ol>
+
+          <figure class="report term-win agent-win" data-reveal aria-label="Example of an agent running xf cost and xf impact with JSON output">
+            <figcaption class="report-head">
+              <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="report-meta">agent · feat/orders-v2</span>
+              <span class="example">Example</span>
+            </figcaption>
+            <div class="report-scroll" tabindex="0" aria-label="Agent session, scrolls sideways">
+<pre class="term"><span class="ln" style="--i:0"><span class="t-prompt">$</span> git fetch origin main</span>
+<span class="ln" style="--i:1"><span class="t-prompt">$</span> xf cost --json 2&gt;cost.err &gt;cost.json; echo $?</span>
+<span class="ln" style="--i:2">0</span>
+<span class="ln" style="--i:3"><span class="t-prompt">$</span> xf impact --json 2&gt;impact.err &gt;impact.json; echo $?</span>
+<span class="ln" style="--i:4">0</span>
+<span class="ln" style="--i:5"><span class="t-dim"># impact.json, trimmed</span></span>
+<span class="ln" style="--i:6">{ <span class="t-cyan">"worst"</span>: <span class="t-red">"critical"</span>,</span>
+<span class="ln" style="--i:7">  <span class="t-cyan">"atRisk"</span>: [{ <span class="t-cyan">"table"</span>: "analytics-prod.marts.fct_orders",</span>
+<span class="ln" style="--i:8">    <span class="t-cyan">"severity"</span>: <span class="t-red">"critical"</span>,</span>
+<span class="ln" style="--i:9">    <span class="t-cyan">"columns"</span>: [{ <span class="t-cyan">"column"</span>: "discount_code", <span class="t-cyan">"change"</span>: {<span class="t-cyan">"kind"</span>: "dropped"},</span>
+<span class="ln" style="--i:10">      <span class="t-cyan">"readers"</span>: [{ <span class="t-cyan">"table"</span>: "analytics-prod.reports.rpt_promotions",</span>
+<span class="ln" style="--i:11">                    <span class="t-cyan">"filePath"</span>: "definitions/reports/rpt_promotions.sqlx", … }, …] }] }] }</span>
+<span class="ln" style="--i:12"><span class="t-dim"># cost.json: "totalBytes", "deltaTotalBytes", and on fct_order_items</span></span>
+<span class="ln" style="--i:13"><span class="t-dim">#   "warnings": [{"kind": "missing_partition_filter", "column": "order_date", …}]</span></span>
+<span class="ln" style="--i:14"> </span>
+<span class="ln" style="--i:15"><span class="t-yellow">?</span> <span class="t-bold">fct_orders drops discount_code, and rpt_promotions still reads it.</span></span>
+<span class="ln" style="--i:16">  <span class="t-green">a</span>  Update rpt_promotions on this branch <span class="t-dim">(recommended: it only selects it)</span></span>
+<span class="ln" style="--i:17">  <span class="t-green">b</span>  Keep discount_code until the reader moves</span>
+<span class="ln" style="--i:18">  <span class="t-green">c</span>  Merge, and let the reader break</span></pre>
+            </div>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ───────────── 05 · xf web ───────────── -->
+    <section class="chapter" id="web" aria-labelledby="web-title">
+      <div class="wrap">
+        <div class="rule" aria-hidden="true"><span>05</span><span class="rule-line"></span><span>xf web</span></div>
+        <div class="chapter-head">
+          <h2 id="web-title" class="title" data-reveal>When you’d rather look: <em>xf web</em>.</h2>
+          <div class="chapter-text" data-reveal>
+            <p>
+              The same checks in a browser tab, beside the project: each action’s dry-run bytes and cost, its compiled SQL, columns and lineage, and the impact and cost reports on one page (<code>I</code>, <code>C</code>).
+            </p>
+            <p>Below is the example branch. Try it.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage wrap-wide">
+        <div class="callouts" data-reveal role="group" aria-label="Show in the demo">
+          <button type="button" class="callout" data-xfd-show="fct_order_items" aria-pressed="true">
+            <span class="callout-k">dry run</span>
+            <span class="callout-v"><code>fct_order_items</code> scans <b>1.42 TiB · $8.89</b></span>
+          </button>
+          <button type="button" class="callout callout-err" data-xfd-show="rpt_promotions" aria-pressed="false">
+            <span class="callout-k">impact</span>
+            <span class="callout-v"><code>rpt_promotions</code> <b>✗ Unrecognized name: discount_code</b></span>
+          </button>
+        </div>
+
+        <figure class="shot" data-reveal="tilt">
+          <div class="shot-bar" aria-hidden="true">
+            <span class="dots"><i></i><i></i><i></i></span>
+            <span class="shot-url">127.0.0.1 · xf web</span>
+            <span class="shot-live">live demo · click around</span>
+          </div>
+          <!-- xf web's own panes on a made-up project (demo.js); without
+               JavaScript, the screenshots. -->
+          <div class="xfd" id="xfd" role="region"
+            aria-label="Live demo of xf web on the example branch: the file tree, the source of a model, its actions with dry-run bytes and cost, target and run options, and its compiled SQL, columns and lineage. Click around, or use the keys the footer lists."></div>
+          <noscript>
+            <style>.xfd, .shot-live, .callouts { display: none; }</style>
+            <div class="shot-img">
+              <img class="theme-dark-only" src="xf-web-dark.webp" width="1960" height="1198"
+                alt="xf web in dark mode: definitions/marts/dim_customers.sqlx open in the source editor on the left; on the right, its actions with dry-run bytes and cost, the target and run options, and the compiled SQL">
+              <img class="theme-light-only" src="xf-web-light.webp" width="1960" height="1198" loading="lazy"
+                alt="xf web in light mode: definitions/marts/dim_customers.sqlx open in the source editor on the left; on the right, its actions with dry-run bytes and cost, the target and run options, and the compiled SQL">
+              <span class="pin" style="--x:65.4%; --y:8.8%" aria-hidden="true"><b></b><span>dry run: bytes · $</span></span>
+              <span class="pin" style="--x:60%; --y:84.9%" aria-hidden="true"><b></b><span>compiled SQL, live</span></span>
+            </div>
+          </noscript>
+        </figure>
+
+        <ul class="traits" aria-label="In xf web">
+          <li data-reveal><span>Dry-run bytes &amp; cost</span> for every action</li>
+          <li data-reveal><span>Impact &amp; cost reports</span> on the Checks page</li>
+          <li data-reveal><span>Run with defer to prod</span> or with dependencies</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───────────── Install ───────────── -->
+    <section class="get wrap" id="install" aria-labelledby="install-title">
+      <div class="rule" aria-hidden="true"><span>→</span><span class="rule-line"></span><span>install</span></div>
+      <div class="get-grid">
+        <div class="get-head">
+          <h2 id="install-title" class="title" data-reveal>Install <em>xf.</em></h2>
+          <p class="chapter-text" data-reveal>
+            One executable for macOS, Linux and Windows. It needs <code>gcloud auth application-default login</code>, and the <a href="https://github.com/dataform-co/dataform">Dataform CLI</a> or <a href="https://www.getdbt.com/">dbt</a> with BigQuery. In CI, the GitHub Action and the GitLab template download it for you.
+          </p>
+        </div>
+
+        <ul class="cmds">
+          <li data-reveal>
+            <span class="cmd-label">Homebrew</span>
+            <code id="get-brew">brew install --cask ashish10alex/tap/xf</code>
+            <button type="button" class="copy" data-copy="get-brew" aria-label="Copy the Homebrew command"><span class="copy-label">Copy</span></button>
+          </li>
+          <li data-reveal>
+            <span class="cmd-label">macOS · Linux</span>
+            <code id="get-curl">curl -fsSL https://xf.dataformtools.com/install.sh | sh</code>
+            <button type="button" class="copy" data-copy="get-curl" aria-label="Copy the install script command"><span class="copy-label">Copy</span></button>
+          </li>
+          <li data-reveal>
+            <span class="cmd-label">Go 1.26+</span>
+            <code id="get-go">go install github.com/ashish10alex/xf/cmd/xf@latest</code>
+            <button type="button" class="copy" data-copy="get-go" aria-label="Copy the go install command"><span class="copy-label">Copy</span></button>
+          </li>
+          <li class="cmds-more" data-reveal>
+            Windows: <code>winget install AshishAlex.xf</code>, or Scoop, in the <a href="https://github.com/ashish10alex/xf/blob/main/docs/windows.md">Windows guide</a>. Archives for every platform are on <a href="https://github.com/ashish10alex/xf/releases">GitHub Releases</a>.
+          </li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <div class="foot-brand">
+        <span class="brand-word">xf</span>
+        <span>MIT License · from <a href="https://dataformtools.com">dataformtools.com</a></span>
+      </div>
+      <nav class="foot-links" aria-label="Documentation">
+        <a href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md">Checks &amp; CI</a>
+        <a href="https://github.com/ashish10alex/xf/blob/main/action.yml">GitHub Action</a>
+        <a href="https://github.com/ashish10alex/xf/blob/main/ci/gitlab/xf-check.yml">GitLab template</a>
+        <a href="https://github.com/ashish10alex/xf/tree/main/skills">Agent skills</a>
+        <a href="https://github.com/ashish10alex/xf/blob/main/docs/xf-web.md">xf web</a>
+        <a href="https://github.com/ashish10alex/xf/blob/main/docs/running.md">Running &amp; defer</a>
+        <a href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md">dbt</a>
+        <a href="https://github.com/ashish10alex/xf/blob/main/docs/neovim.md">Neovim</a>
+        <a href="https://github.com/ashish10alex/xf/releases">Releases</a>
+      </nav>
+    </div>
+  </footer>
+
+  <p class="sr" aria-live="polite" id="live"></p>
+
+  <script src="demo.js" defer></script>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var live = document.getElementById("live");
+
+      // Theme: the system's until the toggle picks one, which is then kept.
+      var toggle = document.getElementById("theme-toggle");
+      function current() {
+        var t = root.getAttribute("data-theme");
+        if (t) return t;
+        return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      function label() {
+        toggle.setAttribute("aria-label", current() === "dark" ? "Switch to light theme" : "Switch to dark theme");
+      }
+      label();
+      toggle.addEventListener("click", function () {
+        var next = current() === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        try { localStorage.setItem("xf-site-theme", next); } catch (e) {}
+        label();
+      });
+      if (window.matchMedia) {
+        var mq = window.matchMedia("(prefers-color-scheme: light)");
+        if (mq.addEventListener) mq.addEventListener("change", label);
+      }
+
+      // Tabs: the install commands, and the CI snippets.
+      document.querySelectorAll("[data-tabs]").forEach(function (box) {
+        var tabs = Array.prototype.slice.call(box.querySelectorAll('[role="tab"]'));
+        var select = function (tab, focus) {
+          tabs.forEach(function (t) {
+            var on = t === tab;
+            t.setAttribute("aria-selected", on ? "true" : "false");
+            t.tabIndex = on ? 0 : -1;
+            document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+          });
+          if (focus) tab.focus();
+        };
+        tabs.forEach(function (tab, i) {
+          tab.addEventListener("click", function () { select(tab, false); });
+          tab.addEventListener("keydown", function (e) {
+            var j = null;
+            if (e.key === "ArrowRight") j = (i + 1) % tabs.length;
+            if (e.key === "ArrowLeft") j = (i - 1 + tabs.length) % tabs.length;
+            if (e.key === "Home") j = 0;
+            if (e.key === "End") j = tabs.length - 1;
+            if (j !== null) { e.preventDefault(); select(tabs[j], true); }
+          });
+        });
+      });
+
+      // Copy buttons.
+      function copyText(text, btn) {
+        var lbl = btn.querySelector(".copy-label");
+        var done = function () {
+          btn.classList.add("copied");
+          if (lbl) lbl.textContent = "Copied";
+          live.textContent = "Copied to the clipboard";
+          clearTimeout(btn._t);
+          btn._t = setTimeout(function () {
+            btn.classList.remove("copied");
+            if (lbl) lbl.textContent = "Copy";
+          }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () {});
+        }
+      }
+      document.querySelectorAll("[data-copy]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var el = document.getElementById(btn.getAttribute("data-copy"));
+          if (el) copyText(el.textContent.trim(), btn);
+        });
+      });
+      // A tab's copy button copies its open panel's code.
+      document.querySelectorAll("[data-copy-active]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var box = btn.closest("[data-tabs]");
+          var panel = box && box.querySelector('[role="tabpanel"]:not([hidden])');
+          var el = panel && (panel.matches("code") ? panel : panel.querySelector("pre code"));
+          // A one-line command without its newline, so a paste doesn't run it.
+          if (el) copyText(panel === el ? el.textContent.trim() : el.textContent.replace(/\s+$/, "") + "\n", btn);
+        });
+      });
+
+      // Reveal on scroll; without IntersectionObserver everything just shows.
+      var items = document.querySelectorAll("[data-reveal]");
+      if (!("IntersectionObserver" in window)) {
+        items.forEach(function (el) { el.classList.add("in"); });
+        return;
+      }
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (en.isIntersecting) {
+            en.target.classList.add("in");
+            io.unobserve(en.target);
+          }
+        });
+      }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+      items.forEach(function (el) { io.observe(el); });
+    })();
+  </script>
+</body>
+</html>
