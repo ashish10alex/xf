@@ -350,9 +350,9 @@ q {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
   align-items: end;
-  gap: 56px;
-  padding-top: clamp(56px, 10vw, 128px);
-  padding-bottom: clamp(48px, 7vw, 88px);
+  gap: 48px;
+  padding-top: clamp(28px, 4.5vw, 64px);
+  padding-bottom: clamp(40px, 5vw, 72px);
 }
 
 .kicker {
@@ -360,7 +360,7 @@ q {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin: 0 0 28px;
+  margin: 0 0 18px;
   font: 400 12.5px/1 var(--mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -388,9 +388,9 @@ q {
 }
 
 .display {
-  margin: 0 0 28px;
-  max-width: 15ch;
-  font: 600 clamp(38px, 6.4vw, 78px) / 1.02 var(--display);
+  margin: 0 0 20px;
+  max-width: 24ch;
+  font: 600 clamp(30px, calc(3.4vw + 5px), 48px) / 1.06 var(--display);
   letter-spacing: -0.065em;
   color: var(--ink);
   text-wrap: balance;
@@ -409,9 +409,9 @@ q {
 }
 
 .lede {
-  max-width: 36em;
-  margin: 0 0 40px;
-  font-size: clamp(18px, 1.9vw, 21px);
+  max-width: 38em;
+  margin: 0 0 26px;
+  font-size: clamp(17px, 1.6vw, 19px);
   line-height: 1.55;
   color: var(--ink-2);
 }
@@ -971,7 +971,7 @@ html:not(.js) .pin {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  margin: 28px 0 0;
+  margin: 20px 0 0;
 }
 .btn {
   display: inline-flex;
