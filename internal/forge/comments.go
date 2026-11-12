@@ -86,6 +86,47 @@ func (c *Comments) Edit(ctx context.Context, id int64, body string) error {
 	return c.explain(c.a.do(ctx, method, c.one(id), map[string]string{"body": body}, nil))
 }
 
+// Token is what a GitLab access token says of itself.
+type Token struct {
+	Scopes []string `json:"scopes"`
+	// ExpiresAt is its last day, "2026-12-31", "" for none.
+	ExpiresAt string `json:"expires_at"`
+}
+
+// ErrNoTokenInfo is a host that doesn't describe the token: GitHub, a
+// GitLab too old to, or a token of a kind that can't.
+var ErrNoTokenInfo = errors.New("the host doesn't describe this token")
+
+// Token asks GitLab what the token is (GET /personal_access_tokens/self,
+// which project and group access tokens answer too). ErrToken is a token
+// GitLab refused; ErrNoTokenInfo is any other answer but the token's.
+func (c *Comments) Token(ctx context.Context) (*Token, error) {
+	if c.a.repo.Kind != GitLab {
+		return nil, ErrNoTokenInfo
+	}
+	var t Token
+	err := c.a.get(ctx, c.a.repo.API+"/personal_access_tokens/self", &t)
+	switch {
+	case err == nil:
+		return &t, nil
+	case errors.Is(err, ErrToken):
+		return nil, ErrToken
+	case ctx.Err() != nil:
+		return nil, ctx.Err()
+	}
+	return nil, ErrNoTokenInfo
+}
+
+// Read reads the merge request, which says the token can see it.
+func (c *Comments) Read(ctx context.Context) error {
+	u := project(c.a.repo) + "/merge_requests/" + strconv.Itoa(c.Number)
+	if c.a.repo.Kind == GitHub {
+		u = repoURL(c.a.repo) + "/pulls/" + strconv.Itoa(c.Number)
+	}
+	var out struct{}
+	return c.explain(c.a.get(ctx, u, &out))
+}
+
 // explain says a refusal in words about comments.
 func (c *Comments) explain(err error) error {
 	switch {

@@ -35,6 +35,21 @@ func ReadWorkflowNames(root string) (WorkflowNames, error) {
 		SchemaSuffix: keys["datasetSuffix"], DatabaseSuffix: keys["projectSuffix"]}, nil
 }
 
+// ReadWorkflowSetting is one top-level key of the project's
+// workflow_settings.yaml, "" when it has none: "defaultLocation", say.
+func ReadWorkflowSetting(root, key string) string {
+	data, err := os.ReadFile(filepath.Join(root, SettingsFile))
+	if err != nil {
+		return ""
+	}
+	for _, m := range workflowKeyRE.FindAllStringSubmatch(string(data), -1) {
+		if m[1] == key {
+			return workflowValue(m[2])
+		}
+	}
+	return ""
+}
+
 var workflowKeyRE = regexp.MustCompile(`(?m)^([A-Za-z]+):[ \t]*(.*?)[ \t]*\r?$`)
 
 // workflowValue is a YAML scalar without its quotes or a comment after it.

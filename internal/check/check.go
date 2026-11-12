@@ -5,6 +5,7 @@
 package check
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -31,6 +32,9 @@ type Report struct {
 	ImpactError string
 	Cost        *cost.Report
 	CostError   string
+	// Preflight is what was probed before the compile (ADR 0041); when it
+	// Stops, neither check was made.
+	Preflight *Preflight
 }
 
 // Options are the gates and what decides a comment.
@@ -117,9 +121,57 @@ func (r *Report) Worth(o Options) bool {
 }
 
 // Verdict is the comment's first line: the worst column change, then what
-// the branch adds to the cost of a run.
+// the branch adds to the cost of a run, and a warning when they compared
+// with the default targets.
 func Verdict(r *Report, o Options) string {
-	return impactVerdict(r) + " · " + costVerdict(r, o)
+	if r.Preflight.Stops() {
+		return "❌ Neither check was made: the preflight found what stops them"
+	}
+	v := impactVerdict(r) + " · " + costVerdict(r, o)
+	if key := unset(r); key != "" {
+		v += " · ⚠️ compared with the default targets, which may be dev tables (`" + key + "` isn't set)"
+	}
+	return v
+}
+
+// unset is the setting that would pick prod's tables when a check
+// compared with the default targets instead.
+func unset(r *Report) string {
+	if r.Impact != nil && r.Impact.Unset != "" {
+		return r.Impact.Unset
+	}
+	if r.Cost != nil {
+		return r.Cost.Unset
+	}
+	return ""
+}
+
+// dryRunsLine says where each check dry ran: "Column impact dry ran the
+// branch in `acme-dev` · query cost in `acme-prod (EU)`".
+func dryRunsLine(r *Report) string {
+	impactIn, costIn := "", ""
+	if r.Impact != nil {
+		impactIn = r.Impact.DryRunIn
+	}
+	if r.Cost != nil {
+		costIn = r.Cost.DryRunIn
+	}
+	if r.Preflight != nil {
+		impactIn = cmp.Or(impactIn, r.Preflight.ImpactIn)
+		costIn = cmp.Or(costIn, r.Preflight.CostIn)
+	}
+	var parts []string
+	if impactIn != "" && r.Impact != nil {
+		parts = append(parts, "Column impact dry ran the branch in `"+impactIn+"`")
+	}
+	if costIn != "" && r.Cost != nil {
+		what := "query cost in `" + costIn + "`"
+		if len(parts) == 0 {
+			what = "Query cost dry ran in `" + costIn + "`"
+		}
+		parts = append(parts, what)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func impactVerdict(r *Report) string {
@@ -229,6 +281,12 @@ func Title(project string) string {
 // folded.
 func Markdown(r *Report, o Options) string {
 	lines := []string{"### " + Title(r.Project), "", "**" + Verdict(r, o) + "**", ""}
+	if r.Preflight.Stops() {
+		return strings.Join(append(lines, r.Preflight.Markdown(), ""), "\n")
+	}
+	if line := dryRunsLine(r); line != "" {
+		lines = append(lines, line, "")
+	}
 	if r.Impact != nil {
 		lines = append(lines, "<details><summary>Column impact</summary>", "", demote(impact.Markdown(r.Impact)), "", "</details>", "")
 	} else {
@@ -268,7 +326,8 @@ func JSON(r *Report, o Options) ([]byte, error) {
 		ImpactError string          `json:"impactError,omitempty"`
 		Cost        json.RawMessage `json:"cost"`
 		CostError   string          `json:"costError,omitempty"`
-	}{Version: JSONVersion, Project: r.Project, Verdict: Verdict(r, o), Worth: r.Worth(o),
+		Preflight   *Preflight      `json:"preflight,omitempty"`
+	}{Preflight: r.Preflight, Version: JSONVersion, Project: r.Project, Verdict: Verdict(r, o), Worth: r.Worth(o),
 		Impact: json.RawMessage("null"), ImpactError: r.ImpactError, Cost: json.RawMessage("null"), CostError: r.CostError}
 	if r.Impact != nil {
 		data, err := impact.JSON(r.Impact)

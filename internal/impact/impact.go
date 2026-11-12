@@ -214,7 +214,10 @@ type Report struct {
 	// Unset is "prodCompilerOptions" when that isn't set anywhere, not even
 	// to "": the changes were compared with the default targets, which may
 	// be dev tables.
-	Unset     string    `json:"unset,omitempty"`
+	Unset string `json:"unset,omitempty"`
+	// DryRunIn is the project the branch's models were dry run in, "" when
+	// they ran in more than one.
+	DryRunIn  string    `json:"dryRunIn,omitempty"`
 	CheckedAt time.Time `json:"checkedAt"`
 	// Signature is what was checked (see Signature).
 	Signature string `json:"signature"`

@@ -443,6 +443,7 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		New:          result.New,
 		Unchecked:    result.Unchecked,
 		Against:      projectsOf(candidates, deps.ProdTarget != nil),
+		DryRunIn:     dryRunIn(g, changed),
 		CheckedAt:    deps.Now(),
 		Signature:    Signature(res, g),
 	}
@@ -463,6 +464,20 @@ func (deps Deps) prodTarget(c *Candidate) bool {
 		return false
 	}
 	return true
+}
+
+// dryRunIn is the one project the changed actions dry run in, "" for none
+// or more than one.
+func dryRunIn(g *project.Graph, changed []changes.Changed) string {
+	in := ""
+	for _, c := range changed {
+		proj, _ := g.DryRunTarget(g.Actions[c.ID])
+		if proj == "" || (in != "" && in != proj) {
+			return ""
+		}
+		in = proj
+	}
+	return in
 }
 
 // projectsOf is the projects of the tables the candidates were compared

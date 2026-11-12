@@ -16,7 +16,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -492,7 +494,44 @@ func apiError(status int, body []byte) error {
 	if status == http.StatusUnauthorized {
 		return fmt.Errorf("%w: %s", ErrAuth, msg)
 	}
+	if status == http.StatusForbidden {
+		if hint := RoleHint(msg); hint != "" {
+			msg += " (" + hint + ")"
+		}
+	}
 	return &APIError{Status: status, Message: msg}
+}
+
+var (
+	jobsCreateRE = regexp.MustCompile(`bigquery\.jobs\.create permission in project ([\w.:-]+?)\.?(?:\s|$)`)
+	tableReadRE  = regexp.MustCompile(`(?:permission to query table|Permission bigquery\.tables\.(?:get|getData) denied on table) ([\w.:-]+)`)
+	datasetRE    = regexp.MustCompile(`Permission bigquery\.\w+\.\w+ denied on dataset ([\w.:-]+)`)
+)
+
+// RoleHint says which role an access-denied message from BigQuery lacks,
+// and where: "needs roles/bigquery.jobUser on acme-dev". "" when the
+// message isn't one it knows.
+func RoleHint(msg string) string {
+	if m := jobsCreateRE.FindStringSubmatch(msg); m != nil {
+		return "needs roles/bigquery.jobUser on " + m[1]
+	}
+	if m := tableReadRE.FindStringSubmatch(msg); m != nil {
+		return "needs roles/bigquery.dataViewer on the dataset " + datasetOf(m[1])
+	}
+	if m := datasetRE.FindStringSubmatch(msg); m != nil {
+		return "needs roles/bigquery.dataViewer on the dataset " + strings.Replace(m[1], ":", ".", 1)
+	}
+	return ""
+}
+
+// datasetOf is the dataset of "project:dataset.table" (or
+// project.dataset.table), as project.dataset.
+func datasetOf(table string) string {
+	table = strings.Replace(table, ":", ".", 1)
+	if i := strings.LastIndex(table, "."); i > 0 {
+		return table[:i]
+	}
+	return table
 }
 
 func retrieveReason(re *oauth2.RetrieveError) string {

@@ -1,4 +1,4 @@
-# xf check as a GitHub Action (ADR 0040): the column impact and query cost
+# xf check as a GitHub Action (ADRs 0040, 0041): the column impact and query cost
 # of a pull request's Dataform or dbt changes, as one comment on the pull
 # request and notes on the changed lines. See docs/checks.md.
 name: xf check
@@ -30,8 +30,11 @@ inputs:
   default-branch:
     description: The branch to compare with. By default the pull request's base branch.
     default: ""
+  npm-ci:
+    description: Run npm ci. auto does it when the project has a package.json, unless the folder is a dbt project.
+    default: auto
   install-dataform:
-    description: Install the Dataform CLI (and run npm ci when the project has a package.json). auto does it unless the folder is a dbt project.
+    description: Install the Dataform CLI. auto does it unless dataform is already on PATH or the folder is a dbt project.
     default: auto
   args:
     description: More flags for xf check, such as --usd-per-tib 7.5 or --dbt-prod-target prod.
@@ -89,14 +92,22 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
+        NPM_CI: ${{ inputs.npm-ci }}
         INSTALL: ${{ inputs.install-dataform }}
       run: |
         set -euo pipefail
-        if [ "$INSTALL" = false ] || { [ "$INSTALL" = auto ] && [ -f dbt_project.yml ]; }; then exit 0; fi
-        if [ -f package.json ]; then npm ci; fi
+        dbt=false
+        if [ -f dbt_project.yml ]; then dbt=true; fi
+        if [ "$NPM_CI" = true ] || { [ "$NPM_CI" = auto ] && [ "$dbt" = false ] && [ -f package.json ]; }; then
+          npm ci --no-audit --no-fund
+        fi
+        if [ "$INSTALL" = false ] || { [ "$INSTALL" = auto ] && { [ "$dbt" = true ] || command -v dataform >/dev/null 2>&1; }; }; then exit 0; fi
         version=""
         if [ -f workflow_settings.yaml ]; then
           version=$(sed -n 's/^dataformCoreVersion:[[:space:]]*["'\'']\{0,1\}\([^"'\'' ]*\).*/\1/p' workflow_settings.yaml | head -n 1)
+        fi
+        if [ -z "$version" ] && [ -f package-lock.json ]; then
+          version=$(node -e 'const l=require("./package-lock.json");const p=(l.packages||{})["node_modules/@dataform/core"]||(l.dependencies||{})["@dataform/core"];if(p&&p.version)console.log(p.version)' 2>/dev/null || true)
         fi
         npm i -g "@dataform/cli${version:+@$version}"
 

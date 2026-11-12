@@ -115,10 +115,54 @@ With `a` on in a Dataform project, it estimates what you pushed.
 In CI it puts what it finds where the review happens:
 
 - **One comment on the pull request**, with `--comment`, edited in place on each push.
-  It opens with one line, the worst column change and what the branch adds to a run's cost, such as `🚨 1 dropped column still read · +4.20 TiB per run (≈ +$26.25) · 4.40 TiB total`; the two reports follow, folded.
+  It opens with one line, the worst column change and what the branch adds to a run's cost, such as `🚨 1 dropped column still read · +4.20 TiB per run (≈ +$26.25) · 4.40 TiB total`, ending in a warning when `prodCompilerOptions` (`dbtProdTarget`) isn't set, so the checks compared with the default targets, which may be dev tables.
+  A line under it says where each check dry ran (`Column impact dry ran the branch in acme-dev · query cost in acme-prod (EU)`); the two reports follow, folded.
 - **Notes on the changed lines**: in GitHub Actions they show in the pull request's Files changed tab, on the line that drops the column or reads the table; for GitLab, `--codequality path` writes a Code Quality report the merge request shows.
 
 It reports and passes by default; `--fail-on` and `--fail-over` gate a build as they do for `xf impact` and `xf cost`.
+
+`xf check init gitlab` (or `github`) writes the CI job for a repository, as [below](#setting-it-up-xf-check-init), and every run starts with [a preflight](#the-preflight) that names what is missing in one go.
+
+### Setting it up: xf check init
+
+Run `xf check init gitlab` or `xf check init github` in the project.
+It asks three things, each with a flag for scripts (`--yes` takes the flags and the defaults without asking):
+
+- **How the job signs in to Google** (`--auth`): `wif` (workload identity federation), `key` (a service account key), or `template` (your organisation's own CI template).
+  For `wif` it prints the `gcloud` commands for the pool, the provider (its issuer, and a condition on this repository from the `origin` remote), the service account, its binding, and on GitLab the credential config, all filled in; it runs nothing in Google Cloud.
+  For `template` the job gets a marked `before_script` slot: all xf needs is `GOOGLE_APPLICATION_CREDENTIALS` exported there.
+- **How GitLab gets the template** (`--include`): `remote`, from GitHub at the xf tag, or `copy`, a copy at `ci/xf-check.yml` with a header naming the xf it came from.
+  It suggests `copy` on a host other than gitlab.com, which may not reach GitHub's raw files; `xf check init gitlab --update` rewrites the copy from the xf you run.
+- **The gates** (`--fail-on`, `--fail-over`), off by default.
+
+It writes `.github/workflows/xf-check.yml`, or a `.gitlab-ci.yml`.
+An existing `.gitlab-ci.yml` gets the include, a `test` stage when its `stages:` list lacks one, and the `xf-check` job; init shows those lines and asks before writing.
+When `prodCompilerOptions` (or `dbtProdTarget`) is only in an `.xf/config.json` git doesn't track, or in your own config, it offers to pass it in the job's `XF_ARGS`, since CI would otherwise compare with the default targets.
+It ends with what is left to do outside the repository (the token, the sign-in), the roles CI's identity needs in each project, and a local preflight of the tools, git and settings.
+It leaves out the access probes there, since they would run as you, not as CI's identity.
+
+### The preflight
+
+Every `xf check` first probes, in seconds and before compiling, what the checks will need, and prints a checklist on stderr with a fix under each line that needs one:
+
+| Line | What it checks |
+|---|---|
+| Dataform CLI (or dbt) | the binary is found |
+| `@dataform/core` | when `package.json` lists it, `node_modules` has it (`npm ci` ran) |
+| merge-base | `origin/<base>` exists and shares a commit with `HEAD`; a shallow clone is named |
+| `prodCompilerOptions` (or `dbtProdTarget`) | it is set, and not only in a file CI won't see: an untracked `.xf/config.json`, or your own config |
+| Google | the credential type and the identity, such as `workload identity federation, as xf-check@acme.iam.gserviceaccount.com (from $GOOGLE_APPLICATION_CREDENTIALS)` |
+| BigQuery | a free `SELECT 1` dry run in the project column impact dry runs the branch in (the default project) and in the one query cost dry runs in (the prod project, from `--default-database` in `prodCompilerOptions`) |
+| Data Lineage | one search in the prod project, in `defaultLocation` |
+| token | with `--comment`: on GitLab its `api` scope and its expiry (a warning within 14 days of it), and on both one read of the merge request |
+
+Only what makes a check impossible stops it: no Dataform CLI or `@dataform/core`, no merge-base, no Google credentials, or no `jobs.create` in a project a check dry runs in.
+Then xf check exits 2; `--output` gets the checklist, and a comment an earlier push left becomes "couldn't check" with the checklist, but no new comment is posted.
+Data Lineage access, an unset prod setting and the token are warnings, and the checks run.
+Outside CI the access lines say they ran as you.
+A dbt project's projects come from its profile, so its access isn't probed.
+
+`xf check --preflight` runs the probes alone and exits 0, or 2 when one would stop the checks; with `--json` it prints them as JSON.
 
 ### GitHub Actions
 
@@ -155,9 +199,9 @@ jobs:
         #   fail-over: 1TB
 ```
 
-The action downloads the xf release of its tag, installs the Dataform CLI at the project's `dataformCoreVersion` (and runs `npm ci` when the project has a `package.json`), and runs `xf check --comment` against the pull request's base branch, with `GITHUB_TOKEN`.
+The action downloads the xf release of its tag, runs `npm ci` when the project has a `package.json`, installs the Dataform CLI when `dataform` isn't on PATH (at the project's `dataformCoreVersion`, else the `@dataform/core` version in `package-lock.json`), and runs `xf check --comment` against the pull request's base branch, with `GITHUB_TOKEN`.
 It writes the report to the job summary too.
-For dbt, add the steps that install dbt and its packages (`dbt deps`) before it; the action doesn't install the Dataform CLI in a folder with a `dbt_project.yml`.
+For dbt, add the steps that install dbt and its packages (`dbt deps`) before it; the action neither runs `npm ci` nor installs the Dataform CLI in a folder with a `dbt_project.yml`.
 Google credentials are your own step, as above: the identity needs what [the CI job needs](#what-the-ci-job-needs).
 A pull request from a fork gets no credentials, so the action skips it, says so in the job summary, and passes.
 
@@ -169,7 +213,8 @@ A pull request from a fork gets no credentials, so the action skips it, says so 
 | `fail-on`, `fail-over` | the gates, off by default: `critical` or `warning`, and a size such as `100GB` |
 | `quiet-under` | how much a run must grow for cost alone to be worth a comment, `1GiB` by default |
 | `default-branch` | the branch to compare with, by default the pull request's base |
-| `install-dataform` | `auto` (the default), `true` or `false` |
+| `npm-ci` | `auto` (the default: when there is a `package.json`), `true` or `false` |
+| `install-dataform` | `auto` (the default: when `dataform` isn't on PATH), `true` or `false` |
 | `args` | more flags for `xf check`, such as `--usd-per-tib 7.5` or `--dbt-prod-target prod` |
 
 Its outputs are `exit-code` and `report`, the path of the report as Markdown.
@@ -189,17 +234,20 @@ xf-check:
     # XF_FAIL_ON: critical
 ```
 
-It runs on merge request pipelines in a `node` image, in the `test` stage, and takes the same settings as the action's inputs as variables (`XF_DIR`, `XF_COMMENT`, `XF_FAIL_ON`, `XF_FAIL_OVER`, `XF_QUIET_UNDER`, `XF_INSTALL_DATAFORM`, `XF_ARGS`); the template's header lists them.
+It runs on merge request pipelines in a `node` image, in the `test` stage, and takes the same settings as the action's inputs as variables (`XF_DIR`, `XF_COMMENT`, `XF_FAIL_ON`, `XF_FAIL_OVER`, `XF_QUIET_UNDER`, `XF_NPM_CI`, `XF_INSTALL_DATAFORM`, `XF_ARGS`); the template's header lists them.
+Its first lines are plain `sh`, and stop with the tools the job's image lacks when it has no `bash`, `curl`, `git` or `tar`.
+Where your GitLab can't reach GitHub's raw files, `xf check init gitlab --include copy` writes a copy of the template into the repository and includes it with `local:`.
 It keeps the report (`xf-check.md`) and the Code Quality report as artifacts.
 Set two CI/CD variables:
 
 - `XF_FORGE_TOKEN`: a project access token with the `api` scope and the Reporter role, masked. It posts the note; GitLab's job token can't.
+  Leave it unprotected, and its environment scope `*` or the job's environment: otherwise the job doesn't get it, and xf says which of the two may be why.
 - `GOOGLE_APPLICATION_CREDENTIALS`: a File variable holding a service account key, or a workload identity federation config, as [below](#gitlab-ci-with-workload-identity-federation).
 
 Both must be readable by merge request pipelines: a protected variable is hidden from a pipeline on an unprotected branch.
 
-An image of your own that already has the Dataform CLI can skip its install with `XF_INSTALL_DATAFORM: "false"`, which skips `npm ci` too.
-A project that takes `@dataform/core` from `package.json` then needs `npm ci` in the job's `before_script`, or every check stops on "Could not find a recent installed version of @dataform/core".
+An image of your own that already has the Dataform CLI needs nothing set: `auto` leaves a `dataform` on PATH alone, and still runs `npm ci` for a project that takes `@dataform/core` from `package.json`.
+An image that has its own `node_modules` and no network sets `XF_NPM_CI: "false"`.
 
 #### GitLab CI with workload identity federation
 
@@ -262,6 +310,17 @@ The steps below impersonate a service account; replace `PROJECT_NUMBER`, `my-pro
 
    `before_script` runs in the same shell as the template's script, before it.
 
+**If your organisation has its own auth template**, use it instead of the steps above: all xf needs is `GOOGLE_APPLICATION_CREDENTIALS` exported by the end of the job's `before_script`, which runs in the same shell as the template's script.
+
+```yaml
+xf-check:
+  extends: .id_tokens                              # if your template needs GitLab's OIDC token
+  before_script:
+    - !reference [.your_auth_template, script]   # exports GOOGLE_APPLICATION_CREDENTIALS
+```
+
+The preflight's Google line names the identity xf signs in as, and the BigQuery lines say whether it can create jobs in each project; GitLab masks the identity in the log when it matches a masked variable.
+
 When the sign-in fails, xf exits 2 and the job prints the end of its log. The usual causes:
 
 - **`invalid_grant` or "audience does not match"**: the `aud` in `id_tokens` isn't one of the provider's allowed audiences.
@@ -306,17 +365,18 @@ When one check can't be made, the report has the other and says why, and the exi
 |---|---|
 | `0` | The report was made, and no gate tripped. |
 | `1` | `--fail-on` or `--fail-over` tripped. |
-| `2` | Neither check could be made, or `--comment` couldn't comment. The reason is on stderr. |
+| `2` | Neither check could be made (the preflight stopped them, say), or `--comment` couldn't comment; without a token the checks run first and write their reports. The reason is on stderr. |
 
 | Flag | |
 |---|---|
 | `--comment` | post the report on the pull request, as above; it needs `XF_FORGE_TOKEN` (or `GITHUB_TOKEN` in GitHub Actions). A job that isn't for a pull request (a push to `main`) says so and doesn't comment |
+| `--preflight` | only run [the preflight](#the-preflight): print the checklist, and exit 0, or 2 when something would stop the checks |
 | `--codequality path` | also write the notes as a GitLab Code Quality report |
 | `--fail-on critical\|warning` | exit 1 at that column change severity or worse |
 | `--fail-over size` | exit 1 when the changed actions scan more than `size` between them |
 | `--quiet-under size` | how much a run must grow for cost alone to be worth a comment; `1GiB` by default |
 | `--output path` | write the report to `path` instead of stdout |
-| `--json` | print (or write) JSON: `impact` and `cost` hold [the impact JSON](#impact-json) and [the cost JSON](#json), `null` with `impactError` or `costError` beside when one couldn't be made; `verdict` is the first line and `worthAComment` says whether it would comment |
+| `--json` | print (or write) JSON: `impact` and `cost` hold [the impact JSON](#impact-json) and [the cost JSON](#json), `null` with `impactError` or `costError` beside when one couldn't be made; `verdict` is the first line, `worthAComment` says whether it would comment, and `preflight` holds the checklist's `lines` (each a `name`, `status`, `detail` and `fix`) |
 
 It takes `xf impact`'s and `xf cost`'s other flags too: `--usd-per-tib`, `--default-branch`, `--pushed`, `--prod-compiler-options`, `--dev-compiler-options`, and the tools' (`--dataform-bin`, `--dbt-bin`, `--dbt-target`, `--dbt-prod-target`).
 
@@ -412,13 +472,20 @@ A reader's `filePath` is set when it is an action of this project, and `changedO
 - **The default branch's history.** xf never fetches: it needs `origin/main` and enough history to find the merge-base, so fetch everything (`fetch-depth: 0` in GitHub Actions) or at least `git fetch origin main`.
 - **The PR's branch checked out**, so the report names it. A detached checkout still works, but the report shows a commit instead.
 - **Google credentials** through Application Default Credentials: Workload Identity Federation, or a service account key in `GOOGLE_APPLICATION_CREDENTIALS`.
+  The checks use two projects when `prodCompilerOptions` names another: column impact dry runs the branch as the project compiles by default, in the default project, and compares it with prod's tables; query cost dry runs against prod.
   The identity needs:
 
   | Role | On | For |
   |---|---|---|
-  | `roles/bigquery.jobUser` | the project running dry runs | running the dry runs |
-  | `roles/bigquery.dataViewer` | the dataset of each changed table | reading their current schemas |
-  | `roles/datalineage.viewer` | each changed table's project | asking Dataplex for readers |
+  | `roles/bigquery.jobUser` | the default project (`defaultProject`) | column impact's dry run of the branch |
+  | `roles/bigquery.dataViewer` | the datasets the models read in the default project | the same dry run |
+  | `roles/bigquery.jobUser` | the prod project (`--default-database` in `prodCompilerOptions`) | query cost's dry runs |
+  | `roles/bigquery.dataViewer` | the datasets the models read and build in the prod project | query cost's dry runs, and the changed tables' current schemas |
+  | `roles/datalineage.viewer` | each changed table's project (the prod project), with the Data Lineage API enabled | asking Dataplex for readers |
+
+  With one project, it is one `jobUser` and `dataViewer` on it.
+  Dry runs are free, and none of these roles writes.
+  An access-denied reason in a report names the role it lacks and where, such as `needs roles/bigquery.jobUser on acme-dev`.
 
   With user credentials rather than a service account, the quota project (`gcloud auth application-default set-quota-project`) needs the Data Lineage API enabled too.
 

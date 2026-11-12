@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,11 +34,16 @@ type checkFlags struct {
 	asJSON      bool
 	comment     bool
 	codequality string
+	// preflight runs the probes alone.
+	preflight bool
 }
 
 // runCheck checks the branch's column impact and query cost in one report
 // (ADR 0040) and returns the exit code.
 func runCheck(args []string) int {
+	if len(args) > 0 && args[0] == "init" {
+		return runCheckInit(args[1:])
+	}
 	fs := flag.NewFlagSet("xf check", flag.ContinueOnError)
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
@@ -52,14 +58,21 @@ func runCheck(args []string) int {
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of Markdown")
 	comment := fs.Bool("comment", false, "post the report on the pull request (merge request) as one comment, edited on each push; in GitHub Actions or GitLab CI")
 	codequality := fs.String("codequality", "", "also write the findings as a GitLab Code Quality report to `path`")
+	preflight := fs.Bool("preflight", false, "only probe what the checks need (tools, git history, prod settings, Google access, the token), print the checklist, and exit 0, or 2 when something stops them")
 	commandUsage(fs, "xf check [flags]", `Checks the column impact and the query cost of the actions this branch
 changes, as xf impact and xf cost do, in one report for a pull request:
 Markdown, or JSON with --json. With --comment it posts the report on the
 pull request (GitHub Actions) or merge request (GitLab CI) as one comment,
 edited on each push, and only when there is something to say. In GitHub
 Actions the findings also go on the changed lines; --codequality writes them
-for GitLab. Progress goes to stderr. Exits 0, 1 when --fail-on or --fail-over
-trips, or 2 when neither check could be made.`)
+for GitLab. Progress goes to stderr.
+
+It first probes, in seconds, what the checks need, and prints the checklist
+on stderr; a probe that makes a check impossible stops it there. Exits 0, 1
+when --fail-on or --fail-over trips, or 2 when neither check could be made,
+or --comment couldn't comment (the checks run first).
+
+  xf check init gitlab|github   writes the CI job (see xf check init --help)`)
 	help, err := parseArgs(fs, args)
 	if help {
 		return check.OK
@@ -67,7 +80,7 @@ trips, or 2 when neither check could be made.`)
 	if err == nil && fs.NArg() > 0 {
 		err = fmt.Errorf("unexpected arguments: %v (see xf check --help)", fs.Args())
 	}
-	cf := checkFlags{pushed: *pushed, output: *output, asJSON: *asJSON, comment: *comment, codequality: *codequality}
+	cf := checkFlags{pushed: *pushed, output: *output, asJSON: *asJSON, comment: *comment, codequality: *codequality, preflight: *preflight}
 	cf.opts.Cost.USDPerTiB = *usdPerTiB
 	if err == nil {
 		cf.opts.FailOn, cf.opts.Gate, err = parseFailOn(*failOn)
@@ -123,24 +136,67 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	for _, w := range settings.Warnings {
 		fmt.Fprintln(os.Stderr, "xf check:", w)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Find the pull request before the checks. A missing token waits for
+	// them: the job fails after it has a report (ADR 0041).
+	var pr *check.PR
+	var prErr, tokenErr error
+	if cf.comment {
+		pr, prErr = check.FindPR(os.Getenv, os.ReadFile)
+		switch {
+		case errors.Is(prErr, check.ErrNoPR):
+			fmt.Fprintln(os.Stderr, "xf check: not commenting:", prErr)
+		case errors.Is(prErr, check.ErrNoToken):
+			tokenErr = prErr
+		case prErr != nil:
+			return 0, fmt.Errorf("--comment: %w", prErr)
+		}
+	}
+	commenting := pr != nil && pr.Token != ""
+
+	base := cmp.Or(settings.DefaultBranch, config.DefaultBranch)
+	prefix := gitPrefix(root)
+	r := &check.Report{Project: cmp.Or(prefix, ".")}
+	r.Preflight = runPreflight(ctx, preflightProbes(name, root, base, settings, cf.comment, pr, prErr))
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+	fmt.Fprint(os.Stderr, r.Preflight.Text())
+	if cf.preflight {
+		if cf.asJSON {
+			data, err := json.MarshalIndent(r.Preflight, "", "  ")
+			if err != nil {
+				return 0, err
+			}
+			if _, err := os.Stdout.Write(append(data, '\n')); err != nil {
+				return 0, err
+			}
+		}
+		if r.Preflight.Stops() {
+			return check.Failed, nil
+		}
+		return check.OK, nil
+	}
+	if r.Preflight.Stops() {
+		if cf.output != "" {
+			if err := writeCheck(os.Stdout, cf.output, r, cf.opts, cf.asJSON); err != nil {
+				return 0, err
+			}
+		}
+		if commenting {
+			if err := postComment(ctx, pr, r, cf.opts, cmp.Or(pr.Commit, gitHead(root))); err != nil {
+				fmt.Fprintln(os.Stderr, "xf check: --comment:", err)
+			}
+		}
+		return 0, errors.New(r.Preflight.Reason())
+	}
+
 	b, err := openBackend(name, root, settings)
 	if err != nil {
 		return 0, err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// Find the pull request before the checks, so a job that can't
-	// comment says so before minutes of work.
-	var pr *check.PR
-	if cf.comment {
-		if pr, err = check.FindPR(os.Getenv, os.ReadFile); errors.Is(err, check.ErrNoPR) {
-			fmt.Fprintln(os.Stderr, "xf check: not commenting:", err)
-		} else if err != nil {
-			return 0, fmt.Errorf("--comment: %w", err)
-		}
-	}
-
 	client, err := connect(ctx, root, b, nil)
 	if err != nil {
 		return 0, err
@@ -151,9 +207,6 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	if cf.pushed {
 		head = changes.HeadPushed
 	}
-	base := cmp.Or(settings.DefaultBranch, config.DefaultBranch)
-	prefix := gitPrefix(root)
-	r := &check.Report{Project: cmp.Or(prefix, ".")}
 
 	pr0 := newProgressPrinter(os.Stderr)
 	pr0.say("Working out the changed actions against " + base)
@@ -212,14 +265,17 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 		}
 	}
 
-	if pr != nil {
+	if commenting {
 		commit := cmp.Or(pr.Commit, gitHead(root))
 		if err := postComment(ctx, pr, r, cf.opts, commit); err != nil {
 			return 0, fmt.Errorf("--comment: %w", err)
 		}
 	}
-	if r.Neither() {
+	switch {
+	case r.Neither():
 		return 0, errors.New("neither check could be made")
+	case tokenErr != nil:
+		return 0, fmt.Errorf("--comment: the checks ran, but %w", tokenErr)
 	}
 	return r.Code(cf.opts), nil
 }

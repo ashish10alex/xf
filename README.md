@@ -83,7 +83,7 @@ The TUI is in maintenance mode: it keeps working, but new features go to xf web.
 - [The TUI](docs/tui.md): the terminal UI, its keys, and the project list.
 - [neovim](docs/neovim.md): `xf --nvim`, the plugin and the language server.
 - [Running and branches](docs/running.md): Run Changed, tag runs, switching branch, deferring to prod, and `xf run` with `--defer` from the command line, with its agent skill.
-- [Checking a branch](docs/checks.md): column impact (`xf impact`) and query cost (`xf cost`), in xf and in CI; `xf check`, its GitHub Action and its GitLab template, which put both on a pull request; and the agent skill for both.
+- [Checking a branch](docs/checks.md): column impact (`xf impact`) and query cost (`xf cost`), in xf and in CI; `xf check`, its GitHub Action and its GitLab template, which put both on a pull request, and `xf check init`, which writes the CI job; and the agent skill for both.
 - [dbt projects](docs/dbt.md): what works in a dbt project and how it differs.
 - [Settings and API runs](docs/settings.md): the config files, running through the Dataform API, and which Google account xf uses.
 - [Windows](docs/windows.md): installing, upgrading and what differs on Windows.

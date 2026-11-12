@@ -268,8 +268,19 @@ func TestFindPR(t *testing.T) {
 	if err != nil || pr.Number != 7 || pr.Repo.Kind != forge.GitLab || pr.Repo.API != "https://gitlab.example.com/api/v4" || pr.Token != "gl" {
 		t.Errorf("GitLab: %+v, %v", pr, err)
 	}
-	if _, err := FindPR(env(map[string]string{"GITLAB_CI": "true", "CI_MERGE_REQUEST_IID": "7", "CI_JOB_TOKEN": "job"}), os.ReadFile); err == nil || !strings.Contains(err.Error(), "XF_FORGE_TOKEN") {
-		t.Errorf("GitLab without a token: %v", err)
+	pr, err = FindPR(env(map[string]string{"GITLAB_CI": "true", "CI_MERGE_REQUEST_IID": "7", "CI_JOB_TOKEN": "job",
+		"CI_COMMIT_REF_PROTECTED": "false", "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "feat", "CI_ENVIRONMENT_NAME": "gcp/prod"}), os.ReadFile)
+	if !errors.Is(err, ErrNoToken) || pr == nil || pr.Number != 7 {
+		t.Fatalf("GitLab without a token: %+v, %v", pr, err)
+	}
+	for _, want := range []string{"XF_FORGE_TOKEN", "Protected", "`feat` isn't", "`*` or `gcp/prod`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("GitLab without a token: %q lacks %q", err, want)
+		}
+	}
+	_, err = FindPR(env(map[string]string{"GITLAB_CI": "true", "CI_MERGE_REQUEST_IID": "7", "CI_COMMIT_REF_PROTECTED": "true"}), os.ReadFile)
+	if msg := err.Error(); strings.Contains(msg, "Protected") || !strings.Contains(msg, "this job has none") {
+		t.Errorf("GitLab on a protected branch, no environment: %q", msg)
 	}
 	if _, err := FindPR(env(map[string]string{}), os.ReadFile); err == nil {
 		t.Error("outside CI should fail")

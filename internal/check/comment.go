@@ -54,8 +54,11 @@ const lastReport = "<details><summary>Last report"
 // made on this one: why, with the last report folded below it under the
 // commit it checked, so nobody reads old findings as current. previous is
 // the comment as it was.
-func FailedBody(marker, project, commit, reason, previous string) string {
+func FailedBody(marker, project, commit, reason, details, previous string) string {
 	lines := []string{marker, "### " + Title(project), "", "❔ **Couldn't check this push" + atCommit(commit) + ":** " + oneLine(reason)}
+	if details != "" {
+		lines = append(lines, "", details)
+	}
 	if last, at := LastReport(previous); last != "" {
 		summary := lastReport + "</summary>"
 		if at != "" {
@@ -132,11 +135,14 @@ func Plan(r *Report, o Options, commit, existing string) (Action, string) {
 		if existing == "" {
 			return Leave, ""
 		}
-		reason := r.ImpactError
+		reason, details := r.ImpactError, ""
 		if reason == "" {
 			reason = r.CostError
 		}
-		body = FailedBody(marker, r.Project, commit, reason, existing)
+		if r.Preflight.Stops() {
+			reason, details = "the preflight found what stops both checks", r.Preflight.Markdown()
+		}
+		body = FailedBody(marker, r.Project, commit, reason, details, existing)
 	case r.Worth(o):
 		body = Body(marker, commit, Markdown(r, o))
 	case existing == "" || IsResolved(existing, marker, r.Project):

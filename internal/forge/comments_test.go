@@ -40,6 +40,10 @@ func (h *commentHost) serve(t *testing.T, kind Kind, header, token string) *http
 		case r.Method == http.MethodPost && path == list:
 			h.writes = append(h.writes, "post "+body.Body)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 999})
+		case r.Method == http.MethodGet && (path == "/api/v4/projects/g%2Fp/merge_requests/5" || path == "/repos/o/r/pulls/5"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"iid": 5})
+		case r.Method == http.MethodGet && path == "/api/v4/personal_access_tokens/self":
+			_ = json.NewEncoder(w).Encode(map[string]any{"scopes": []string{"api"}, "expires_at": "2026-12-31"})
 		case r.Method == edit && strings.HasPrefix(path, one):
 			h.writes = append(h.writes, "edit "+strings.TrimPrefix(path, one)+" "+body.Body)
 			_ = json.NewEncoder(w).Encode(map[string]any{})
@@ -106,5 +110,37 @@ func TestCommentsGitLab(t *testing.T) {
 	missing := NewComments(RepoAt(GitLab, srv.URL, "g/p"), 6, "tok", nil)
 	if _, err := missing.Find(ctx, func(string) bool { return true }); err == nil || !strings.Contains(err.Error(), "merge request !6 isn't in g/p") {
 		t.Errorf("missing: %v", err)
+	}
+}
+
+func TestCommentsTokenAndRead(t *testing.T) {
+	h := &commentHost{}
+	srv := h.serve(t, GitLab, "PRIVATE-TOKEN", "tok")
+	ctx := context.Background()
+	cs := NewComments(RepoAt(GitLab, srv.URL, "g/p"), 5, "tok", nil)
+	tok, err := cs.Token(ctx)
+	if err != nil || tok.ExpiresAt != "2026-12-31" || len(tok.Scopes) != 1 || tok.Scopes[0] != "api" {
+		t.Errorf("Token = %+v, %v", tok, err)
+	}
+	if err := cs.Read(ctx); err != nil {
+		t.Errorf("Read: %v", err)
+	}
+	bad := NewComments(RepoAt(GitLab, srv.URL, "g/p"), 5, "wrong", nil)
+	if _, err := bad.Token(ctx); err != ErrToken {
+		t.Errorf("wrong token: %v", err)
+	}
+	if err := NewComments(RepoAt(GitLab, srv.URL, "g/p"), 6, "tok", nil).Read(ctx); err == nil || !strings.Contains(err.Error(), "!6") {
+		t.Errorf("missing MR: %v", err)
+	}
+
+	gh := h.serve(t, GitHub, "Authorization", "Bearer tok")
+	repo := RepoAt(GitHub, gh.URL, "o/r")
+	repo.API = gh.URL
+	ghc := NewComments(repo, 5, "tok", nil)
+	if _, err := ghc.Token(ctx); err != ErrNoTokenInfo {
+		t.Errorf("GitHub Token: %v", err)
+	}
+	if err := ghc.Read(ctx); err != nil {
+		t.Errorf("GitHub Read: %v", err)
 	}
 }

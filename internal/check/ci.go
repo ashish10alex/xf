@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/ashish10alex/xf/internal/forge"
 )
@@ -26,6 +27,11 @@ func GitHubActions(getenv func(string) string) bool { return getenv("GITHUB_ACTI
 // ErrNoPR is a CI job that doesn't run for a merge request: a push to a
 // branch, say.
 var ErrNoPR = errors.New("this job doesn't run for a pull request or merge request")
+
+// ErrNoToken is a merge request with no token to comment on it with. FindPR
+// still returns the PR, so the checks run and the job fails after them
+// (ADR 0041).
+var ErrNoToken = errors.New("no token to comment with")
 
 // FindPR is the merge request of the CI job the environment describes:
 // GitHub Actions (the event in GITHUB_EVENT_PATH) or GitLab CI
@@ -56,11 +62,11 @@ func FindPR(getenv func(string) string, readFile func(string) ([]byte, error)) (
 		if api := getenv("GITHUB_API_URL"); api != "" {
 			repo.API = api
 		}
-		token := cmp.Or(getenv("XF_FORGE_TOKEN"), getenv("GITHUB_TOKEN"))
-		if token == "" {
-			return nil, errors.New("no token to comment with: set XF_FORGE_TOKEN or GITHUB_TOKEN")
+		pr := &PR{Repo: repo, Number: ev.PullRequest.Number, Commit: ev.PullRequest.Head.SHA, Token: cmp.Or(getenv("XF_FORGE_TOKEN"), getenv("GITHUB_TOKEN"))}
+		if pr.Token == "" {
+			return pr, fmt.Errorf("%w: set XF_FORGE_TOKEN or GITHUB_TOKEN", ErrNoToken)
 		}
-		return &PR{Repo: repo, Number: ev.PullRequest.Number, Commit: ev.PullRequest.Head.SHA, Token: token}, nil
+		return pr, nil
 	case getenv("GITLAB_CI") == "true":
 		iid := getenv("CI_MERGE_REQUEST_IID")
 		if iid == "" {
@@ -74,11 +80,32 @@ func FindPR(getenv func(string) string, readFile func(string) ([]byte, error)) (
 		if api := getenv("CI_API_V4_URL"); api != "" {
 			repo.API = api
 		}
-		token := getenv("XF_FORGE_TOKEN")
-		if token == "" {
-			return nil, errors.New("no token to comment with: set XF_FORGE_TOKEN to a project access token with the api scope (GitLab's job token can't post notes)")
+		pr := &PR{Repo: repo, Number: n, Commit: getenv("CI_COMMIT_SHA"), Token: getenv("XF_FORGE_TOKEN")}
+		if pr.Token == "" {
+			return pr, fmt.Errorf("%w: set XF_FORGE_TOKEN to a project access token with the api scope (GitLab's job token can't post notes)%s", ErrNoToken, hiddenVariable(getenv))
 		}
-		return &PR{Repo: repo, Number: n, Commit: getenv("CI_COMMIT_SHA"), Token: token}, nil
+		return pr, nil
 	}
 	return nil, errors.New("--comment works in GitHub Actions and GitLab CI, and this isn't either")
+}
+
+// hiddenVariable says why a GitLab CI/CD variable that is set may still be
+// empty in this job: protected, on a branch that isn't, or scoped to an
+// environment other than the job's.
+func hiddenVariable(getenv func(string) string) string {
+	var why []string
+	if getenv("CI_COMMIT_REF_PROTECTED") != "true" {
+		ref := cmp.Or(getenv("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"), getenv("CI_COMMIT_REF_NAME"))
+		branch := "this branch isn't"
+		if ref != "" {
+			branch = "`" + ref + "` isn't"
+		}
+		why = append(why, "it is Protected, which reaches only protected branches, and "+branch)
+	}
+	if env := getenv("CI_ENVIRONMENT_NAME"); env != "" {
+		why = append(why, "its environment scope isn't `*` or `"+env+"`, this job's environment")
+	} else {
+		why = append(why, "it is scoped to an environment, and this job has none")
+	}
+	return ". If XF_FORGE_TOKEN is set, this job can't see it when " + strings.Join(why, ", or when ")
 }

@@ -1,6 +1,6 @@
-# xf check for GitLab CI (ADR 0040): the column impact and query cost of a
-# merge request's Dataform or dbt changes, as one note on the merge request
-# and a Code Quality report on the changed lines. See docs/checks.md.
+# xf check for GitLab CI (ADRs 0040, 0041): the column impact and query cost
+# of a merge request's Dataform or dbt changes, as one note on the merge
+# request and a Code Quality report on the changed lines. See docs/checks.md.
 #
 # Include it at a tag of xf, and set what it needs as CI/CD variables:
 #
@@ -10,8 +10,11 @@
 #     variables:
 #       XF_VERSION: <tag>
 #
+# `xf check init gitlab` writes this for a repository, or a copy of this file
+# where GitHub can't be reached.
+#
 #   XF_FORGE_TOKEN                  a project access token with the api scope and the
-#                                   Reporter role, masked: it posts the note
+#                                   Reporter role, masked, not protected: it posts the note
 #   GOOGLE_APPLICATION_CREDENTIALS  a File variable: a service account key, or a
 #                                   workload identity federation config (docs/checks.md,
 #                                   "GitLab CI with workload identity federation")
@@ -28,9 +31,19 @@ xf-check:
     XF_FAIL_ON: ""            # critical or warning: fail at that column change severity
     XF_FAIL_OVER: ""          # such as 100GB: fail when the changed actions scan more
     XF_QUIET_UNDER: "1GiB"    # cost alone needs a run to grow this much for a note
-    XF_INSTALL_DATAFORM: auto # auto installs the Dataform CLI unless XF_DIR is a dbt project
+    XF_NPM_CI: auto           # auto runs npm ci when the project has a package.json, unless it is a dbt project
+    XF_INSTALL_DATAFORM: auto # auto installs the Dataform CLI unless dataform is on PATH or it is a dbt project
     XF_ARGS: ""               # more flags for xf check, split on spaces
   script:
+    # Plain sh first: on an image without bash the runner uses sh, and the
+    # rest needs bash.
+    - |
+      missing=""
+      for tool in bash curl git tar; do command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"; done
+      if [ -n "$missing" ]; then
+        echo "xf check: the job's image ($CI_JOB_IMAGE) has no$missing. Set image: to one with bash, curl, git, tar and Node, such as node:22."
+        exit 2
+      fi
     - |
       set -uo pipefail
       case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) echo "xf check runs on x86_64 and arm64"; exit 2 ;; esac
@@ -40,7 +53,7 @@ xf-check:
         url="https://github.com/ashish10alex/xf/releases/latest/download/xf_linux_${arch}.tar.gz"
       fi
       mkdir -p "$CI_PROJECT_DIR/.xf-bin"
-      curl -fsSL "$url" | tar -xz -C "$CI_PROJECT_DIR/.xf-bin" xf || exit 2
+      curl -fsSL "$url" | tar -xz -C "$CI_PROJECT_DIR/.xf-bin" xf || { echo "xf check: couldn't download $url"; exit 2; }
       export PATH="$CI_PROJECT_DIR/.xf-bin:$PATH"
       xf --version
 
@@ -48,11 +61,18 @@ xf-check:
       git checkout -q -B "$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME" "$CI_COMMIT_SHA"   # the report names the branch
 
       cd "$XF_DIR" || exit 2
-      if [ "$XF_INSTALL_DATAFORM" = true ] || { [ "$XF_INSTALL_DATAFORM" = auto ] && [ ! -f dbt_project.yml ]; }; then
-        if [ -f package.json ]; then npm ci || exit 2; fi
+      dbt=false
+      [ -f dbt_project.yml ] && dbt=true
+      if [ "$XF_NPM_CI" = true ] || { [ "$XF_NPM_CI" = auto ] && [ "$dbt" = false ] && [ -f package.json ]; }; then
+        npm ci --no-audit --no-fund || exit 2
+      fi
+      if [ "$XF_INSTALL_DATAFORM" = true ] || { [ "$XF_INSTALL_DATAFORM" = auto ] && [ "$dbt" = false ] && ! command -v dataform >/dev/null 2>&1; }; then
         version=""
         if [ -f workflow_settings.yaml ]; then
           version=$(sed -n 's/^dataformCoreVersion:[[:space:]]*["'\'']\{0,1\}\([^"'\'' ]*\).*/\1/p' workflow_settings.yaml | head -n 1)
+        fi
+        if [ -z "$version" ] && [ -f package-lock.json ]; then
+          version=$(node -e 'const l=require("./package-lock.json");const p=(l.packages||{})["node_modules/@dataform/core"]||(l.dependencies||{})["@dataform/core"];if(p&&p.version)console.log(p.version)' 2>/dev/null || true)
         fi
         npm i -g "@dataform/cli${version:+@$version}" || exit 2
       fi
