@@ -307,14 +307,16 @@ kbd {
   margin: 0 0 8px;
 }
 
-.moment h2 {
+.moment h2,
+.check-card h2 {
   font-size: clamp(22px, 2.8vw, 28px);
   line-height: 1.25;
   letter-spacing: -0.02em;
   margin: 0 0 10px;
 }
 
-.moment p {
+.moment p,
+.check-card .moment-header p {
   margin: 0;
   color: var(--muted);
   font-size: 15.5px;
@@ -356,29 +358,20 @@ kbd {
   display: block;
 }
 
-.ok { color: var(--accent); }
-.warn { color: var(--amber); }
-.err { color: var(--red); }
-
-/* ---- Two-column Checks Grid (Impact & Cost) ---- */
+/* ---- Checks (Impact & Cost), stacked: their reports are wide ---- */
 .checks-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  grid-template-columns: 1fr;
+  gap: 40px;
   border-top: 1px solid var(--border);
   padding: 48px 0;
-}
-@media (max-width: 820px) {
-  .checks-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .check-card {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   gap: 18px;
+  min-width: 0; /* the reports scroll sideways rather than widen the page */
 }
 
 .report-box {
@@ -405,39 +398,64 @@ kbd {
   overflow-x: auto;
 }
 
-.impact-row {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+/* xf impact's Markdown, rendered as a pull request shows it */
+.md-report {
+  font: 13.5px/1.5 var(--sans);
+  color: var(--fg);
 }
-.impact-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
+.md-report h3 {
+  font-size: 15px;
+  margin: 2px 0 10px;
 }
-.impact-row:first-child {
-  padding-top: 0;
+.md-report p {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  color: var(--fg);
 }
-.impact-sub {
-  margin-top: 4px;
-  padding-left: 18px;
+.md-report code {
+  font-size: 0.88em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.md-report table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 640px; /* on a phone it scrolls sideways in its box */
+  margin: 4px 0 10px;
+}
+.md-report th,
+.md-report td {
+  border: 1px solid var(--border-strong);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-report th {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+.md-report .num { text-align: right; }
+.md-report .mark { text-align: center; }
+.md-report .legend {
+  margin: 0;
+  font-size: 11.5px;
   color: var(--muted);
-  font-size: 12px;
 }
 
-.cost-list {
+/* xf cost's terminal text; t-* are its ANSI styles */
+.term {
   margin: 0;
-  padding: 0;
-  list-style: none;
+  font: 10.5px/1.6 var(--mono); /* its widest line fits the column */
+  white-space: pre;
+  color: var(--fg);
 }
-.cost-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-}
-.cost-list li:last-child {
-  border-bottom: none;
-}
+.t-bold { font-weight: 700; }
+.t-dim { color: var(--dim); }
+.t-green { color: var(--accent); }
+.t-yellow { color: var(--amber); }
+.t-cyan { color: var(--blue); }
 
 /* ---- Footer ---- */
 .site-footer {

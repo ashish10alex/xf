@@ -115,73 +115,60 @@
 
     <!-- PRODUCT MOMENTS 2 & 3: Column Impact & Query Cost -->
     <section class="checks-grid" aria-label="Branch checks">
-      <!-- Column Impact -->
+      <!-- Column Impact: real `xf impact` output (Markdown, rendered) from examples/dataform on a demo branch -->
       <div class="check-card">
         <div class="moment-header" style="margin-bottom: 0;">
           <p class="moment-tag">Column impact · xf impact</p>
           <h2>See who reads a column before you drop it</h2>
           <p>
-            Compares changed models with BigQuery and asks Dataplex Data Lineage what reads any dropped or retyped columns. Readers edited on your branch are dry-run to check if they still reference the column.
+            Dry runs every changed table, view and incremental table and compares it with its table in BigQuery, then asks Dataplex Data Lineage who reads the columns it drops or retypes. A reader your branch changes is dry run too, to tell whether it still reads the column. Readers that can't be looked up are marked ❔, not passed.
           </p>
         </div>
 
         <div class="report-box">
           <div class="report-head">
-            <strong class="err">🚨 1 to fix before merging</strong>
-            <span class="mono" style="color: var(--dim);">feat/orders vs main</span>
+            <span class="mono">xf impact</span>
+            <span class="mono" style="color: var(--dim);">Markdown for the pull request</span>
           </div>
-          <div class="report-body">
-            <div class="impact-row">
-              <div>🚨 <strong>marts.orders</strong> · <span class="err">dropped</span> <code>discount</code></div>
-              <div class="impact-sub">
-                ↳ <strong>finance.margins</strong> · exact copy · <span class="err">still reads it (dry run fails)</span><br>
-                ↳ reporting.revenue_report · <span class="ok">no longer reads it (dry run passes)</span>
-              </div>
-            </div>
-            <div class="impact-row">
-              <div>⚠️ <strong>marts.dim_customers</strong> · <span class="warn">retyped</span> <code>customer_id</code> <span style="color: var(--dim);">(INT64 → STRING)</span></div>
-              <div class="impact-sub">
-                ↳ <strong>marts.customer_segments</strong> · unchanged on branch
-              </div>
-            </div>
-            <div class="impact-row">
-              <div>✅ <strong>marts.daily_revenue</strong> · <span style="color: var(--muted);">keeps every column</span></div>
-            </div>
+          <div class="report-body md-report">
+            <h3>Column impact · <code>feat/customer-countries</code> → <code>main</code></h3>
+            <p><strong>The readers of 1 model couldn't be looked up.</strong> 2 models compared with prod tables in <code>alex-personal-dev-01</code> · dataset <code>xf_example</code> · base <code>1fedc86</code></p>
+            <p>The models came from <code>feat/customer-countries</code> diffed against <code>main</code>, and their new columns were checked against the live tables in <code>alex-personal-dev-01</code>.</p>
+            <table>
+              <thead>
+                <tr><th class="num">#</th><th class="mark"></th><th>Model</th><th>What changed</th><th>Who is affected</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="num">1</td><td class="mark">❔</td><td><code>dim_customers</code></td><td>drops <code>email</code>; retypes <code>lifetime_value</code> (<code>FLOAT64</code> → <code>NUMERIC</code>)</td><td>❔ readers couldn't be looked up: no access to Data Lineage in alex-personal-dev-01: it needs the Data Lineage API enabled and roles/datalineage.viewer</td></tr>
+                <tr><td class="num">2</td><td class="mark">🆕</td><td><code>customer_countries</code></td><td>new: nothing reads it yet</td><td>—</td></tr>
+              </tbody>
+            </table>
+            <p class="legend">❔ not checked, or its readers couldn't be looked up · 🆕 new on this branch</p>
           </div>
         </div>
       </div>
 
-      <!-- Query Cost -->
+      <!-- Query Cost: real `xf cost` output (terminal text, its ANSI colours as classes) from the same demo branch -->
       <div class="check-card">
         <div class="moment-header" style="margin-bottom: 0;">
           <p class="moment-tag">Query cost · xf cost</p>
           <h2>Know what a branch adds to your BigQuery bill</h2>
           <p>
-            Dry-runs every changed action against prod tables, compares bytes scanned against the merge-base on <code>main</code>, and flags queries reading partitioned tables without a partition filter.
+            Dry runs every changed action with a query, which is free and runs nothing, and compares the bytes with the same action at the merge-base with <code>main</code>. It marks a read of a partitioned table that never names its partition column, and <code>--fail-over</code> fails a CI job over a size limit.
           </p>
         </div>
 
         <div class="report-box">
           <div class="report-head">
-            <strong class="warn">≤ 4.20 TiB scanned ($26.26)</strong>
-            <span class="mono" style="color: var(--dim);">+4.20 TiB vs main</span>
+            <span class="mono">xf cost</span>
+            <span class="mono" style="color: var(--dim);">terminal</span>
           </div>
-          <div class="report-body">
-            <ul class="cost-list">
-              <li>
-                <span><span class="warn">⚠</span> <strong>marts.fct_order_items</strong><br><span style="color: var(--amber); font-size: 11.5px;">missing partition filter: event_date on raw.events</span></span>
-                <span style="text-align: right;">≤ 4.20 TiB · $26.25<br><span class="err" style="font-size: 11.5px;">+4.20 TiB</span></span>
-              </li>
-              <li>
-                <span><span class="ok">✓</span> <strong>marts.dim_customers</strong></span>
-                <span style="text-align: right;">1.80 GiB · $0.011<br><span style="color: var(--muted); font-size: 11.5px;">new</span></span>
-              </li>
-              <li>
-                <span><span class="ok">✓</span> <strong>staging.stg_pageviews</strong></span>
-                <span style="text-align: right;">420.00 MiB · $0.003<br><span style="color: var(--muted); font-size: 11.5px;">no change</span></span>
-              </li>
-            </ul>
-          </div>
+<pre class="report-body term"><span class="t-bold">2 changed actions</span> in feat/customer-countries vs origin/main @ 1fedc86 (working tree)
+<span class="t-dim">dry run in alex-personal-dev-01</span>
+<span class="t-green">✓</span> xf_example.dim_customers       <span class="t-bold"> 606 B</span>  <span class="t-dim">$0.000</span>  <span class="t-green">-115 B (-$0.000)</span>  <span class="t-dim">(was 721 B · $0.000)</span>
+<span class="t-yellow">⚠</span> xf_example.customer_countries  <span class="t-bold t-yellow">≤ 72 B</span>  <span class="t-dim">$0.000</span>  <span class="t-cyan">new</span>               <span class="t-yellow">[MISSING PARTITION FILTER: first_order_date on xf_example.dim_customers]</span>
+<span class="t-dim">────────────────────────────────────────────────────────────</span>
+<span class="t-bold">Total scanned: ≤ 678 B | Estimated cost: ≤ $0.000</span></pre>
         </div>
       </div>
     </section>
