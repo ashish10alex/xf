@@ -95,3 +95,4 @@ A pull request from a fork gets no credentials, so the Action skips it, says why
 - Tags of xf version the Action and the GitLab template too, so `@v0.x` gets that release's binary.
 - `docs/checks.md`'s CI sections are rewritten around the Action and the template.
 - Pull requests from forks are not checked.
+- ADR 0041 amends this: `xf check` runs a preflight first, and a missing token no longer stops it before the checks.
