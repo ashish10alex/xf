@@ -37,6 +37,7 @@
     })();
   </script>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="demo.css">
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -123,17 +124,24 @@
           <div class="shot-bar" aria-hidden="true">
             <span class="dots"><i></i><i></i><i></i></span>
             <span class="shot-url">127.0.0.1 · xf web</span>
-            <span></span>
+            <span class="shot-live">live demo · click around</span>
           </div>
-          <div class="shot-img">
-            <img class="theme-dark-only" src="xf-web-dark.webp" width="1960" height="1198"
-              alt="xf web in dark mode: definitions/marts/dim_customers.sqlx open in the source editor on the left; on the right, its actions with dry-run bytes and cost, the target and run options, and the compiled SQL">
-            <img class="theme-light-only" src="xf-web-light.webp" width="1960" height="1198" loading="lazy"
-              alt="xf web in light mode: definitions/marts/dim_customers.sqlx open in the source editor on the left; on the right, its actions with dry-run bytes and cost, the target and run options, and the compiled SQL">
-            <span class="pin" style="--x:7.6%; --y:45.3%" aria-hidden="true"><b></b><span>the .sqlx, editable</span></span>
-            <span class="pin" style="--x:65.4%; --y:8.8%" aria-hidden="true"><b></b><span>dry run: bytes · $</span></span>
-            <span class="pin" style="--x:60%; --y:84.9%" aria-hidden="true"><b></b><span>compiled SQL, live</span></span>
-          </div>
+          <!-- xf web's own panes on a made-up project (demo.js); without
+               JavaScript, the screenshots. -->
+          <div class="xfd" id="xfd" role="region"
+            aria-label="Live demo of xf web on a made-up project: the file tree, the source of a model, its actions with dry-run bytes and cost, target and run options, and its compiled SQL, columns and lineage. Click around, or use the keys the footer lists."></div>
+          <noscript>
+            <style>.xfd, .shot-live { display: none; }</style>
+            <div class="shot-img">
+              <img class="theme-dark-only" src="xf-web-dark.webp" width="1960" height="1198"
+                alt="xf web in dark mode: definitions/marts/dim_customers.sqlx open in the source editor on the left; on the right, its actions with dry-run bytes and cost, the target and run options, and the compiled SQL">
+              <img class="theme-light-only" src="xf-web-light.webp" width="1960" height="1198" loading="lazy"
+                alt="xf web in light mode: definitions/marts/dim_customers.sqlx open in the source editor on the left; on the right, its actions with dry-run bytes and cost, the target and run options, and the compiled SQL">
+              <span class="pin" style="--x:7.6%; --y:45.3%" aria-hidden="true"><b></b><span>the .sqlx, editable</span></span>
+              <span class="pin" style="--x:65.4%; --y:8.8%" aria-hidden="true"><b></b><span>dry run: bytes · $</span></span>
+              <span class="pin" style="--x:60%; --y:84.9%" aria-hidden="true"><b></b><span>compiled SQL, live</span></span>
+            </div>
+          </noscript>
         </figure>
 
         <ul class="traits" aria-label="In xf web">
@@ -322,6 +330,8 @@
   </footer>
 
   <p class="sr" aria-live="polite" id="live"></p>
+
+  <script src="demo.js" defer></script>
 
   <script>
     (function () {

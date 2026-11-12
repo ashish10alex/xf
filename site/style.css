@@ -645,6 +645,12 @@ q {
   border-bottom: 1px solid var(--rule);
   background: var(--surface-2);
 }
+.shot-live {
+  justify-self: end;
+  font: 400 11px/1 var(--mono);
+  color: var(--accent);
+  white-space: nowrap;
+}
 .shot-url {
   font: 400 11.5px/1 var(--mono);
   color: var(--dim);
