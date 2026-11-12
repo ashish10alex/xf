@@ -68,7 +68,7 @@ If your default targets are prod already, `enter` with every box empty: that sav
 Commit the file and nobody on the team is asked again.
 The settings page shows the same form; in a dbt project, `dbtProdTarget` there is a pick of your profile's targets.
 
-Until it is set, in a file or with the flag, every report says so: under "against" in the TUI, on stderr from `xf impact`, and as the last line of the Markdown:
+Until it is set, in a file or with the flag, every report says so: under "against" in the TUI, under the summary of `xf impact`'s text (on stderr with `--json`), and as the last line of the Markdown:
 
 ```
 Compared with the project's default targets (`acme-dev`), which may be dev tables. Set `prodCompilerOptions` to compare with prod.
@@ -383,8 +383,21 @@ It takes `xf impact`'s and `xf cost`'s other flags too: `--usd-per-tib`, `--defa
 
 ## Column impact in CI/CD
 
-`xf impact` checks a pull request's column impact and prints the report as Markdown on stdout (or writes it to a file with `--output`), ready to post as a PR comment, with progress on stderr.
-`--json` prints it as JSON instead, for scripts (see [below](#impact-json)).
+`xf impact` checks a pull request's column impact and prints the report as text, a line per model with the readers it affects under it, with progress on stderr.
+`--output impact.md` also writes it as Markdown, ready to post as a PR comment, and `--json` prints it as JSON instead, for scripts (see [below](#impact-json)).
+
+```
+$ xf impact
+Column impact · feature/v2-marts → main
+1 to fix before merging. 2 models compared with prod tables in acme-prod · dataset marts · base 1125280
+
+FIX  orders  drops discount
+     ↳ finance.margins · exact copy · outside the project
+new  daily   new: nothing reads it yet
+
+FIX: a column or table something still reads is gone
+Readers come from Dataplex lineage of prod runs in the last 30 days, about 2 h behind. A changed reader that still names a dropped column is dry run against the branch's table: a pass means it no longer reads it.
+```
 It always checks afresh.
 Run from inside the project, it:
 
@@ -408,8 +421,9 @@ A change whose readers couldn't be looked up (❔) never trips `--fail-on`; `xf 
 | Flag | |
 |---|---|
 | `--fail-on critical\|warning` | exit 1 at that severity or worse |
-| `--output path` | write the report to `path` instead of stdout |
-| `--json` | print (or write) the report as JSON instead of Markdown |
+| `--output path` | also write the report to `path`: as Markdown, for a PR comment, or as JSON with `--json` |
+| `--json` | print JSON on stdout instead of text |
+| `--color auto\|always\|never` | colour the text, as `xf cost`'s [`--color`](#query-cost-in-cicd) does |
 | `--web` | open xf web on its Checks page, where the check runs as `I` runs it, instead of printing the report |
 | `--default-branch name` | compare with `origin/<name>` rather than `main` (or set `defaultBranch` in `.xf/config.json`) |
 | `--pushed` | check the branch pushed to origin instead of the checked-out files (Dataform only) |
@@ -420,7 +434,7 @@ A change whose readers couldn't be looked up (❔) never trips `--fail-on`; `xf 
 
 ### Impact JSON
 
-`--json` prints one document, and `--output impact.json` writes it to a file instead.
+`--json` prints one document, and `--output impact.json` writes it to a file too.
 `version` is 1: fields may be added, and it changes if one is removed or changes meaning.
 `worst` is the most urgent change's severity, as `--fail-on` ranks them, left out when nothing is at risk.
 `atRisk` holds the tables with dropped or retyped columns, or deleted, each with its `columns` and their `readers`; each table and column has a `severity`, so a script or agent can pick out what to fix without working out the rules:

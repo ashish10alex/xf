@@ -302,8 +302,8 @@ usage:
                               repository and the region it lives in
   xf config [flags]          show the settings xf would use and where each came from;
                              --auth adds the Google accounts, --json prints JSON
-  xf impact [flags]          print the column impact of the branch's changes as
-                              Markdown for a pull request (--fail-on to gate CI)
+  xf impact [flags]          print the column impact of the branch's changes;
+                              -o writes Markdown too (--fail-on to gate CI)
   xf cost [flags]            print what the branch's changed actions would scan in
                               BigQuery and what that costs (--fail-over to gate CI)
   xf check [flags]           both, in one report for a pull request; --comment posts

@@ -33,8 +33,8 @@ const (
 	impactFailed = 2 // the check could not be made
 )
 
-// runImpact prints the column impact of the project's Changed Actions as
-// Markdown and returns the exit code.
+// runImpact prints the column impact of the project's Changed Actions and
+// returns the exit code.
 func runImpact(args []string) int {
 	fs := flag.NewFlagSet("xf impact", flag.ContinueOnError)
 	pf := addProjectFlags(fs)
@@ -42,19 +42,21 @@ func runImpact(args []string) int {
 		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions)
 	pushed := fs.Bool("pushed", false, "compare the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOn := fs.String("fail-on", "", "exit 1 when a change of this `severity` or worse is found: critical or warning")
-	output := fs.String("output", "", "write the report to `path` instead of stdout")
+	output := fs.String("output", "", "also write the report to `path`: as Markdown, for a pull request comment, or as JSON with --json")
 	fs.StringVar(output, "o", "", "")
-	asJSON := fs.Bool("json", false, "print the report as JSON instead of Markdown")
+	asJSON := fs.Bool("json", false, "print the report as JSON instead of text")
+	color := fs.String("color", "auto", "colour the text: `when` is auto (on a terminal, unless $NO_COLOR is set), always or never")
 	web := fs.Bool("web", false, "open xf web on its Checks page instead, where the check runs as I runs it there")
-	commandUsage(fs, "xf impact [flags]", `Prints the column impact of the actions this branch changes, as Markdown for
-a pull request, or with --json as JSON for scripts: every changed table, view
-and incremental table (in dbt: model) is dry run and compared with its table
-in BigQuery, and Dataplex is asked who reads the columns it drops or retypes
-and the tables it deletes. It always checks afresh, and shares the work with
-xf through xf serve. Progress goes to stderr. With --web it opens xf web on
-the column impact tab of its Checks page instead, where y copies the
-Markdown, and runs until ctrl+c as xf web does. Exits 0, 1 with --fail-on
-when a change that severe is found, or 2 when the check could not be made.`)
+	commandUsage(fs, "xf impact [flags]", `Prints the column impact of the actions this branch changes, or with --json
+as JSON for scripts; --output also writes it as Markdown for a pull request:
+every changed table, view and incremental table (in dbt: model) is dry run
+and compared with its table in BigQuery, and Dataplex is asked who reads the
+columns it drops or retypes and the tables it deletes. It always checks
+afresh, and shares the work with xf through xf serve. Progress goes to
+stderr. With --web it opens xf web on the column impact tab of its Checks
+page instead, where y copies the Markdown, and runs until ctrl+c as xf web
+does. Exits 0, 1 with --fail-on when a change that severe is found, or 2
+when the check could not be made.`)
 	help, err := parseArgs(fs, args)
 	if help {
 		return impactOK
@@ -69,6 +71,10 @@ when a change that severe is found, or 2 when the check could not be made.`)
 	if err == nil && *web && (*pushed || *failOn != "" || *output != "" || *asJSON) {
 		err = errors.New("--web can't be used with --pushed, --fail-on, --output or --json")
 	}
+	useColour := false
+	if err == nil {
+		useColour, err = useColor(*color, os.Stdout, os.Getenv)
+	}
 	if err == nil && *web {
 		if err = startWeb(pf, sf, webStart{cmdName: "xf impact", check: "impact"}); err == nil {
 			return impactOK
@@ -76,7 +82,7 @@ when a change that severe is found, or 2 when the check could not be made.`)
 	}
 	if err == nil {
 		var code int
-		if code, err = checkImpact(pf, sf, *pushed, *failOn != "", threshold, *output, *asJSON); err == nil {
+		if code, err = checkImpact(pf, sf, *pushed, *failOn != "", threshold, *output, *asJSON, useColour); err == nil {
 			return code
 		}
 	}
@@ -84,7 +90,7 @@ when a change that severe is found, or 2 when the check could not be made.`)
 	return impactFailed
 }
 
-func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold impact.Severity, output string, asJSON bool) (int, error) {
+func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold impact.Severity, output string, asJSON, color bool) (int, error) {
 	root, name, err := pf.find()
 	if err != nil {
 		return 0, err
@@ -130,11 +136,11 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 	if err != nil {
 		return 0, explainCompile(ctx, client, err)
 	}
-	if err := writeReport(os.Stdout, output, report, asJSON); err != nil {
+	if err := writeReport(os.Stdout, output, report, asJSON, color); err != nil {
 		return 0, err
 	}
 
-	if hint := impact.UnsetHint(report); hint != "" {
+	if hint := impact.UnsetHint(report); hint != "" && asJSON { // the text says it under its summary
 		fmt.Fprintln(os.Stderr, "xf impact:", strings.ReplaceAll(hint, "`", ""))
 	}
 	worst, found := impact.Worst(report)
@@ -149,27 +155,30 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 	return impactOK, nil
 }
 
-// writeReport writes the impact report as Markdown, or with asJSON as
-// JSON: to output when given, else to w.
-func writeReport(w io.Writer, output string, report *impact.Report, asJSON bool) error {
-	text := impact.Markdown(report) + "\n"
+// writeReport writes the impact report to w as text, coloured with color,
+// and to output when given as Markdown for a pull request comment; with
+// asJSON, as JSON to both.
+func writeReport(w io.Writer, output string, report *impact.Report, asJSON, color bool) error {
+	text, file := impact.Text(report, color), impact.Markdown(report)+"\n"
 	if asJSON {
 		data, err := impact.JSON(report)
 		if err != nil {
 			return err
 		}
-		text = string(data)
+		text, file = string(data), string(data)
 	}
-	if output != "" && output != "-" {
-		if dir := filepath.Dir(output); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return err
-			}
+	if _, err := io.WriteString(w, text); err != nil {
+		return err
+	}
+	if output == "" {
+		return nil
+	}
+	if dir := filepath.Dir(output); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
 		}
-		return os.WriteFile(output, []byte(text), 0o644)
 	}
-	_, err := io.WriteString(w, text)
-	return err
+	return os.WriteFile(output, []byte(file), 0o644)
 }
 
 // countUnknown counts the changes whose readers couldn't be looked up.

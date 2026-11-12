@@ -75,71 +75,50 @@ func TestWriteReport(t *testing.T) {
 		},
 	}
 	wantMd := impact.Markdown(report) + "\n"
+	wantJSON, _ := impact.JSON(report)
 
-	t.Run("stdout when empty", func(t *testing.T) {
+	t.Run("text on stdout", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := writeReport(&buf, "", report, false); err != nil {
+		if err := writeReport(&buf, "", report, false, false); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
-		if got := buf.String(); got != wantMd {
-			t.Errorf("writeReport stdout got:\n%q\nwant:\n%q", got, wantMd)
+		if got, want := buf.String(), impact.Text(report, false); got != want {
+			t.Errorf("stdout got:\n%q\nwant:\n%q", got, want)
 		}
 	})
 
-	t.Run("stdout when dash", func(t *testing.T) {
+	t.Run("coloured text on stdout", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := writeReport(&buf, "-", report, false); err != nil {
+		if err := writeReport(&buf, "", report, false, true); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
-		if got := buf.String(); got != wantMd {
-			t.Errorf("writeReport stdout got:\n%q\nwant:\n%q", got, wantMd)
+		if !strings.Contains(buf.String(), "\x1b[") {
+			t.Errorf("no colour in %q", buf.String())
 		}
 	})
 
-	t.Run("to file", func(t *testing.T) {
-		dir := t.TempDir()
-		outPath := filepath.Join(dir, "impact.md")
+	t.Run("text on stdout and Markdown in the file, in new folders", func(t *testing.T) {
+		outPath := filepath.Join(t.TempDir(), "sub", "dir", "impact.md")
 		var buf bytes.Buffer
-		if err := writeReport(&buf, outPath, report, false); err != nil {
+		if err := writeReport(&buf, outPath, report, false, true); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
-		if buf.Len() != 0 {
-			t.Errorf("expected nothing written to w, got: %q", buf.String())
+		if got, want := buf.String(), impact.Text(report, true); got != want {
+			t.Errorf("stdout got:\n%q\nwant:\n%q", got, want)
 		}
-		data, err := os.ReadFile(outPath)
-		if err != nil {
-			t.Fatalf("reading written file: %v", err)
-		}
-		if string(data) != wantMd {
-			t.Errorf("file content got:\n%q\nwant:\n%q", string(data), wantMd)
+		if data, err := os.ReadFile(outPath); err != nil || string(data) != wantMd {
+			t.Errorf("file got %q (%v), want %q", data, err, wantMd)
 		}
 	})
 
-	t.Run("JSON to file", func(t *testing.T) {
+	t.Run("JSON on stdout and in the file", func(t *testing.T) {
 		outPath := filepath.Join(t.TempDir(), "impact.json")
 		var buf bytes.Buffer
-		if err := writeReport(&buf, outPath, report, true); err != nil {
+		if err := writeReport(&buf, outPath, report, true, true); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
-		want, _ := impact.JSON(report)
-		if data, err := os.ReadFile(outPath); err != nil || string(data) != string(want) || buf.Len() != 0 {
-			t.Errorf("file got %q (%v), w %q; want %q in the file alone", data, err, buf.String(), want)
-		}
-	})
-
-	t.Run("creates nested directories", func(t *testing.T) {
-		dir := t.TempDir()
-		outPath := filepath.Join(dir, "sub", "dir", "impact.md")
-		var buf bytes.Buffer
-		if err := writeReport(&buf, outPath, report, false); err != nil {
-			t.Fatalf("writeReport failed: %v", err)
-		}
-		data, err := os.ReadFile(outPath)
-		if err != nil {
-			t.Fatalf("reading written file: %v", err)
-		}
-		if string(data) != wantMd {
-			t.Errorf("file content got:\n%q\nwant:\n%q", string(data), wantMd)
+		if data, err := os.ReadFile(outPath); err != nil || string(data) != string(wantJSON) || buf.String() != string(wantJSON) {
+			t.Errorf("file got %q (%v), stdout %q; want %q in both", data, err, buf.String(), wantJSON)
 		}
 	})
 }

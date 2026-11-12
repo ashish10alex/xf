@@ -38,7 +38,8 @@ type LedgerRow struct {
 	// check may number the same model differently.
 	Number int
 
-	id int // the row's place as it was built, before the ledger is sorted
+	id          int      // the row's place as it was built, before the ledger is sorted
+	affectedAll []string // Affected naming every reader, for Text
 }
 
 // LedgerReader is a row of the ledger's "Every reader" table, in Markdown.
@@ -293,10 +294,16 @@ func (n namer) affected(groups []*readerGroup, many, renamed bool) ([]string, []
 		}
 		list = append(list, LedgerReader{Reader: name, Reads: reads, Of: n.code(g.of), Note: noteText(g, renamed)})
 	}
-	if more := len(cells) - ledgerReaders; more > 0 {
-		cells = append(cells[:ledgerReaders], fmt.Sprintf("+%d more in *Every reader*", more))
-	}
 	return cells, list
+}
+
+// capped is a copy of cells naming ledgerReaders readers at most, then
+// "+N more".
+func capped(cells []string) []string {
+	if more := len(cells) - ledgerReaders; more > 0 {
+		return append(slices.Clone(cells[:ledgerReaders]), fmt.Sprintf("+%d more in *Every reader*", more))
+	}
+	return slices.Clone(cells)
 }
 
 // columnChanges is what a table drops, retypes and adds, as Markdown: "drops
@@ -364,25 +371,27 @@ func BuildLedger(r *Report) Ledger {
 			many = many || len(t.Columns) > 1
 		}
 		groups := mergeGroups(all)
-		cells, list := n.affected(groups, many, renamed)
+		full, list := n.affected(groups, many, renamed)
+		cells := capped(full)
 		for _, t := range tables {
 			if err := readersError(t); err != "" {
 				cells = append(cells, "❔ readers couldn't be looked up: "+cell(err))
+				full = append(full, cells[len(cells)-1])
 			}
 		}
 		switch {
 		case len(cells) > 0:
 		case kind == RowNew || kind == RowSafe:
-			cells = []string{"—"} // nothing it had is gone: its readers weren't looked up
+			cells, full = []string{"—"}, []string{"—"} // nothing it had is gone: its readers weren't looked up
 		default:
-			cells = []string{"nobody"}
+			cells, full = []string{"nobody"}, []string{"nobody"}
 		}
 		id := len(rows)
 		for i := range list {
 			list[i].rowID = id
 		}
 		every = append(every, list...)
-		rows = append(rows, LedgerRow{Kind: kind, Severity: sev, Model: model, Changed: strings.Join(changed, "; "), Affected: cells, id: id})
+		rows = append(rows, LedgerRow{Kind: kind, Severity: sev, Model: model, Changed: strings.Join(changed, "; "), Affected: cells, affectedAll: full, id: id})
 	}
 
 	// A renamed action's two halves: its old table (at risk, or not
@@ -425,8 +434,10 @@ func BuildLedger(r *Report) Ledger {
 		row(RowRenamed, sev, model, []string{strings.Join(append([]string{"renamed"}, changed...), ", ")}, tables, of, true)
 		if unchecked {
 			last := &rows[len(rows)-1]
-			last.Affected = append(slices.DeleteFunc(last.Affected, func(s string) bool { return s == "nobody" }),
-				"❔ the old table wasn't checked: "+cell(u.Reason))
+			note := "❔ the old table wasn't checked: " + cell(u.Reason)
+			nobody := func(s string) bool { return s == "nobody" }
+			last.Affected = append(slices.DeleteFunc(last.Affected, nobody), note)
+			last.affectedAll = append(slices.DeleteFunc(last.affectedAll, nobody), note)
 		}
 		return true
 	}
