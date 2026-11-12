@@ -1,9 +1,29 @@
 # xf
 
-A unified interface for [Dataform](https://github.com/dataform-co/dataform) and [dbt](https://www.getdbt.com/) projects on BigQuery.
-Browse a project's actions with their compiled SQL, columns and lineage, dry run and run them, edit the source with vim keys, and see what your branch changes: the actions it touches, the columns it drops or retypes that something downstream still reads, and what its queries would cost.
+Cost and breakage checks for [Dataform](https://github.com/dataform-co/dataform) and [dbt](https://www.getdbt.com/) branches on BigQuery, before they merge.
+
+- **`xf cost`**: what the branch's changed actions would scan and cost, and the change from the same actions at its merge-base with `main`.
+- **`xf impact`**: the columns and tables it drops or retypes that something downstream still reads, from Dataplex lineage.
+- **`xf check`**: both, as one comment on the pull request and notes on its changed lines, with gates that can fail the job.
+
+They only dry run and read metadata: free in BigQuery, and nothing is run.
+Run them in [GitHub Actions or GitLab CI](#in-ci), give them to [a coding agent](#for-coding-agents) as JSON, or open the same checks in [xf web](#xf-web), the browser UI.
+
+```text
+$ xf cost --fail-over 1TB
+4 changed actions in feat/orders-v2 vs origin/main @ 4e1c9a2 (working tree)
+dry run in analytics-prod (US) · compiled with prodCompilerOptions
+⚠ marts.fct_order_items      1.42 TiB   $8.89  new                   [MISSING PARTITION FILTER: order_date on staging.order_lines]
+✓ marts.fct_orders         214.08 GiB   $1.31  -96.12 GiB (-$0.587)  (was 310.20 GiB · $1.89)
+✓ marts.agg_daily_revenue   38.50 GiB  $0.235  +12.75 GiB (+$0.078)  (was 25.75 GiB · $0.157)
+✓ marts.dim_customers        4.67 GiB  $0.028  no change
+────────────────────────────────────────────────────────────
+Total scanned: 1.67 TiB | Estimated cost: $10.46
+✗ Gate failed: 1.67 TiB exceeds the limit of 1.00 TiB
+```
 
 xf works out from the files in a project's root whether it is Dataform or dbt. dbt projects get most of what Dataform's do; [dbt projects](docs/dbt.md) lists the differences.
+Site: [xf.dataformtools.com](https://xf.dataformtools.com).
 
 ## What you need
 
@@ -60,15 +80,93 @@ gcloud auth application-default login
 xf picks up a new login without a restart.
 `dataform run` uses the Dataform CLI's own credentials, so a Dataform project also needs a `.df-credentials.json` (`dataform init-creds`).
 
-## Quick start
+## Check a branch
 
-From a project's root (the folder with `workflow_settings.yaml`, `dataform.json` or `dbt_project.yml`), open xf web:
+From a project's root (the folder with `workflow_settings.yaml`, `dataform.json` or `dbt_project.yml`), on the branch to check:
+
+```bash
+git fetch origin main   # xf compares with the merge-base, and never fetches
+xf cost                 # what the changed actions scan, and cost
+xf impact               # who still reads the columns they drop or retype
+xf check                # both, as the Markdown a pull request gets
+```
+
+Each prints a report and exits 0; `2` means the check couldn't be made, with the reason on stderr.
+`--fail-over 100GB` (cost) and `--fail-on critical` (impact) turn them into gates that exit 1, and `--json` prints JSON for scripts and agents.
+
+Compare with prod's tables, not your dev ones: set `prodCompilerOptions` in the project's `.xf/config.json` (`dbtProdTarget` for dbt), and commit it so CI uses it too.
+Until it is set, every report says it compared with the default targets.
+[Checking a branch](docs/checks.md) has every flag, the report formats and the roles the checks need.
+
+## In CI
+
+`xf check` posts one comment on the pull request (a note on a GitLab merge request), edited on each push, and notes on the lines that drop a column or read a table.
+It reports and passes by default; `fail-on` and `fail-over` make it a gate.
+`xf check init github` or `xf check init gitlab` writes the job for your repository, with the commands to set up workload identity federation.
+
+GitHub Actions, in `.github/workflows/xf-check.yml` (the xf repository is the action; `<tag>` is an xf release, such as `v0.0.5`):
+
+```yaml
+name: xf check
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # for workload identity federation
+      pull-requests: write   # to post the comment
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # xf needs history to find the merge-base
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/github/providers/github
+          service_account: xf-check@my-project.iam.gserviceaccount.com
+      - uses: ashish10alex/xf@<tag>
+        with:
+          fail-on: critical  # a dropped column something still reads
+          fail-over: 1TB     # the changed actions scan more than 1 TiB
+```
+
+GitLab CI, in `.gitlab-ci.yml`, with two CI/CD variables: `XF_FORGE_TOKEN` (a project access token with the `api` scope) and `GOOGLE_APPLICATION_CREDENTIALS` (a File variable):
+
+```yaml
+include:
+  - remote: https://raw.githubusercontent.com/ashish10alex/xf/<tag>/ci/gitlab/xf-check.yml
+
+xf-check:
+  variables:
+    XF_VERSION: <tag>
+    XF_FAIL_ON: critical
+    XF_FAIL_OVER: 1TB
+```
+
+Elsewhere (Cloud Build, Jenkins), download the release and run `xf check --output check.md`; [Other CI systems](docs/checks.md#other-ci-systems) has the steps.
+
+## For coding agents
+
+[`skills/xf-checks`](skills/xf-checks/SKILL.md) is an [Agent Skill](https://agentskills.io) that has Claude Code, Codex and other agents that read skills run `xf cost --json` and `xf impact --json` on a branch, read the `severity` of each change, and ask you about each critical one before fixing anything.
+[`skills/xf-run`](skills/xf-run/SKILL.md) starts every run as a free `xf run --dry-run --json` plan, and runs it only once you say yes.
+For Claude Code, from a checkout of this repository:
+
+```bash
+mkdir -p ~/.claude/skills && cp -R skills/xf-checks skills/xf-run ~/.claude/skills/
+```
+
+Other agents look elsewhere; see [Agent skill for cost and impact](docs/checks.md#agent-skill-for-cost-and-impact).
+
+## xf web
+
+To look around instead, `xf web` opens the project in your browser: each action's compiled SQL, columns, lineage and dry-run cost, the source to edit, and the impact and cost reports on its Checks page.
 
 ```bash
 xf web
 ```
 
-It opens in your browser.
 Press `?` for every key: `⌘p` (`ctrl+p`) finds an action, `r` runs it, `R` runs what your branch changed, `I` and `C` check its columns and cost, `E` edits its file.
 Outside a project, xf web lists the projects you have opened.
 To try it without a project of your own, use an example: `xf web --dir examples/dataform` or `xf web --dir examples/dbt`.
@@ -79,13 +177,13 @@ The TUI is in maintenance mode: it keeps working, but new features go to xf web.
 
 ## Documentation
 
-- [xf web](docs/xf-web.md): the browser UI, with the source editor, file tree, source control, search, Scratch queries, the dependency inspector and settings.
-- [The TUI](docs/tui.md): the terminal UI, its keys, and the project list.
-- [neovim](docs/neovim.md): `xf --nvim`, the plugin and the language server.
+- [Checking a branch](docs/checks.md): query cost (`xf cost`) and column impact (`xf impact`), in xf and in CI; `xf check`, its GitHub Action and its GitLab template, which put both on a pull request, and `xf check init`, which writes the CI job; and the agent skill for both.
 - [Running and branches](docs/running.md): Run Changed, tag runs, switching branch, deferring to prod, and `xf run` with `--defer` from the command line, with its agent skill.
-- [Checking a branch](docs/checks.md): column impact (`xf impact`) and query cost (`xf cost`), in xf and in CI; `xf check`, its GitHub Action and its GitLab template, which put both on a pull request, and `xf check init`, which writes the CI job; and the agent skill for both.
+- [xf web](docs/xf-web.md): the browser UI, with the source editor, file tree, source control, search, Scratch queries, the dependency inspector and settings.
 - [dbt projects](docs/dbt.md): what works in a dbt project and how it differs.
 - [Settings and API runs](docs/settings.md): the config files, running through the Dataform API, and which Google account xf uses.
+- [The TUI](docs/tui.md): the terminal UI, its keys, and the project list.
+- [neovim](docs/neovim.md): `xf --nvim`, the plugin and the language server.
 - [Windows](docs/windows.md): installing, upgrading and what differs on Windows.
 - [Troubleshooting](docs/troubleshooting.md).
 
