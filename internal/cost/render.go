@@ -259,6 +259,18 @@ func padLeft(s string, width int) string {
 	return strings.Repeat(" ", max(width-utf8.RuneCountInString(s), 0)) + s
 }
 
+// waitsByAction are the tables the branch adds that each action not
+// estimated waits on, by its Name.
+func waitsByAction(r *Report) map[string][]string {
+	out := map[string][]string{}
+	for _, s := range SkippedActions(r) {
+		if len(s.Waits) > 0 {
+			out[s.Action.Name] = s.Waits
+		}
+	}
+	return out
+}
+
 // Text is the report for a terminal: a line per action, most bytes first,
 // the total, and how it compares with o.Threshold.
 func Text(r *Report, o Options) string {
@@ -287,10 +299,22 @@ func Text(r *Report, o Options) string {
 			deltaW = max(deltaW, utf8.RuneCountInString(ChangeText(a, o)))
 		}
 	}
+	waits := waitsByAction(r)
 	for _, a := range r.Actions {
 		name := impact.ShortTable(a.Name)
 		if a.Estimate == nil {
-			b.WriteString(o.paint("?", ansiYellow) + " " + pad(name, nameW) + "  " + o.paint("not estimated: "+a.Reason, ansiDim) + "\n")
+			why := a.Reason
+			if w := waits[a.Name]; len(w) > 0 {
+				var short []string
+				for _, t := range w {
+					short = append(short, impact.ShortTable(t))
+				}
+				why = "waits on " + plural(len(w), "new table", "new tables") + " no run has built yet: " + strings.Join(short, ", ")
+				if len(w) == 1 {
+					why = "waits on a new table no run has built yet: " + short[0]
+				}
+			}
+			b.WriteString(o.paint("?", ansiYellow) + " " + pad(name, nameW) + "  " + o.paint("not estimated: "+why, ansiDim) + "\n")
 			continue
 		}
 		mark, warn := o.paint("✓", ansiGreen), len(a.Unfiltered) > 0
@@ -482,17 +506,19 @@ func markdownSkipped(r *Report) []string {
 		}
 		if s.New {
 			waitingTotal++
-			reads := impact.ShortTable(s.Missing)
-			idx, ok := waitingIdx[reads]
-			if !ok {
-				idx = len(waiting)
-				waitingIdx[reads] = idx
-				waiting = append(waiting, waitingGroup{reads: reads})
-			}
-			if s.Action.Type == "assertion" {
-				waiting[idx].assertions++
-			} else {
-				waiting[idx].actions = append(waiting[idx].actions, name)
+			for _, t := range s.Waits {
+				reads := impact.ShortTable(t)
+				idx, ok := waitingIdx[reads]
+				if !ok {
+					idx = len(waiting)
+					waitingIdx[reads] = idx
+					waiting = append(waiting, waitingGroup{reads: reads})
+				}
+				if s.Action.Type == "assertion" {
+					waiting[idx].assertions++
+				} else {
+					waiting[idx].actions = append(waiting[idx].actions, name)
+				}
 			}
 			continue
 		}
@@ -582,6 +608,10 @@ type jsonAction struct {
 	DeltaBytes *int64        `json:"deltaBytes"`
 	Warnings   []jsonWarning `json:"warnings"`
 	Error      string        `json:"error,omitempty"`
+	// WaitsOn are, on an action not estimated as it reads tables the
+	// branch adds that no run has built yet, every such table: Error
+	// names only the first BigQuery didn't find.
+	WaitsOn []string `json:"waitsOn,omitempty"`
 }
 
 type jsonGate struct {
@@ -656,8 +686,9 @@ func JSON(r *Report, o Options) ([]byte, error) {
 	if o.Threshold > 0 {
 		out.Gate = &jsonGate{ThresholdBytes: o.Threshold, Exceeded: r.Exceeds(o.Threshold)}
 	}
+	waits := waitsByAction(r)
 	for _, a := range r.Actions {
-		ja := jsonAction{Name: a.Name, DryRunAs: a.DryRunAs, File: a.FileName, Type: a.Type, New: a.New, FullRefresh: est(a.Full), Base: est(a.Base),
+		ja := jsonAction{WaitsOn: waits[a.Name], Name: a.Name, DryRunAs: a.DryRunAs, File: a.FileName, Type: a.Type, New: a.New, FullRefresh: est(a.Full), Base: est(a.Base),
 			FirstBuild: a.FirstBuild, Incremental: est(a.Incremental), FromDev: a.FromDev, Warnings: []jsonWarning{}, Error: a.Reason}
 		if a.Estimate != nil {
 			usd := o.USD(a.Estimate.Bytes)

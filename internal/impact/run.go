@@ -421,6 +421,9 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 	if err != nil {
 		return nil, err
 	}
+	for i := range result.New {
+		result.New[i].ReadBy = readBy(g, result.New[i].Table)
+	}
 	verifyReaders(ctx, result.AtRisk, g, deps, func(done, total int) {
 		progress(Progress{Phase: "Dry running readers", Done: done, Total: total})
 	})
@@ -451,6 +454,17 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		toProdTables(report, deps.ProdTarget)
 	}
 	return report, nil
+}
+
+// readBy is the actions of g that read table, assertions aside.
+func readBy(g *project.Graph, table string) []string {
+	var out []string
+	for _, a := range g.Dependents(project.ActionID(table)) {
+		if a != nil && a.Kind != project.KindAssertion {
+			out = append(out, string(a.ID))
+		}
+	}
+	return out
 }
 
 // prodTarget sets c's Target, or says why it has none.
@@ -529,6 +543,9 @@ func toProdTables(r *Report, prodTarget func(string) string) {
 				rename(&ts[i].RenamedTo)
 			}
 			readers(ts[i].Readers)
+			for j := range ts[i].ReadBy {
+				rename(&ts[i].ReadBy[j])
+			}
 			for j := range ts[i].Columns {
 				readers(ts[i].Columns[j].Readers)
 			}

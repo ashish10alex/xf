@@ -13,7 +13,8 @@ import (
 //  1. Missing: actions that read a table not in BigQuery (and not added on
 //     this branch), which need checking.
 //  2. Waiting: new tables added on this branch that haven't been built yet,
-//     with the downstream tables and assertions waiting on each one.
+//     with the downstream tables and assertions waiting on each one; one
+//     that waits on two is under both.
 //  3. Other: actions that couldn't be priced for another reason (such as
 //     queries over external tables or scripts), grouped by reason.
 type CostSkipped struct {
@@ -25,7 +26,10 @@ type CostSkipped struct {
 	Where   string             `json:"where,omitempty"`
 	Missing []CostMissingRow   `json:"missing,omitempty"`
 	Waiting []CostWaitingGroup `json:"waiting,omitempty"`
-	Other   []CostOtherGroup   `json:"other,omitempty"`
+	// Waits is the actions in Waiting: one waiting on two new tables is
+	// under each.
+	Waits int              `json:"waits,omitempty"`
+	Other []CostOtherGroup `json:"other,omitempty"`
 }
 
 // CostChip counts the actions of one kind: "new", "missing" or "other".
@@ -126,25 +130,32 @@ func costSkipped(r *cost.Report) *CostSkipped {
 			continue
 		}
 
-		reads := s.Missing
-		if v.Where != "" {
-			reads = impact.ShortTable(s.Missing)
+		short := func(table string) string {
+			if v.Where != "" {
+				return impact.ShortTable(table)
+			}
+			return table
 		}
+		reads := short(s.Missing)
 
 		if s.New {
 			counts["new"]++
-			idx, ok := waitingByTable[reads]
-			if !ok {
-				idx = len(v.Waiting)
-				waitingByTable[reads] = idx
-				v.Waiting = append(v.Waiting, CostWaitingGroup{Reads: reads})
-			}
-			g := &v.Waiting[idx]
-			g.Count++
-			if s.Action.Type == "assertion" {
-				g.Assertions = append(g.Assertions, name)
-			} else {
-				g.Actions = append(g.Actions, CostWaitingAction{Action: name, Type: s.Action.Type})
+			// Under each table it waits on.
+			for _, t := range s.Waits {
+				t = short(t)
+				idx, ok := waitingByTable[t]
+				if !ok {
+					idx = len(v.Waiting)
+					waitingByTable[t] = idx
+					v.Waiting = append(v.Waiting, CostWaitingGroup{Reads: t})
+				}
+				g := &v.Waiting[idx]
+				g.Count++
+				if s.Action.Type == "assertion" {
+					g.Assertions = append(g.Assertions, name)
+				} else {
+					g.Actions = append(g.Actions, CostWaitingAction{Action: name, Type: s.Action.Type})
+				}
 			}
 			continue
 		}
@@ -175,6 +186,7 @@ func costSkipped(r *cost.Report) *CostSkipped {
 		v.Missing = append(v.Missing, row)
 	}
 
+	v.Waits = counts["new"]
 	for _, c := range []struct{ kind, one, many, chip string }{
 		{"missing", "reads a missing table", "read a missing table", "missing"},
 		{"new", "waits on a new table", "wait on a new table", "new"},

@@ -80,6 +80,11 @@ type Action struct {
 	Unfiltered []Unfiltered `json:"unfiltered,omitempty"`
 	// Reason is why the action has no Estimate.
 	Reason string `json:"reason,omitempty"`
+	// Waits are, when Reason is a table the branch adds that BigQuery
+	// doesn't have, every such table the dry run reads: BigQuery names
+	// only the first it doesn't find. Each is its project.dataset.name in
+	// the compile the dry runs used.
+	Waits []string `json:"waits,omitempty"`
 	// FirstBuild says Estimate is of an incremental table's full build:
 	// its own table isn't in BigQuery yet, so its first run builds it
 	// whole, as Dataform does.

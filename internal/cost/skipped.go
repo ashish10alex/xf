@@ -27,6 +27,9 @@ type Skipped struct {
 	// that table, Changed when it changes it.
 	Missing, Location string
 	New, Changed      bool
+	// Waits are, when New is set, every table the branch adds that the
+	// dry run waits on a run to build, Missing first.
+	Waits []string
 }
 
 // notFoundRE is BigQuery's message for a query that reads a table, view or
@@ -57,9 +60,23 @@ func SkippedActions(r *Report) []Skipped {
 			if b, ok := byName[strings.ToLower(s.Missing)]; ok {
 				s.New, s.Changed = b.New, !b.New
 			}
+			if s.New {
+				s.Waits = waits(s.Missing, a.Waits)
+			}
 			s.Why = "Reads a " + strings.ToLower(m[1]) + " not in BigQuery (location " + m[3] + ")"
 		}
 		out = append(out, s)
+	}
+	return out
+}
+
+// waits is missing, then the other tables of all.
+func waits(missing string, all []string) []string {
+	out := []string{missing}
+	for _, t := range all {
+		if !strings.EqualFold(t, missing) {
+			out = append(out, t)
+		}
 	}
 	return out
 }

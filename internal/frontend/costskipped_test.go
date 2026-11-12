@@ -38,6 +38,7 @@ func TestCostSkippedSaysWhatEachMissingTableIs(t *testing.T) {
 				Assertions: []string{"checks.a_new_assertions_rowConditions", "checks.a_new_assertions_uniqueKey_0"},
 			},
 		},
+		Waits: 3,
 		Other: []CostOtherGroup{
 			{
 				Why:     noBytes,
@@ -50,6 +51,22 @@ func TestCostSkippedSaysWhatEachMissingTableIs(t *testing.T) {
 	}
 	if costSkipped(&cost.Report{Actions: r.Actions[:1]}) != nil {
 		t.Error("a report with every action estimated has a not-estimated section")
+	}
+}
+
+// An action that waits on two new tables is under each, and counted once.
+func TestCostSkippedUnderEveryNewTable(t *testing.T) {
+	r := &cost.Report{Actions: []cost.Action{
+		{Name: "p.marts.a_new", Type: "table", New: true, Estimate: &cost.Estimate{Bytes: 1}},
+		{Name: "p.marts.b_new", Type: "table", New: true, Estimate: &cost.Estimate{Bytes: 1}},
+		{Name: "p.marts.out", Type: "table", New: true, Waits: []string{"p.marts.a_new", "p.marts.b_new"},
+			Reason: "dry run failed: Not found: Table p:marts.b_new was not found in location EU"},
+	}}
+	got := costSkipped(r)
+	out := []CostWaitingAction{{Action: "marts.out", Type: "table"}}
+	want := []CostWaitingGroup{{Reads: "marts.b_new", Count: 1, Actions: out}, {Reads: "marts.a_new", Count: 1, Actions: out}}
+	if got.Count != 1 || got.Waits != 1 || !reflect.DeepEqual(got.Waiting, want) || got.Chips[0].Text != "1 waits on a new table" {
+		t.Errorf("got %+v", got)
 	}
 }
 

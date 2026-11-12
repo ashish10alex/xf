@@ -155,6 +155,10 @@ type Table struct {
 	Added []string `json:"added,omitempty"`
 	// New: an action the base doesn't have.
 	New bool `json:"new,omitempty"`
+	// ReadBy are, on a new table, the actions that read it, assertions
+	// aside: each is new or changed on the branch too, as the base has no
+	// table for it to read.
+	ReadBy []string `json:"readBy,omitempty"`
 	// Exists is set on a new action whose table is already in BigQuery,
 	// and so was compared: a run of the branch built it, or an action
 	// deleted earlier is back.

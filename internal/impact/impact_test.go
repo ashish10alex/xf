@@ -728,6 +728,43 @@ func TestRunComparesANewActionWhoseTableExists(t *testing.T) {
 	}
 }
 
+// A new table read by another of the branch's says so, not "nothing reads
+// it yet"; its own assertions don't count.
+func TestRunSaysWhatReadsANewTable(t *testing.T) {
+	g, err := dataform.ParseCompileJSON([]byte(`{"tables":[
+		{"type":"table","target":{"database":"p","schema":"marts","name":"cleaned"},"query":"SELECT 1 AS a"},
+		{"type":"table","target":{"database":"p","schema":"marts","name":"out"},"query":"SELECT a FROM p.marts.cleaned",
+		 "dependencyTargets":[{"database":"p","schema":"marts","name":"cleaned"}]}
+	],"assertions":[{"target":{"database":"p","schema":"checks","name":"cleaned_unique"},"query":"SELECT 1",
+		 "dependencyTargets":[{"database":"p","schema":"marts","name":"cleaned"}]}],
+	"projectConfig":{"defaultDatabase":"p","defaultLocation":"EU"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := &changes.Result{BaseRef: "origin/main", MergeBase: "abcdef123456", HeadRef: "feat", Head: changes.HeadWorktree,
+		Diff: changes.Diff{Changed: []changes.Changed{
+			{ID: "p.marts.cleaned", Type: "table", Reasons: []changes.Reason{changes.ReasonNew}},
+			{ID: "p.marts.out", Type: "table", Reasons: []changes.Reason{changes.ReasonNew}},
+		}}}
+	deps := Deps{
+		Schema:  func(context.Context, string) ([]bigquery.Field, error) { return nil, nil },
+		Readers: &fakeSource{},
+	}
+	report, err := Run(context.Background(), res, g, deps, func(Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := Markdown(report)
+	for _, want := range []string{
+		"| 🆕 | `cleaned` | new: read by `out` on this branch | — |",
+		"| 🆕 | `out` | new: nothing reads it yet | — |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("no %q in:\n%s", want, md)
+		}
+	}
+}
+
 func TestRunComparesARenamedActionWithItsOldTable(t *testing.T) {
 	g := graph(t, "SELECT order_id, amount FROM src", "SELECT day FROM p.marts.orders")
 	res := &changes.Result{

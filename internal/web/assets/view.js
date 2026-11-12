@@ -1737,7 +1737,7 @@ function NotEstimated({ n }) {
           <span class="dim small">${x.note}</span></td></tr>`)}</tbody>
     </table>`)}
     ${n.waiting && wrapTable(html`<table class="grid not-estimated">
-      <thead><tr><th>New table on this branch (not built in <span class="as-is">${where}</span> yet)</th><th>Blocks (${n.waiting.reduce((s, g) => s + g.count, 0)})</th></tr></thead>
+      <thead><tr><th>New table on this branch (not built in <span class="as-is">${where}</span> yet)</th><th>Blocks (${n.waits})</th></tr></thead>
       <tbody>${n.waiting.map((g) => html`<tr>
         <td>${tableName(g.reads)} <span class="mark m-new" title="A dry run needs every table it reads to exist. A table this branch adds exists only once a run builds it.">not built yet</span></td>
         <td><div class="cost-deps">${(g.actions || []).map((a) => html`<span class="cost-dep">${tableName(a.action)} <span class="dim small">${a.type}</span></span>`)}${g.assertions && g.assertions.length > 0 && html`<details class="cost-asserts"><summary class="dim">${g.assertions.length} ${g.assertions.length === 1 ? 'assertion' : 'assertions'}</summary><div class="cost-assert-list">${g.assertions.map((a) => html`<div>${tableName(a)}</div>`)}</div></details>`}</div></td></tr>`)}</tbody>

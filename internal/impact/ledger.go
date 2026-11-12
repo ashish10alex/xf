@@ -453,6 +453,13 @@ func BuildLedger(r *Report) Ledger {
 			continue
 		}
 		changed := []string{"new: nothing reads it yet"}
+		if len(t.ReadBy) > 0 {
+			var by []string
+			for _, r := range t.ReadBy {
+				by = append(by, n.code(r))
+			}
+			changed = []string{"new: read by " + strings.Join(by, ", ") + " on this branch"}
+		}
 		if t.Exists {
 			changed = append([]string{"new, its table is already there"}, columnChanges(t, base)...)
 		}

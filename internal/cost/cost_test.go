@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -785,6 +786,62 @@ func TestRunReadsATableTheBranchAddsFromDev(t *testing.T) {
 	}
 	if a := find(t, r, "gone_reader"); a.Estimate != nil || len(asked) > 0 {
 		t.Fatalf("a table not on the branch isn't looked for in dev: %+v, asked %v", a, asked)
+	}
+}
+
+// BigQuery names only the first table it doesn't find: the others the
+// branch adds are each dry run alone.
+func TestRunListsEveryNewTableADryRunWaitsOn(t *testing.T) {
+	a := action("a_new", project.KindTable, "select 1")
+	b := action("b_new", project.KindTable, "select 2")
+	c := action("c_new", project.KindTable, "select 3")
+	out := action("out", project.KindTable, "select * from `acme.marts.b_new` join `acme.marts.a_new` using (id) join `acme.marts.c_new` using (id)")
+	bq := &fakeBQ{
+		dryRuns: map[string]*bigquery.DryRun{a.Query: precise(1), b.Query: precise(1), c.Query: precise(1),
+			"SELECT 1 FROM `acme.marts.c_new` WHERE FALSE": precise(0)},
+		failures: map[string]error{
+			out.Query: notFound("acme.marts.b_new"),
+			"SELECT 1 FROM `acme.marts.a_new` WHERE FALSE": notFound("acme.marts.a_new"),
+		},
+	}
+	res := changed(changes.ReasonNew, a, b, c, out)
+	r, err := Run(context.Background(), res, Head{Graph: graph(a, b, c, out)}, Deps{DryRun: bq.dryRun}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := find(t, r, "out")
+	if want := []string{"acme.marts.a_new", "acme.marts.b_new"}; !slices.Equal(got.Waits, want) {
+		t.Fatalf("Waits = %v, want %v: c_new is built already", got.Waits, want)
+	}
+	s := SkippedActions(r)
+	if len(s) != 1 || !slices.Equal(s[0].Waits, []string{"acme.marts.b_new", "acme.marts.a_new"}) {
+		t.Fatalf("skipped %+v: the table BigQuery named first, then the others", s)
+	}
+	if text := Text(r, Options{}); !strings.Contains(text, "not estimated: waits on 2 new tables no run has built yet: marts.b_new, marts.a_new") {
+		t.Errorf("Text:\n%s", text)
+	}
+	data, err := JSON(r, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"waitsOn": [
+        "acme.marts.b_new",
+        "acme.marts.a_new"
+      ]`) {
+		t.Errorf("JSON:\n%s", data)
+	}
+
+	// A missing table the branch doesn't add waits on nothing.
+	gone := action("gone_reader", project.KindTable, "select * from `acme.marts.gone` join `acme.marts.a_new` using (id)")
+	bq.failures[gone.Query] = notFound("acme.marts.gone")
+	res = changed(changes.ReasonNew, a)
+	res.Changed = append(res.Changed, changed(changes.ReasonSQL, gone).Changed...)
+	r, err = Run(context.Background(), res, Head{Graph: graph(a, gone)}, Deps{DryRun: bq.dryRun}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := find(t, r, "gone_reader"); got.Waits != nil {
+		t.Fatalf("Waits = %v for a table not on the branch", got.Waits)
 	}
 }
 

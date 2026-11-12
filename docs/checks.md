@@ -20,7 +20,7 @@ The terminal draws the same ledger, with words for the marks.
 A reader this branch changes that still names a dropped column may only name it: as an alias of a new column, say.
 So xf dry runs it, with the changed table swapped for the query the branch builds it with, and lets BigQuery resolve the names: when the dry run passes the reader no longer reads the column ("no longer reads it (dry run passes)"), and when BigQuery can't find the column it does ("still reads it (dry run fails)").
 
-An action that is new on the branch is marked 🆕: with no table in BigQuery yet there is nothing to lose, so it isn't dry run ("new: nothing reads it yet").
+An action that is new on the branch is marked 🆕: with no table in BigQuery yet there is nothing to lose, so it isn't dry run ("new: nothing reads it yet", or "new: read by `x` on this branch" when another action of the branch reads it).
 When a table is already there, because someone ran the branch or an action deleted earlier is back, it is still compared ("new, its table is already there"), and marked as any changed table is.
 
 A renamed action (see [Run Changed](running.md#run-what-your-branch-changed)) has no table under its new name until it runs, so it is compared with the table it was renamed from, in one 🔁 row, `old → new`.
@@ -97,6 +97,7 @@ The report lists them with the most bytes first:
   A table created with `require_partition_filter` fails its dry run instead, and shows under "Not estimated" with BigQuery's message.
 - **Not estimated** lists the actions BigQuery gave no figure for, with the reason: a query that doesn't compile against the tables as they are, or a script (an operation, or a table with `pre_operations`), which BigQuery rarely estimates.
   They aren't in the total.
+  One that reads tables the branch adds and no run has built yet is listed under each of them: BigQuery names only the first it doesn't find, so xf dry runs the others alone to see which are built.
 
 In a Dataform project with `prodCompilerOptions` set, the dry runs are of the project compiled with those options, so the bytes are those of the tables prod runs read, not of your dev tables.
 An action that needs a column another changed action adds can't be planned against prod until that one has run there, and is listed as not estimated.

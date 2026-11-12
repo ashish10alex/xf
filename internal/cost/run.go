@@ -224,6 +224,10 @@ type runner struct {
 	// added are the tables the branch adds, by their lower-cased
 	// project.dataset.name in the compile dry run.
 	added map[string]addedTable
+	// built says whether an added table is where the dry runs look, by
+	// its key in added; guarded by mu.
+	mu    sync.Mutex
+	built map[string]bool
 }
 
 // addedTable is a table the branch adds: target in the compile dry run, id
@@ -296,6 +300,57 @@ func (r *runner) readFromDev(ctx context.Context, m missing, sql string, reads *
 	return read
 }
 
+// waits are the tables the branch adds that sql, a dry run of a that
+// didn't find m, reads and BigQuery doesn't have where a's dry runs look:
+// those m is, and each other one a dry run of its own doesn't find. It is
+// nil when m is none of them.
+func (r *runner) waits(ctx context.Context, g *project.Graph, a *project.Action, m missing, sql string) []string {
+	var keys []string
+	found := false
+	for k, t := range r.added {
+		if t.target == a.Target || !strings.Contains(sql, quoted(string(t.target.ID()))) {
+			continue
+		}
+		keys = append(keys, k)
+		found = found || m.covers(t.target)
+	}
+	if !found {
+		return nil
+	}
+	slices.Sort(keys)
+	var out []string
+	for _, k := range keys {
+		t := r.added[k]
+		if m.covers(t.target) || !r.isBuilt(ctx, g, a, k) {
+			out = append(out, string(t.target.ID()))
+		}
+	}
+	return out
+}
+
+// isBuilt says whether the table the branch adds of key k is where a's
+// dry runs look, by a dry run that reads it alone; it is true when that
+// dry run fails for another reason, which says nothing of the table.
+func (r *runner) isBuilt(ctx context.Context, g *project.Graph, a *project.Action, k string) bool {
+	r.mu.Lock()
+	built, ok := r.built[k]
+	r.mu.Unlock()
+	if ok {
+		return built
+	}
+	proj, location := g.DryRunTarget(a)
+	_, err := r.deps.DryRun(ctx, proj, location, "SELECT 1 FROM "+quoted(string(r.added[k].target.ID()))+" WHERE FALSE")
+	built = true
+	if err != nil {
+		_, notFound := missingIn("dry run failed: " + errorText(err))
+		built = !notFound
+	}
+	r.mu.Lock()
+	r.built[k] = built
+	r.mu.Unlock()
+	return built
+}
+
 // fromDev is q reading the tables of reads from dev.
 func fromDev(q *project.DryRunQuery, reads []DevRead) *project.DryRunQuery {
 	if len(reads) == 0 {
@@ -354,6 +409,7 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 			continue
 		}
 		if !r.readFromDev(ctx, m, sql.SQL, &out.FromDev) {
+			out.Waits = r.waits(ctx, head, a, m, sql.SQL)
 			break
 		}
 	}
@@ -408,7 +464,7 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 	if progress == nil {
 		progress = func(Progress) {}
 	}
-	r := &runner{deps: deps, added: map[string]addedTable{}}
+	r := &runner{deps: deps, added: map[string]addedTable{}, built: map[string]bool{}}
 	if deps.Partition != nil {
 		r.ps = &partitions{lookup: deps.Partition, seen: map[bigquery.TableRef]*partitionLookup{}}
 	}
