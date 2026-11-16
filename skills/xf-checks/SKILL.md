@@ -10,8 +10,14 @@ Both commands compare the checked-out branch (uncommitted files included) with i
 ## Steps
 
 1. **Ready the project.** From the project's root (or pass `--dir`):
-   - `git fetch origin <default branch>`: xf never fetches, and needs the merge-base.
-   - `xf config` shows the settings it will use. Note `prodCompilerOptions` (Dataform) or `dbtProdTarget` (dbt): without one, the checks read the default targets, which may be dev tables, and their figures describe dev. Its value is the user's to give; ask for it rather than guess.
+   - `xf config` shows the settings it will use. Note `defaultBranch`, the base the checks compare with. Note `prodCompilerOptions` (Dataform) or `dbtProdTarget` (dbt): without one, the checks read the default targets, which may be dev tables, and their figures describe dev. Its value is the user's to give; ask for it rather than guess.
+   - When `git branch --show-current` is the default branch itself, the checks compare it with itself and find nothing. Ask the user what to check before running anything, with 2 to 4 options and your recommendation first, as [Grilling critical risks](#grilling-critical-risks) says to ask:
+     - another branch to check out, from `git branch --sort=-committerdate`;
+     - another base to compare with, such as `main` when the default branch is `develop`: pass `--default-branch <base>` to every `xf` command after this;
+     - this branch as it is, which shows only its unpushed commits and uncommitted files.
+
+     With no one to answer, write that the branch is the default branch in the report and stop.
+   - `git fetch origin <base>`, the default branch or the base the user chose: xf never fetches, and needs the merge-base.
    - A `403` or `Access Denied` later is usually the wrong Google account: `xf config --auth` names the one xf signs in with.
 
 2. **Run** each check the question needs, JSON on stdout and progress on stderr:
