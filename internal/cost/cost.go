@@ -97,6 +97,20 @@ type Action struct {
 	// dev, as they aren't where the dry runs look (Deps.InDev): the
 	// estimate is of dev's data.
 	FromDev []DevRead `json:"fromDev,omitempty"`
+	// AddedColumn is, when Reason is a column the dry run didn't find,
+	// the changed action this one reads that makes it on this branch: its
+	// table in BigQuery has it once a run of the branch builds it.
+	AddedColumn *AddedColumn `json:"addedColumn,omitempty"`
+
+	schema []bigquery.Field // what the dry run returned, while Run works
+}
+
+// AddedColumn is a column a changed action makes on this branch, which its
+// table in BigQuery hasn't got yet.
+type AddedColumn struct {
+	// Table is the action's name, as Action.Name.
+	Table  string `json:"table"`
+	Column string `json:"column"`
 }
 
 // DevRead is a table the branch adds that a dry run read from dev.

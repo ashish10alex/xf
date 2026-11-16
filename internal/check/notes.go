@@ -126,7 +126,7 @@ func Notes(r *Report, o Options, src Source, prefix string) []Note {
 			}
 			if a.Estimate == nil {
 				notes = append(notes, Note{Level: Notice, File: full(a.FileName), Line: 1, Check: "xf/not-estimated",
-					Title: "Not estimated", Text: "BigQuery gave no estimate for " + impact.ShortTable(a.Name) + ": " + oneLine(a.Reason)})
+					Title: "Not estimated", Text: "BigQuery gave no estimate for " + impact.ShortTable(a.Name) + ": " + oneLine(a.WhyNot())})
 			}
 		}
 		if r.CostTripped(o) {

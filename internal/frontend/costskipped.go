@@ -15,7 +15,9 @@ import (
 //  2. Waiting: new tables added on this branch that haven't been built yet,
 //     with the downstream tables and assertions waiting on each one; one
 //     that waits on two is under both.
-//  3. Other: actions that couldn't be priced for another reason (such as
+//  3. Columns: columns this branch adds to a changed table that dry runs
+//     didn't find, with the actions waiting on each.
+//  4. Other: actions that couldn't be priced for another reason (such as
 //     queries over external tables or scripts), grouped by reason.
 type CostSkipped struct {
 	Count int        `json:"count"`
@@ -28,8 +30,20 @@ type CostSkipped struct {
 	Waiting []CostWaitingGroup `json:"waiting,omitempty"`
 	// Waits is the actions in Waiting: one waiting on two new tables is
 	// under each.
-	Waits int              `json:"waits,omitempty"`
-	Other []CostOtherGroup `json:"other,omitempty"`
+	Waits int `json:"waits,omitempty"`
+	// Columns are the columns this branch adds to a changed table that
+	// dry runs didn't find, with the actions waiting on each.
+	Columns []CostColumnGroup `json:"columns,omitempty"`
+	Other   []CostOtherGroup  `json:"other,omitempty"`
+}
+
+// CostColumnGroup is a column a changed action makes on this branch, which
+// its table in BigQuery hasn't got until a run builds it, and the actions
+// whose dry runs wait on it.
+type CostColumnGroup struct {
+	Column  string              `json:"column"`
+	Table   string              `json:"table"`
+	Actions []CostWaitingAction `json:"actions"`
 }
 
 // CostChip counts the actions of one kind: "new", "missing" or "other".
@@ -104,9 +118,21 @@ func costSkipped(r *cost.Report) *CostSkipped {
 	foldedMissing := map[string]int{} // a missing table's row of assertions
 	waitingByTable := map[string]int{}
 	otherByWhy := map[string]int{}
+	columnAt := map[cost.AddedColumn]int{}
 
 	for _, s := range skipped {
 		name := impact.ShortTable(s.Action.Name)
+		if c := s.Column; c != nil {
+			counts["column"]++
+			idx, ok := columnAt[*c]
+			if !ok {
+				idx = len(v.Columns)
+				columnAt[*c] = idx
+				v.Columns = append(v.Columns, CostColumnGroup{Column: c.Column, Table: impact.ShortTable(c.Table)})
+			}
+			v.Columns[idx].Actions = append(v.Columns[idx].Actions, CostWaitingAction{Action: name, Type: s.Action.Type})
+			continue
+		}
 		if s.Missing == "" {
 			why, kind := s.Why, "failed"
 			if strings.HasPrefix(why, "BigQuery gave no estimate") || strings.HasPrefix(why, "BigQuery gives no estimate") {
@@ -190,6 +216,7 @@ func costSkipped(r *cost.Report) *CostSkipped {
 	for _, c := range []struct{ kind, one, many, chip string }{
 		{"missing", "reads a missing table", "read a missing table", "missing"},
 		{"new", "waits on a new table", "wait on a new table", "new"},
+		{"column", "waits on a new column", "wait on a new column", "new"},
 		{"noBytes", "gave no byte count", "gave no byte count", "other"},
 		{"failed", "couldn't be dry run", "couldn't be dry run", "other"},
 	} {

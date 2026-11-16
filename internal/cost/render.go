@@ -360,7 +360,7 @@ func Text(r *Report, o Options) string {
 	for _, a := range actions {
 		name := impact.ShortTable(a.Name)
 		if a.Estimate == nil {
-			why := a.Reason
+			why := a.WhyNot()
 			if w := waits[a.Name]; len(w) > 0 {
 				var short []string
 				for _, t := range w {
@@ -546,7 +546,7 @@ func markdownSkipped(r *Report) []string {
 		why     string
 		actions []string
 	}
-	var missing []Skipped
+	var missing, columns []Skipped
 	var waiting []waitingGroup
 	waitingIdx := map[string]int{}
 	var others []otherGroup
@@ -555,6 +555,10 @@ func markdownSkipped(r *Report) []string {
 
 	for _, s := range skipped {
 		name := "`" + impact.ShortTable(s.Action.Name) + "`"
+		if s.Column != nil {
+			columns = append(columns, s)
+			continue
+		}
 		if s.Missing == "" {
 			idx, ok := otherIdx[s.Why]
 			if !ok {
@@ -612,6 +616,13 @@ func markdownSkipped(r *Report) []string {
 			lines = append(lines, fmt.Sprintf("- Waiting on `%s`: %s", g.reads, strings.Join(deps, " + ")))
 		}
 		lines = append(lines, "", "<sub>"+MissingHint+"</sub>", "")
+	}
+	if len(columns) > 0 {
+		lines = append(lines, fmt.Sprintf("**Waits on a new column added on this branch (%d):**", len(columns)), "")
+		for _, s := range columns {
+			lines = append(lines, fmt.Sprintf("- `%s` reads `%s` of `%s`", impact.ShortTable(s.Action.Name), cell(s.Column.Column), impact.ShortTable(s.Column.Table)))
+		}
+		lines = append(lines, "", "<sub>"+ColumnHint+"</sub>", "")
 	}
 	for _, g := range others {
 		lines = append(lines, fmt.Sprintf("%s (%d):", g.why, len(g.actions)), "")
@@ -676,6 +687,9 @@ type jsonAction struct {
 	// branch adds that no run has built yet, every such table: Error
 	// names only the first BigQuery didn't find.
 	WaitsOn []string `json:"waitsOn,omitempty"`
+	// WaitsOnColumn is, on an action not estimated as it reads a column
+	// a changed action makes on this branch, that action and the column.
+	WaitsOnColumn *AddedColumn `json:"waitsOnColumn,omitempty"`
 }
 
 type jsonGate struct {
@@ -752,7 +766,7 @@ func JSON(r *Report, o Options) ([]byte, error) {
 	}
 	waits := waitsByAction(r)
 	for _, a := range r.Actions {
-		ja := jsonAction{WaitsOn: waits[a.Name], Name: a.Name, DryRunAs: a.DryRunAs, File: a.FileName, Type: a.Type, New: a.New, FullRefresh: est(a.Full), Base: est(a.Base),
+		ja := jsonAction{WaitsOn: waits[a.Name], WaitsOnColumn: a.AddedColumn, Name: a.Name, DryRunAs: a.DryRunAs, File: a.FileName, Type: a.Type, New: a.New, FullRefresh: est(a.Full), Base: est(a.Base),
 			FirstBuild: a.FirstBuild, Incremental: est(a.Incremental), FromDev: a.FromDev, Warnings: []jsonWarning{}, Error: a.Reason}
 		if a.Estimate != nil {
 			usd := o.USD(a.Estimate.Bytes)

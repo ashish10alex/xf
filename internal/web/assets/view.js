@@ -1721,7 +1721,8 @@ const chipClass = { new: 'm-new', missing: 'm-review', other: 'm-none' };
 // NotEstimated is the actions C couldn't price, grouped by root cause:
 // 1. Missing tables in BigQuery (not added on this branch) that need checking.
 // 2. New tables added on this branch, with the actions waiting on each one.
-// 3. Other reasons (external tables, scripts), grouped by why.
+// 3. Columns added on this branch, with the actions waiting on each.
+// 4. Other reasons (external tables, scripts), grouped by why.
 function NotEstimated({ n }) {
   const where = n.where || 'BigQuery';
   return html`<h3>Not estimated <span class="dim">${n.count} ${n.count === 1 ? 'action' : 'actions'}, not in the total</span></h3>
@@ -1741,6 +1742,12 @@ function NotEstimated({ n }) {
       <tbody>${n.waiting.map((g) => html`<tr>
         <td>${tableName(g.reads)} <span class="mark m-new" title="A dry run needs every table it reads to exist. A table this branch adds exists only once a run builds it.">not built yet</span></td>
         <td><div class="cost-deps">${(g.actions || []).map((a) => html`<span class="cost-dep">${tableName(a.action)} <span class="dim small">${a.type}</span></span>`)}${g.assertions && g.assertions.length > 0 && html`<details class="cost-asserts"><summary class="dim">${g.assertions.length} ${g.assertions.length === 1 ? 'assertion' : 'assertions'}</summary><div class="cost-assert-list">${g.assertions.map((a) => html`<div>${tableName(a)}</div>`)}</div></details>`}</div></td></tr>`)}</tbody>
+    </table>`)}
+    ${n.columns && wrapTable(html`<table class="grid not-estimated">
+      <thead><tr><th>New column on this branch (not built in <span class="as-is">${where}</span> yet)</th><th>Blocks (${n.columns.reduce((s, g) => s + g.actions.length, 0)})</th></tr></thead>
+      <tbody>${n.columns.map((g) => html`<tr>
+        <td><span class="mono">${g.column}</span> <span class="dim">of</span> ${tableName(g.table)} <span class="mark m-new" title="A dry run reads the tables in BigQuery, which have a column this branch adds only once a run builds them.">not built yet</span></td>
+        <td><div class="cost-deps">${g.actions.map((a) => html`<span class="cost-dep">${tableName(a.action)} <span class="dim small">${a.type}</span></span>`)}</div></td></tr>`)}</tbody>
     </table>`)}
     ${n.other && wrapTable(html`<table class="grid not-estimated">
       <thead><tr><th>Why BigQuery gave no byte count</th><th>Actions (${n.other.reduce((s, g) => s + g.actions.length, 0)})</th></tr></thead>

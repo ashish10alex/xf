@@ -364,18 +364,19 @@ func fromDev(q *project.DryRunQuery, reads []DevRead) *project.DryRunQuery {
 }
 
 // dryRun dry runs q as an action of g, returning its estimate, or why it
-// has none, and the tables it reads. err is the dry run's own failure.
-func (r *runner) dryRun(ctx context.Context, g *project.Graph, a *project.Action, q *project.DryRunQuery) (est *Estimate, tables []bigquery.TableRef, reason string, err error) {
+// has none, and the dry run, nil when it failed. err is the dry run's own
+// failure.
+func (r *runner) dryRun(ctx context.Context, g *project.Graph, a *project.Action, q *project.DryRunQuery) (est *Estimate, d *bigquery.DryRun, reason string, err error) {
 	proj, location := g.DryRunTarget(a)
 	if proj == "" {
 		return nil, nil, "no project to dry run in: set defaultProject", nil
 	}
-	d, err := r.deps.DryRun(ctx, proj, location, q.SQL)
+	d, err = r.deps.DryRun(ctx, proj, location, q.SQL)
 	if err != nil {
 		return nil, nil, "dry run failed: " + errorText(err), err
 	}
 	est, reason = estimateOf(d)
-	return est, d.Tables, reason, nil
+	return est, d, reason, nil
 }
 
 // denied reports a dry run BigQuery refused whatever the SQL: no usable
@@ -394,11 +395,11 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 	}
 	run, full := counted(a)
 	q := run
-	var tables []bigquery.TableRef
+	var d *bigquery.DryRun
 	var err error
 	for {
 		sql := fromDev(q, out.FromDev)
-		out.Estimate, tables, out.Reason, err = r.dryRun(ctx, head, a, sql)
+		out.Estimate, d, out.Reason, err = r.dryRun(ctx, head, a, sql)
 		m, ok := missingIn(out.Reason)
 		if err == nil || !ok {
 			break
@@ -413,8 +414,11 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 			break
 		}
 	}
+	if d != nil {
+		out.schema = d.Schema
+	}
 	if out.Estimate != nil {
-		out.Unfiltered = r.ps.unfiltered(ctx, fromDev(q, out.FromDev).SQL, tables)
+		out.Unfiltered = r.ps.unfiltered(ctx, fromDev(q, out.FromDev).SQL, d.Tables)
 	}
 	if full != nil && err == nil {
 		out.Full, _, _, _ = r.dryRun(ctx, head, a, fromDev(full, out.FromDev))
@@ -540,6 +544,12 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 		return nil, err
 	}
 
+	heads := make([]*project.Action, len(items))
+	for i, it := range items {
+		heads[i] = it.a
+	}
+	addedColumns(head.Graph, heads, estimated)
+
 	// Refused every time, the check wasn't made: a report of nothing but
 	// failures would pass any limit.
 	if len(items) > 0 && !slices.ContainsFunc(failures, func(err error) bool { return !denied(err) }) {
@@ -612,4 +622,68 @@ func dryRunIn(g *project.Graph, actions []*project.Action) string {
 		in = where
 	}
 	return in
+}
+
+// unrecognizedRE is BigQuery's message for a query that names a column
+// none of the tables it reads has: "Unrecognized name: X", or "Name X not
+// found inside Y" for a qualified one.
+var unrecognizedRE = regexp.MustCompile("^dry run failed: (?:Unrecognized name: `?([A-Za-z_][A-Za-z0-9_]*)`?|Name `?([A-Za-z_][A-Za-z0-9_]*)`? not found inside)")
+
+// addedColumns sets AddedColumn on the actions whose dry run failed on a
+// column a changed action they read makes on this branch: its table in
+// BigQuery has the column only once a run of the branch builds it.
+// heads[i] is the action of estimated[i] in g, the compile dry run. A
+// changed action makes the column when its dry run returns it, or, when it
+// has no schema (its own dry run failed, or is a script), when its SQL
+// names it. The search goes on up through the actions whose output isn't
+// known, as a SELECT * passes a column on unnamed: unchanged ones, and
+// changed ones without a schema that don't name it.
+func addedColumns(g *project.Graph, heads []*project.Action, estimated []Action) {
+	at := map[project.ActionID]int{}
+	for i, a := range heads {
+		at[a.ID] = i
+	}
+	// maker is the changed action above a that makes column, or -1.
+	maker := func(a *project.Action, column string) int {
+		seen := map[project.ActionID]bool{a.ID: true}
+		queue := slices.Clone(a.DependencyTargets)
+		for len(queue) > 0 {
+			id := queue[0].ID()
+			queue = queue[1:]
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			dep := g.Actions[id]
+			if dep == nil {
+				continue
+			}
+			if j, changed := at[id]; changed {
+				if schema := estimated[j].schema; len(schema) > 0 {
+					if slices.ContainsFunc(schema, func(f bigquery.Field) bool { return strings.EqualFold(f.Name, column) }) {
+						return j
+					}
+					continue // its output is known, and hasn't got it
+				}
+				if run, _ := counted(dep); run != nil && impact.Mentions(run.SQL, column) {
+					return j
+				}
+			}
+			queue = append(queue, dep.DependencyTargets...)
+		}
+		return -1
+	}
+	for i := range estimated {
+		m := unrecognizedRE.FindStringSubmatch(firstLine(estimated[i].Reason))
+		if m == nil {
+			continue
+		}
+		column := m[1] + m[2]
+		if j := maker(heads[i], column); j >= 0 {
+			estimated[i].AddedColumn = &AddedColumn{Table: estimated[j].Name, Column: column}
+		}
+	}
+	for i := range estimated {
+		estimated[i].schema = nil
+	}
 }

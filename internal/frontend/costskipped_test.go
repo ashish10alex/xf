@@ -81,3 +81,25 @@ func TestCostSkippedInMoreThanOnePlace(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
+
+// Actions waiting on a column the branch adds are grouped by the column,
+// apart from the dry runs that failed for another reason.
+func TestCostSkippedGroupsActionsWaitingOnANewColumn(t *testing.T) {
+	week2 := &cost.AddedColumn{Table: "acme.marts.combined", Column: "week2"}
+	r := &cost.Report{Actions: []cost.Action{
+		{Name: "acme.marts.dates", Type: "table", Reason: "dry run failed: Unrecognized name: week2", AddedColumn: week2},
+		{Name: "acme.marts.weekly", Type: "view", Reason: "dry run failed: Unrecognized name: week2", AddedColumn: &cost.AddedColumn{Table: "acme.marts.combined", Column: "week2"}},
+		{Name: "acme.marts.typo", Type: "table", Reason: "dry run failed: Unrecognized name: wek2"},
+	}}
+	got := costSkipped(r)
+	wantColumns := []CostColumnGroup{{Column: "week2", Table: "marts.combined", Actions: []CostWaitingAction{{Action: "marts.dates", Type: "table"}, {Action: "marts.weekly", Type: "view"}}}}
+	if !reflect.DeepEqual(got.Columns, wantColumns) {
+		t.Errorf("columns %+v", got.Columns)
+	}
+	if want := []CostChip{{"2 wait on a new column", "new"}, {"1 couldn't be dry run", "other"}}; !reflect.DeepEqual(got.Chips, want) {
+		t.Errorf("chips %+v", got.Chips)
+	}
+	if len(got.Other) != 1 || got.Other[0].Actions[0].Action != "marts.typo" {
+		t.Errorf("other %+v", got.Other)
+	}
+}

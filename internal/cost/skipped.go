@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/ashish10alex/xf/internal/impact"
 )
 
 // Skip is the actions that couldn't be estimated for one reason.
@@ -30,6 +32,21 @@ type Skipped struct {
 	// Waits are, when New is set, every table the branch adds that the
 	// dry run waits on a run to build, Missing first.
 	Waits []string
+	// Column is, when the dry run didn't find a column, the changed action
+	// that makes it on this branch (see Action.AddedColumn).
+	Column *AddedColumn
+}
+
+// ColumnHint says why a dry run doesn't find a column the branch adds.
+const ColumnHint = "A dry run reads the tables in BigQuery, which have a column this branch adds only once a run builds them."
+
+// WhyNot is why a has no estimate, in a line: its Reason, or the column
+// the branch adds that it waits on.
+func (a Action) WhyNot() string {
+	if c := a.AddedColumn; c != nil {
+		return "waits on a column this branch adds that no run has built yet: " + c.Column + " of " + impact.ShortTable(c.Table)
+	}
+	return firstLine(a.Reason)
 }
 
 // notFoundRE is BigQuery's message for a query that reads a table, view or
@@ -54,7 +71,10 @@ func SkippedActions(r *Report) []Skipped {
 		if a.Estimate != nil {
 			continue
 		}
-		s := Skipped{Action: a, Why: firstLine(a.Reason)}
+		s := Skipped{Action: a, Why: firstLine(a.Reason), Column: a.AddedColumn}
+		if s.Column != nil {
+			s.Why = "Waits on a column this branch adds"
+		}
 		if m := notFoundRE.FindStringSubmatch(s.Why); m != nil {
 			s.Missing, s.Location = strings.Replace(m[2], ":", ".", 1), m[3]
 			if b, ok := byName[strings.ToLower(s.Missing)]; ok {
@@ -92,8 +112,11 @@ func Skips(r *Report) []Skip {
 			i = len(out)
 			at[s.Why] = i
 			out = append(out, Skip{Why: s.Why})
-			if s.Missing != "" {
+			switch {
+			case s.Missing != "":
 				out[i].Hint = MissingHint
+			case s.Column != nil:
+				out[i].Hint = ColumnHint
 			}
 		}
 		out[i].Actions = append(out[i].Actions, s)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -894,5 +895,59 @@ Total scanned: ≤ 4.20 TiB | Estimated cost: ≤ $26.26
 	}
 	if full := Markdown(testReport(), Options{}); !strings.Contains(full, "stg_pageviews") || strings.Contains(full, "Not shown") {
 		t.Errorf("Markdown without attention:\n%s", full)
+	}
+}
+
+// A dry run that fails on a column a changed action it reads makes on
+// this branch waits on a run to build it: known by that action's schema,
+// or, when its own dry run failed too, by its SQL naming the column; a
+// SELECT * passes it on unnamed, so the search goes on up.
+func TestRunTellsADryRunWaitingOnAColumnTheBranchAdds(t *testing.T) {
+	combined := action("combined", project.KindTable, "select id, week2, date2 from raw.orders")
+	dates := action("dates", project.KindTable, "select *, week2 + 7 as next_week from `acme.marts.combined`")
+	final := action("final", project.KindTable, "select id, date2 from `acme.marts.dates`")
+	typo := action("typo", project.KindTable, "select id, wek2 from `acme.marts.combined`")
+	for _, a := range []*project.Action{dates, typo} {
+		a.DependencyTargets = []project.Target{combined.Target}
+	}
+	final.DependencyTargets = []project.Target{dates.Target}
+	withSchema := precise(gib)
+	withSchema.Schema = []bigquery.Field{{Name: "id", Type: "INT64"}, {Name: "WEEK2", Type: "DATE"}, {Name: "date2", Type: "DATE"}}
+	unrecognized := func(name string) error {
+		return &bigquery.APIError{Status: 400, Message: "Unrecognized name: " + name + "; Did you mean " + name[:len(name)-1] + "1? at [1:12]"}
+	}
+	bq := &fakeBQ{
+		dryRuns:  map[string]*bigquery.DryRun{combined.Query: withSchema},
+		failures: map[string]error{dates.Query: unrecognized("week2"), final.Query: unrecognized("date2"), typo.Query: unrecognized("wek2")},
+	}
+	r, err := Run(context.Background(), changed(changes.ReasonSQL, combined, dates, final, typo), Head{Graph: graph(combined, dates, final, typo)}, Deps{DryRun: bq.dryRun}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]*AddedColumn{
+		"dates": {Table: "acme.marts.combined", Column: "week2"},
+		"final": {Table: "acme.marts.combined", Column: "date2"},
+		"typo":  nil,
+	} {
+		if got := find(t, r, name).AddedColumn; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: AddedColumn = %+v, want %+v", name, got, want)
+		}
+	}
+	text := Text(r, Options{})
+	for _, want := range []string{
+		"? marts.dates     not estimated: waits on a column this branch adds that no run has built yet: week2 of marts.combined",
+		"? marts.typo      not estimated: dry run failed: Unrecognized name: wek2",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("no %q in Text:\n%s", want, text)
+		}
+	}
+	md := Markdown(r, Options{})
+	if !strings.Contains(md, "**Waits on a new column added on this branch (2):**\n\n- `marts.dates` reads `week2` of `marts.combined`\n- `marts.final` reads `date2` of `marts.combined`\n\n<sub>"+ColumnHint+"</sub>") {
+		t.Errorf("Markdown:\n%s", md)
+	}
+	data, err := JSON(r, Options{})
+	if err != nil || !strings.Contains(string(data), `"waitsOnColumn": {`) {
+		t.Errorf("JSON %v:\n%s", err, data)
 	}
 }
