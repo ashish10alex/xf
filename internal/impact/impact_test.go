@@ -1090,3 +1090,77 @@ func TestImpactReadersLeaveOutARenamedTableReadingItsOldSelf(t *testing.T) {
 		t.Errorf("readers %v, want the incremental table's read of itself left out", got)
 	}
 }
+
+// Dataform's incremental MERGE or INSERT names every column the table in
+// BigQuery has, so a Dataform incremental table that drops one fails its
+// own next run, even with no reader downstream; and every run, once
+// refreshed too, while its uniqueKey names it. A table, which is built
+// anew, or a dbt model, has no such run.
+func TestRunFlagsADropThatBreaksAnIncrementalTablesOwnRun(t *testing.T) {
+	g, err := dataform.ParseCompileJSON([]byte(`{"tables":[
+		{"type":"incremental","target":{"database":"p","schema":"marts","name":"inventory"},"fileName":"definitions/inventory.sqlx",
+		 "query":"SELECT sku, period, amount FROM src","incrementalQuery":"SELECT sku, period, amount FROM src WHERE t > 1","uniqueKey":["sku","period","ROW_NUM"]},
+		{"type":"table","target":{"database":"p","schema":"marts","name":"orders"},"fileName":"definitions/orders.sqlx","query":"SELECT sku, period, amount FROM src"}
+	],"projectConfig":{"defaultDatabase":"p"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g.Actions["p.marts.inventory"].UniqueKey; !reflect.DeepEqual(got, []string{"sku", "period", "ROW_NUM"}) {
+		t.Fatalf("uniqueKey %q", got)
+	}
+	res := &changes.Result{BaseRef: "origin/main", HeadRef: "feat", Diff: changes.Diff{Changed: []changes.Changed{
+		{ID: "p.marts.inventory", FileName: "definitions/inventory.sqlx", Type: "incremental", Reasons: []changes.Reason{changes.ReasonSQL}},
+		{ID: "p.marts.orders", FileName: "definitions/orders.sqlx", Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+	}}}
+	prod := []bigquery.Field{f("sku", "STRING"), f("period", "DATE"), f("amount", "FLOAT64"), f("row_num", "INT64"), f("note", "STRING")}
+	deps := Deps{
+		Schema: func(context.Context, string) ([]bigquery.Field, error) { return prod, nil },
+		DryRun: func(context.Context, string, string, string) (*bigquery.DryRun, error) {
+			return &bigquery.DryRun{Schema: []bigquery.Field{f("sku", "STRING"), f("period", "DATE"), f("amount", "FLOAT64")}}, nil
+		},
+		Readers: &fakeSource{},
+	}
+	report, err := Run(context.Background(), res, g, deps, func(Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTable := map[string]Table{}
+	for _, tb := range report.AtRisk {
+		byTable[tb.Table] = tb
+	}
+	inventory, orders := byTable["p.marts.inventory"], byTable["p.marts.orders"]
+	breaks := map[string]string{}
+	for _, c := range inventory.Columns {
+		breaks[c.Column] = c.Change.BreaksRun
+	}
+	if want := map[string]string{"row_num": BreaksRunUniqueKey, "note": BreaksRunTable}; !reflect.DeepEqual(breaks, want) {
+		t.Errorf("inventory breaks %v, want %v", breaks, want)
+	}
+	if TableSeverity(inventory) != SeverityCritical || TableSeverity(orders) != SeverityLow {
+		t.Errorf("severities: inventory %v, orders %v", TableSeverity(inventory), TableSeverity(orders))
+	}
+	for _, c := range orders.Columns {
+		if c.Change.BreaksRun != "" {
+			t.Errorf("a table breaks no run of its own: %+v", c)
+		}
+	}
+	md := Markdown(report)
+	for _, want := range []string{
+		"its own incremental run · fails every time: `uniqueKey` still names `row_num`, which its query no longer returns",
+		"its own incremental run · fails: Dataform's MERGE or INSERT names `note`, which its table still has · until a full refresh rebuilds it",
+		"**1 to fix before merging.**",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("Markdown lacks %q:\n%s", want, md)
+		}
+	}
+	if txt := Text(report, false); !strings.Contains(txt, "↳ its own incremental run · fails every time") {
+		t.Errorf("Text:\n%s", txt)
+	}
+
+	// The base branch made the same drop: not this branch's to fix.
+	onBase := Table{Columns: []Column{{Column: "row_num", Change: ColumnChange{Kind: Dropped, OnBase: true, BreaksRun: BreaksRunUniqueKey}}}}
+	if TableSeverity(onBase) != SeverityLow || len(ownRun(onBase)) != 0 {
+		t.Errorf("on base: %v %v", TableSeverity(onBase), ownRun(onBase))
+	}
+}

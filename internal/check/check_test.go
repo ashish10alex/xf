@@ -228,6 +228,39 @@ func TestNotes(t *testing.T) {
 	}
 }
 
+// A drop that breaks an incremental table's own run is an error to fix
+// with nothing reading it downstream; uniqueKey's note points at the
+// config that still names the column.
+func TestNotesOnADropThatBreaksTheIncrementalRun(t *testing.T) {
+	src := files{"definitions/inventory.sqlx": {
+		"config {\n  type: \"incremental\",\n  uniqueKey: [\"sku\", \"row_num\"]\n}\nselect\n  sku,\n  amount\nfrom x\n",
+		"diff --git a/definitions/inventory.sqlx b/definitions/inventory.sqlx\n--- a/definitions/inventory.sqlx\n+++ b/definitions/inventory.sqlx\n@@ -8,2 +7,0 @@\n-  note,\n-  row_num\n",
+	}}
+	r := &Report{Impact: &impact.Report{Comparison: comparison, ChangedCount: 1, AtRisk: []impact.Table{{
+		Table: "acme.marts.inventory", FileName: "definitions/inventory.sqlx", Type: "incremental",
+		Columns: []impact.Column{
+			{Column: "row_num", Change: impact.ColumnChange{Kind: impact.Dropped, BreaksRun: impact.BreaksRunUniqueKey}, Readers: []impact.Reader{}},
+			{Column: "note", Change: impact.ColumnChange{Kind: impact.Dropped, BreaksRun: impact.BreaksRunTable},
+				Readers: []impact.Reader{{Table: "acme.finance.margins", Column: "note", FilePath: "definitions/margins.sqlx"}}},
+		},
+	}}}}
+	notes := Notes(r, Options{Gate: true, FailOn: impact.SeverityCritical}, src, "")
+	if len(notes) != 2 {
+		t.Fatalf("notes = %+v", notes)
+	}
+	if n := notes[0]; n.Level != Error || n.Line != 3 || n.Title != "Dropped column still in uniqueKey" ||
+		n.Text != "This branch drops row_num from marts.inventory, but its uniqueKey still names it, so every incremental run fails, after a full refresh too: take row_num out of uniqueKey." {
+		t.Errorf("uniqueKey: %+v", n)
+	}
+	if n := notes[1]; n.Level != Error || n.Line != 7 || n.Title != "Dropped column breaks the incremental run" ||
+		!strings.HasSuffix(n.Text, "until a full refresh rebuilds it. finance.margins (definitions/margins.sqlx) reads it too.") {
+		t.Errorf("table: %+v", n)
+	}
+	if v := impactVerdict(r); !strings.HasPrefix(v, "🚨 2 dropped columns") {
+		t.Errorf("verdict %q", v)
+	}
+}
+
 func TestLines(t *testing.T) {
 	if got := namingLine("select\n  my_discount,\n  Discount\n", "discount"); got != 3 {
 		t.Errorf("namingLine = %d, want the whole word on 3", got)

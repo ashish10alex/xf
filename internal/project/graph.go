@@ -141,6 +141,9 @@ type Action struct {
 	Description string
 	Columns     []ColumnDescription
 	PartitionBy string
+	// UniqueKey is a Dataform incremental table's uniqueKey: the columns
+	// its incremental run merges on. nil for dbt.
+	UniqueKey []string
 
 	DependencyTargets []Target
 	// ParentAction is set on assertions Dataform generates from a table's

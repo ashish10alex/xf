@@ -88,11 +88,20 @@ func Notes(r *Report, o Options, src Source, prefix string) []Note {
 					continue
 				}
 				n := Note{Level: level(s), File: full(t.FileName), Check: "xf/" + c.Change.Kind}
-				if c.Change.Kind == impact.Dropped {
+				switch {
+				case c.Change.BreaksRun == impact.BreaksRunUniqueKey:
+					n.Title = "Dropped column still in uniqueKey"
+					n.Line = namingLine(src.Text(t.FileName), c.Column) // the config's uniqueKey, ahead of the query
+					n.Text = fmt.Sprintf("This branch drops %s from %s, but its uniqueKey still names it, so every incremental run fails, after a full refresh too: take %s out of uniqueKey.", c.Column, impact.ShortTable(t.Table), c.Column) + alsoRead(c.Readers)
+				case c.Change.BreaksRun == impact.BreaksRunTable:
+					n.Title = "Dropped column breaks the incremental run"
+					n.Line = removedLine(src.Diff(t.FileName), c.Column)
+					n.Text = fmt.Sprintf("This branch drops %s from %s, whose table in BigQuery still has it: Dataform's incremental MERGE or INSERT names every column of the table, so the next incremental run fails until a full refresh rebuilds it.", c.Column, impact.ShortTable(t.Table)) + alsoRead(c.Readers)
+				case c.Change.Kind == impact.Dropped:
 					n.Title = "Dropped column still read"
 					n.Line = removedLine(src.Diff(t.FileName), c.Column)
 					n.Text = readersText(fmt.Sprintf("This branch drops %s from %s", c.Column, impact.ShortTable(t.Table)), c.Readers, c.ReadersError)
-				} else {
+				default:
 					n.Title = "Retyped column still read"
 					n.Line = namingLine(src.Text(t.FileName), c.Column)
 					n.Text = readersText(fmt.Sprintf("This branch changes %s of %s from %s to %s", c.Column, impact.ShortTable(t.Table), c.Change.From, c.Change.To), c.Readers, c.ReadersError)
@@ -134,6 +143,26 @@ func readersText(what string, readers []impact.Reader, readersError string) stri
 	if readersError != "" {
 		return what + "; its readers couldn't be looked up: " + oneLine(readersError)
 	}
+	names := readerNames(readers)
+	if len(names) == 0 {
+		return what + "."
+	}
+	return what + ", which " + strings.Join(names, ", ") + map[bool]string{true: " reads.", false: " read."}[len(names) == 1]
+}
+
+// alsoRead is a sentence naming the readers still to fix, after one that
+// says what breaks; "" when there are none.
+func alsoRead(readers []impact.Reader) string {
+	names := readerNames(readers)
+	if len(names) == 0 {
+		return ""
+	}
+	return " " + strings.Join(names, ", ") + map[bool]string{true: " reads it too.", false: " read it too."}[len(names) == 1]
+}
+
+// readerNames is the readers still to fix, five at most and then how many
+// more.
+func readerNames(readers []impact.Reader) []string {
 	var names []string
 	for _, rd := range impact.RankReaders(readers) {
 		if impact.IsSettled(rd) {
@@ -145,13 +174,10 @@ func readersText(what string, readers []impact.Reader, readersError string) stri
 		}
 		names = append(names, name)
 	}
-	switch {
-	case len(names) == 0:
-		return what + "."
-	case len(names) > 5:
+	if len(names) > 5 {
 		names = append(names[:5], fmt.Sprintf("and %d more", len(names)-5))
 	}
-	return what + ", which " + strings.Join(names, ", ") + map[bool]string{true: " reads.", false: " read."}[len(names) == 1]
+	return names
 }
 
 func lastPart(table string) string {

@@ -70,6 +70,10 @@ type Candidate struct {
 	// UncheckedReason says why the table couldn't be compared, e.g. its
 	// dry run failed.
 	UncheckedReason string
+	// OwnRun: the table is a Dataform incremental table, whose incremental
+	// run names every column its table has; UniqueKey is its uniqueKey.
+	OwnRun    bool
+	UniqueKey []string
 }
 
 // target is the table c is compared with.
@@ -164,6 +168,8 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 		}
 		for _, d := range DiffSchemas(c.Dev, c.Prod) {
 			d.Change.OnBase = slices.Contains(onBase, d)
+			// A renamed table compared with its old one is built anew.
+			d.Change.BreaksRun = breaksRun(d.Change, d.Column, c.OwnRun && !c.FromOld, c.UniqueKey)
 			entry.Columns = append(entry.Columns, Column{Column: d.Column, Change: d.Change, Readers: []Reader{}})
 		}
 		switch {
@@ -566,6 +572,9 @@ func toProdTables(r *Report, prodTarget func(string) string) {
 // with no table has nothing to compare, and isn't dry run.
 func check(ctx context.Context, c changes.Changed, a *project.Action, g *project.Graph, deps Deps) Candidate {
 	cand := Candidate{Table: string(c.ID), FileName: c.FileName, Type: c.Type, New: c.IsNew(), RenamedFrom: string(c.RenamedFrom)}
+	if a != nil && a.Kind == project.KindIncremental && a.DbtName == nil {
+		cand.OwnRun, cand.UniqueKey = true, a.UniqueKey
+	}
 	if !deps.prodTarget(&cand) {
 		return cand
 	}

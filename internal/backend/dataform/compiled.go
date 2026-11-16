@@ -29,6 +29,7 @@ type compiledAction struct {
 	ParentAction       *compiledTarget  `json:"parentAction"`
 	NotebookContents   string           `json:"notebookContents"`
 	GraphBody          string           `json:"graphBody"`
+	UniqueKey          []string         `json:"uniqueKey"`
 	ActionDescriptor   struct {
 		Description string `json:"description"`
 		Columns     []struct {

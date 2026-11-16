@@ -343,6 +343,29 @@ func columnChanges(t Table, base string) []string {
 	return parts
 }
 
+// ownRun is, as "Who is affected" entries still to fix, how the columns t
+// drops break its own incremental run (see BreaksRun).
+func ownRun(t Table) []string {
+	var key, table []string
+	for _, c := range t.Columns {
+		switch {
+		case c.Change.OnBase:
+		case c.Change.BreaksRun == BreaksRunUniqueKey:
+			key = append(key, c.Column)
+		case c.Change.BreaksRun == BreaksRunTable:
+			table = append(table, c.Column)
+		}
+	}
+	var out []string
+	if len(key) > 0 {
+		out = append(out, "**its own incremental run · fails every time: `uniqueKey` still names "+codeList(key)+", which its query no longer returns**")
+	}
+	if len(table) > 0 {
+		out = append(out, "**its own incremental run · fails: Dataform's MERGE or INSERT names "+codeList(table)+", which its table still has · until a full refresh rebuilds it**")
+	}
+	return out
+}
+
 // readersError is the first lookup failure among t's readers, or "".
 func readersError(t Table) string {
 	if t.ReadersError != "" {
@@ -373,6 +396,11 @@ func BuildLedger(r *Report) Ledger {
 		groups := mergeGroups(all)
 		full, list := n.affected(groups, many, renamed)
 		cells := capped(full)
+		var own []string
+		for _, t := range tables {
+			own = append(own, ownRun(t)...)
+		}
+		cells, full = append(own, cells...), append(slices.Clone(own), full...)
 		for _, t := range tables {
 			if err := readersError(t); err != "" {
 				cells = append(cells, "❔ readers couldn't be looked up: "+cell(err))

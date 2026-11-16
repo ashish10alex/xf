@@ -60,6 +60,34 @@ type ColumnChange struct {
 	// isn't this branch's: the table in BigQuery is behind the base branch.
 	// It counts as low whoever reads the column.
 	OnBase bool `json:"onBase,omitempty"`
+	// BreaksRun says the dropped column fails the table's own incremental
+	// run, whoever else reads it: BreaksRunTable or BreaksRunUniqueKey.
+	BreaksRun string `json:"breaksRun,omitempty"`
+}
+
+// Why a dropped column breaks a Dataform incremental table's own run.
+// Dataform's incremental MERGE or INSERT names every column the table in
+// BigQuery has, reading each from the query; with onSchemaChange FAIL or
+// EXTEND it stops on a removed column instead.
+const (
+	// BreaksRunTable: the table still has the column, so the next
+	// incremental run fails, until a full refresh rebuilds the table.
+	BreaksRunTable = "table"
+	// BreaksRunUniqueKey: uniqueKey still names the column, which the MERGE
+	// joins on, so every incremental run fails, after a full refresh too.
+	BreaksRunUniqueKey = "uniqueKey"
+)
+
+// breaksRun is why dropping column breaks the incremental run of a table
+// whose uniqueKey is key, or "" when it doesn't.
+func breaksRun(change ColumnChange, column string, ownRun bool, key []string) string {
+	switch {
+	case !ownRun || change.Kind != Dropped:
+		return ""
+	case slices.ContainsFunc(key, func(k string) bool { return strings.EqualFold(strings.Trim(k, "`"), column) }):
+		return BreaksRunUniqueKey
+	}
+	return BreaksRunTable
 }
 
 // ColumnImpact is a changed column, named as the table in BigQuery spells it.
@@ -490,7 +518,8 @@ const (
 var deletedChange = ColumnChange{Kind: "deleted"}
 
 // ImpactSeverity is low for a change the base branch already made, which
-// this branch can do nothing about; else unknown when the readers couldn't
+// this branch can do nothing about; else critical for a drop that breaks
+// the table's own incremental run (BreaksRun); else unknown when the readers couldn't
 // be looked up, low when nothing still reads it (no readers, or only ones
 // this branch probably updated), else critical for a drop or deletion and a
 // warning for a retype.
@@ -498,6 +527,8 @@ func ImpactSeverity(change ColumnChange, readers []Reader, readersError string) 
 	switch {
 	case change.OnBase:
 		return SeverityLow
+	case change.BreaksRun != "":
+		return SeverityCritical
 	case readersError != "":
 		return SeverityUnknown
 	case OpenReaders(readers) == 0:

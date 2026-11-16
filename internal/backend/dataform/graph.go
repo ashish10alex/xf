@@ -66,6 +66,7 @@ func newAction(c compiledAction, kind project.ActionKind) *project.Action {
 		GraphBody:          c.GraphBody,
 		Description:        c.ActionDescriptor.Description,
 		PartitionBy:        c.Bigquery.PartitionBy,
+		UniqueKey:          c.UniqueKey,
 	}
 	for _, col := range c.ActionDescriptor.Columns {
 		a.Columns = append(a.Columns, project.ColumnDescription{Path: col.Path, Description: col.Description})
