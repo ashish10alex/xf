@@ -47,6 +47,7 @@ func runImpact(args []string) int {
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of text")
 	color := fs.String("color", "auto", "colour the text: `when` is auto (on a terminal, unless $NO_COLOR is set), always or never")
 	web := fs.Bool("web", false, "open xf web on its Checks page instead, where the check runs as I runs it there")
+	attention := fs.Bool("attention", false, "list only the models to fix, review or look into, in the text and the --output Markdown; the summary still counts every model")
 	commandUsage(fs, "xf impact [flags]", `Prints the column impact of the actions this branch changes, or with --json
 as JSON for scripts; --output also writes it as Markdown for a pull request:
 every changed table, view and incremental table (in dbt: model) is dry run
@@ -68,8 +69,11 @@ when the check could not be made.`)
 	if err == nil && !ok {
 		err = fmt.Errorf("--fail-on must be critical or warning, not %q", *failOn)
 	}
-	if err == nil && *web && (*pushed || *failOn != "" || *output != "" || *asJSON) {
-		err = errors.New("--web can't be used with --pushed, --fail-on, --output or --json")
+	if err == nil && *web && (*pushed || *failOn != "" || *output != "" || *asJSON || *attention) {
+		err = errors.New("--web can't be used with --pushed, --fail-on, --output, --json or --attention")
+	}
+	if err == nil && *attention && *asJSON {
+		err = errors.New("--attention can't be used with --json, which has every model: keep those whose severity isn't low")
 	}
 	useColour := false
 	if err == nil {
@@ -82,7 +86,7 @@ when the check could not be made.`)
 	}
 	if err == nil {
 		var code int
-		if code, err = checkImpact(pf, sf, *pushed, *failOn != "", threshold, *output, *asJSON, useColour); err == nil {
+		if code, err = checkImpact(pf, sf, *pushed, *failOn != "", threshold, *output, *asJSON, useColour, *attention); err == nil {
 			return code
 		}
 	}
@@ -90,7 +94,7 @@ when the check could not be made.`)
 	return impactFailed
 }
 
-func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold impact.Severity, output string, asJSON, color bool) (int, error) {
+func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold impact.Severity, output string, asJSON, color, attention bool) (int, error) {
 	root, name, err := pf.find()
 	if err != nil {
 		return 0, err
@@ -136,7 +140,7 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 	if err != nil {
 		return 0, explainCompile(ctx, client, err)
 	}
-	if err := writeReport(os.Stdout, output, report, asJSON, color); err != nil {
+	if err := writeReport(os.Stdout, output, report, asJSON, color, attention); err != nil {
 		return 0, err
 	}
 
@@ -157,9 +161,12 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 
 // writeReport writes the impact report to w as text, coloured with color,
 // and to output when given as Markdown for a pull request comment; with
-// asJSON, as JSON to both.
-func writeReport(w io.Writer, output string, report *impact.Report, asJSON, color bool) error {
-	text, file := impact.Text(report, color), impact.Markdown(report)+"\n"
+// asJSON, as JSON to both. attention lists only the models that need it.
+func writeReport(w io.Writer, output string, report *impact.Report, asJSON, color, attention bool) error {
+	text, file := impact.Text(report, color, attention), impact.Markdown(report)+"\n"
+	if attention {
+		file = impact.AttentionMarkdown(report) + "\n"
+	}
 	if asJSON {
 		data, err := impact.JSON(report)
 		if err != nil {

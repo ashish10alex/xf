@@ -1154,7 +1154,7 @@ func TestRunFlagsADropThatBreaksAnIncrementalTablesOwnRun(t *testing.T) {
 			t.Errorf("Markdown lacks %q:\n%s", want, md)
 		}
 	}
-	if txt := Text(report, false); !strings.Contains(txt, "↳ its own incremental run · fails every time") {
+	if txt := Text(report, false, false); !strings.Contains(txt, "↳ its own incremental run · fails every time") {
 		t.Errorf("Text:\n%s", txt)
 	}
 

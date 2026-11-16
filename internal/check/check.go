@@ -45,8 +45,11 @@ type Options struct {
 	// Cost holds --fail-over (Threshold) and the price.
 	Cost cost.Options
 	// QuietUnder is the growth in bytes a run may have before cost alone
-	// is worth a comment.
+	// is worth a comment, and before it needs a look with Attention.
 	QuietUnder int64
+	// Attention lists, in Markdown, only the models and actions that need
+	// a look (see impact.Ledger.Attention and cost.Action.NeedsAttention).
+	Attention bool
 }
 
 // Exit codes.
@@ -287,13 +290,17 @@ func Markdown(r *Report, o Options) string {
 	if line := dryRunsLine(r); line != "" {
 		lines = append(lines, line, "")
 	}
+	im, co := impact.Markdown, o.Cost
+	if o.Attention {
+		im, co.Attention, co.GrowthOver = impact.AttentionMarkdown, true, o.QuietUnder
+	}
 	if r.Impact != nil {
-		lines = append(lines, "<details><summary>Column impact</summary>", "", demote(impact.Markdown(r.Impact)), "", "</details>", "")
+		lines = append(lines, "<details><summary>Column impact</summary>", "", demote(im(r.Impact)), "", "</details>", "")
 	} else {
 		lines = append(lines, "❔ Column impact couldn't be checked: "+oneLine(r.ImpactError), "")
 	}
 	if r.Cost != nil {
-		lines = append(lines, "<details><summary>Query cost</summary>", "", demote(strings.TrimRight(cost.Markdown(r.Cost, o.Cost), "\n")), "", "</details>", "")
+		lines = append(lines, "<details><summary>Query cost</summary>", "", demote(strings.TrimRight(cost.Markdown(r.Cost, co), "\n")), "", "</details>", "")
 	} else {
 		lines = append(lines, "❔ Query cost couldn't be checked: "+oneLine(r.CostError), "")
 	}

@@ -319,3 +319,26 @@ func TestFindPR(t *testing.T) {
 		t.Error("outside CI should fail")
 	}
 }
+
+// Attention leaves out what needs no look in both reports; without it,
+// as the comment is made, they are whole.
+func TestMarkdownWithAttention(t *testing.T) {
+	im := dropped()
+	im.ChangedCount = 2
+	im.Safe = []impact.Table{{Table: "acme.marts.daily", Type: "view", Columns: []impact.Column{}}}
+	r := &Report{Impact: im, Cost: costs(gib, gib)}
+	o := Options{QuietUnder: DefaultQuietUnder}
+	if md := Markdown(r, o); !strings.Contains(md, "`daily`") || strings.Contains(md, "Not shown") {
+		t.Errorf("whole:\n%s", md)
+	}
+	o.Attention = true
+	md := Markdown(r, o)
+	for _, want := range []string{"`orders`", "Not shown: 1 more model,", "Not shown: 1 more action,"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("no %q in\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "`daily`") {
+		t.Errorf("daily listed:\n%s", md)
+	}
+}

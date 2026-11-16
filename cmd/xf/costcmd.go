@@ -47,6 +47,7 @@ func runCost(args []string) int {
 	fs.StringVar(output, "o", "", "")
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of text")
 	color := fs.String("color", "auto", "colour the text: `when` is auto (on a terminal, unless $NO_COLOR is set), always or never")
+	attention := fs.Bool("attention", false, "list only the actions that need a look, in the text and the --output Markdown: not estimated, missing a partition filter, or scanning 1 GiB or more than at the merge-base; the total still counts every action")
 	commandUsage(fs, "xf cost [flags]", `Prints what the actions this branch changes would scan in BigQuery, and what
 that costs on demand: every changed action with a query is dry run, as it is
 on the branch and as it was at the merge-base with the default branch. An
@@ -64,7 +65,10 @@ not be made.`)
 	if err == nil && fs.NArg() > 0 {
 		err = fmt.Errorf("unexpected arguments: %v (see xf cost --help)", fs.Args())
 	}
-	opts := cost.Options{USDPerTiB: *usdPerTiB}
+	opts := cost.Options{USDPerTiB: *usdPerTiB, Attention: *attention}
+	if err == nil && *attention && *asJSON {
+		err = errors.New("--attention can't be used with --json, which has every action")
+	}
 	if err == nil && *usdPerTiB <= 0 {
 		err = fmt.Errorf("--usd-per-tib must be more than 0, not %v", *usdPerTiB)
 	}

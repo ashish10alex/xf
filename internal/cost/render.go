@@ -1,6 +1,7 @@
 package cost
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -20,6 +21,58 @@ type Options struct {
 	Threshold int64
 	// Color colours Text with ANSI escapes, for a terminal.
 	Color bool
+	// Attention lists, in Text and Markdown, only the actions that need a
+	// look (see Action.NeedsAttention); the total still counts every one.
+	Attention bool
+	// GrowthOver is how many more bytes than at the merge-base a run may
+	// scan before it needs a look; 0 is DefaultGrowthOver.
+	GrowthOver int64
+}
+
+// DefaultGrowthOver is the growth in a run's bytes that needs a look by
+// default: 1 GiB.
+const DefaultGrowthOver int64 = 1 << 30
+
+func (o Options) growthOver() int64 { return cmp.Or(max(o.GrowthOver, 0), DefaultGrowthOver) }
+
+// NeedsAttention says a needs a look: it has no estimate, reads a
+// partitioned table without a partition filter, or its run scans
+// o.GrowthOver or more than at the merge-base (than nothing, when that
+// isn't known).
+func (a Action) NeedsAttention(o Options) bool {
+	if a.Estimate == nil || len(a.Unfiltered) > 0 {
+		return true
+	}
+	growth, ok := a.Delta()
+	if !ok {
+		growth = a.Estimate.Bytes
+	}
+	return growth >= o.growthOver()
+}
+
+// shown are the actions Text and Markdown list, and how many o.Attention
+// leaves out.
+func (r *Report) shown(o Options) (actions []Action, hidden int) {
+	if !o.Attention {
+		return r.Actions, 0
+	}
+	for _, a := range r.Actions {
+		if a.NeedsAttention(o) {
+			actions = append(actions, a)
+		} else {
+			hidden++
+		}
+	}
+	return actions, hidden
+}
+
+// HiddenLine says how many actions o.Attention leaves out, "" when none.
+func HiddenLine(hidden int, o Options) string {
+	if hidden == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Not shown: %s, estimated with partition filters and scanning less than %s more than at the merge-base; the total counts %s.",
+		plural(hidden, "more action", "more actions"), bigquery.FormatBytes(o.growthOver()), map[bool]string{true: "it", false: "them"}[hidden == 1])
 }
 
 // ANSI styles of Text.
@@ -290,8 +343,12 @@ func Text(r *Report, o Options) string {
 	if hint := UnsetHint(r); hint != "" {
 		b.WriteString(o.paint("⚠ "+strings.ReplaceAll(hint, "`", ""), ansiYellow) + "\n")
 	}
+	actions, hidden := r.shown(o)
+	if len(actions) == 0 && hidden > 0 {
+		b.WriteString("Nothing needs attention.\n")
+	}
 	var nameW, sizeW, costW, deltaW int
-	for _, a := range r.Actions {
+	for _, a := range actions {
 		nameW = max(nameW, utf8.RuneCountInString(impact.ShortTable(a.Name)))
 		if a.Estimate != nil {
 			sizeW = max(sizeW, utf8.RuneCountInString(Size(*a.Estimate)))
@@ -300,7 +357,7 @@ func Text(r *Report, o Options) string {
 		}
 	}
 	waits := waitsByAction(r)
-	for _, a := range r.Actions {
+	for _, a := range actions {
 		name := impact.ShortTable(a.Name)
 		if a.Estimate == nil {
 			why := a.Reason
@@ -348,6 +405,9 @@ func Text(r *Report, o Options) string {
 			parts = append(parts, o.paint(fmt.Sprintf("[MISSING PARTITION FILTER: %s on %s]", u.Column, impact.ShortTable(u.Table)), ansiYellow))
 		}
 		b.WriteString(strings.TrimRight(strings.Join(parts, "  "), " ") + "\n")
+	}
+	if line := HiddenLine(hidden, o); line != "" {
+		b.WriteString(o.paint(line, ansiDim) + "\n")
 	}
 	b.WriteString(o.paint(strings.Repeat("─", 60), ansiDim) + "\n")
 	b.WriteString(o.paint(TotalLine(r, o), ansiBold) + "\n")
@@ -416,7 +476,8 @@ func Markdown(r *Report, o Options) string {
 		lines = append(lines, "", mark+" "+gate)
 	}
 	var estimated, others []Action
-	for _, a := range r.Actions {
+	actions, hidden := r.shown(o)
+	for _, a := range actions {
 		if a.Estimate != nil {
 			estimated = append(estimated, a)
 		} else {
@@ -450,6 +511,9 @@ func Markdown(r *Report, o Options) string {
 			lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s |", cell(impact.ShortTable(a.Name)), cell(a.Type),
 				runCell(full, counted == RunFull, o), runCell(incremental, counted == RunIncremental, o), change, strings.Join(notes, " · ")))
 		}
+	}
+	if line := HiddenLine(hidden, o); line != "" {
+		lines = append(lines, "", line)
 	}
 	if r.BaseError != "" {
 		lines = append(lines, "", "Change is blank: the merge-base could not be compiled ("+cell(firstLine(r.BaseError))+").")

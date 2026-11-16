@@ -47,10 +47,14 @@ func plain(md string) string {
 
 // Text is the report for a terminal, coloured with ANSI escapes when color
 // is set: the ledger the Markdown is, a line per model with what it changes
-// and, under it, every reader it affects.
-func Text(r *Report, color bool) string {
+// and, under it, every reader it affects. With attention, only the models
+// that need it (see Ledger.Attention).
+func Text(r *Report, color, attention bool) string {
 	p := textPainter(color)
 	l := BuildLedger(r)
+	if attention {
+		l.Attention()
+	}
 	var b strings.Builder
 	b.WriteString(p.paint(plain(l.Title), ansiBold) + "\n")
 	// Green only when every model was checked and nothing is to fix.
@@ -73,7 +77,11 @@ func Text(r *Report, color bool) string {
 	if hint != "" {
 		b.WriteString(p.paint("⚠ "+plain(hint), ansiYellow) + "\n")
 	}
-	if len(l.Rows) == 0 {
+	switch {
+	case len(l.Rows) == 0 && l.Hidden > 0:
+		b.WriteString("\nNothing needs attention.\n" + p.paint(l.HiddenLine(), ansiDim) + "\n")
+		return b.String()
+	case len(l.Rows) == 0:
 		b.WriteString(p.paint("No table, view or incremental table changed.", ansiDim) + "\n")
 		return b.String()
 	}
@@ -120,6 +128,9 @@ func Text(r *Report, color bool) string {
 		}
 	}
 	var foot []string
+	if hidden := l.HiddenLine(); hidden != "" {
+		foot = append(foot, hidden)
+	}
 	if len(legend) > 0 {
 		foot = append(foot, strings.Join(legend, " · "))
 	}

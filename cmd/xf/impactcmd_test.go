@@ -79,17 +79,17 @@ func TestWriteReport(t *testing.T) {
 
 	t.Run("text on stdout", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := writeReport(&buf, "", report, false, false); err != nil {
+		if err := writeReport(&buf, "", report, false, false, false); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
-		if got, want := buf.String(), impact.Text(report, false); got != want {
+		if got, want := buf.String(), impact.Text(report, false, false); got != want {
 			t.Errorf("stdout got:\n%q\nwant:\n%q", got, want)
 		}
 	})
 
 	t.Run("coloured text on stdout", func(t *testing.T) {
 		var buf bytes.Buffer
-		if err := writeReport(&buf, "", report, false, true); err != nil {
+		if err := writeReport(&buf, "", report, false, true, false); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
 		if !strings.Contains(buf.String(), "\x1b[") {
@@ -100,10 +100,10 @@ func TestWriteReport(t *testing.T) {
 	t.Run("text on stdout and Markdown in the file, in new folders", func(t *testing.T) {
 		outPath := filepath.Join(t.TempDir(), "sub", "dir", "impact.md")
 		var buf bytes.Buffer
-		if err := writeReport(&buf, outPath, report, false, true); err != nil {
+		if err := writeReport(&buf, outPath, report, false, true, false); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
-		if got, want := buf.String(), impact.Text(report, true); got != want {
+		if got, want := buf.String(), impact.Text(report, true, false); got != want {
 			t.Errorf("stdout got:\n%q\nwant:\n%q", got, want)
 		}
 		if data, err := os.ReadFile(outPath); err != nil || string(data) != wantMd {
@@ -114,7 +114,7 @@ func TestWriteReport(t *testing.T) {
 	t.Run("JSON on stdout and in the file", func(t *testing.T) {
 		outPath := filepath.Join(t.TempDir(), "impact.json")
 		var buf bytes.Buffer
-		if err := writeReport(&buf, outPath, report, true, true); err != nil {
+		if err := writeReport(&buf, outPath, report, true, true, false); err != nil {
 			t.Fatalf("writeReport failed: %v", err)
 		}
 		if data, err := os.ReadFile(outPath); err != nil || string(data) != string(wantJSON) || buf.String() != string(wantJSON) {

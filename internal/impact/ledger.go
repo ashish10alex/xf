@@ -68,6 +68,10 @@ type Ledger struct {
 	Legend       []string
 	Notes        []string
 	ReadersTotal int
+	// Hidden is how many rows Attention left out.
+	Hidden int
+
+	every []LedgerReader // Readers before the cap
 }
 
 // Marks are the rows' marks in the Markdown, by severity or kind.
@@ -540,11 +544,8 @@ func BuildLedger(r *Report) Ledger {
 	// still to fix first).
 	slices.SortStableFunc(every, func(a, b LedgerReader) int { return a.Row - b.Row })
 
-	l := Ledger{Rows: rows, ReadersTotal: len(every)}
-	l.Readers = every
-	if more := len(every) - MarkdownReaderList; more > 0 {
-		l.Readers, l.MoreReaders = every[:MarkdownReaderList], more
-	}
+	l := Ledger{Rows: rows}
+	l.setReaders(every)
 
 	fix, review, unknown, unchecked := 0, 0, 0, 0
 	for _, row := range rows {
@@ -605,15 +606,7 @@ func BuildLedger(r *Report) Ledger {
 	}
 	l.Context = strings.Join(ctx, " · ")
 
-	used := map[string]bool{}
-	for _, row := range rows {
-		used[row.Mark()] = true
-	}
-	for _, e := range legend {
-		if used[e.mark] {
-			l.Legend = append(l.Legend, e.mark+" "+e.text)
-		}
-	}
+	l.setLegend()
 	if len(every) > 0 {
 		l.Notes = append(l.Notes, "Readers come from Dataplex lineage of prod runs in the last 30 days, about 2 h behind. "+
 			"A changed reader that still names a dropped column is dry run against the branch's table: a pass means it no longer reads it.")
@@ -627,24 +620,107 @@ func BuildLedger(r *Report) Ledger {
 	return l
 }
 
+// setReaders lists every reader, capped at MarkdownReaderList.
+func (l *Ledger) setReaders(every []LedgerReader) {
+	l.every, l.Readers, l.ReadersTotal, l.MoreReaders = every, every, len(every), 0
+	if more := len(every) - MarkdownReaderList; more > 0 {
+		l.Readers, l.MoreReaders = every[:MarkdownReaderList], more
+	}
+}
+
+// setLegend explains the marks the rows use, in the legend's order.
+func (l *Ledger) setLegend() {
+	used := map[string]bool{}
+	for _, row := range l.Rows {
+		used[row.Mark()] = true
+	}
+	l.Legend = nil
+	for _, e := range legend {
+		if used[e.mark] {
+			l.Legend = append(l.Legend, e.mark+" "+e.text)
+		}
+	}
+}
+
+// NeedsAttention says the row is one to fix, review or look into: marked
+// 🚨, ⚠️ or ❔.
+func (r LedgerRow) NeedsAttention() bool {
+	switch r.Mark() {
+	case "🚨", "⚠️", "❔":
+		return true
+	}
+	return false
+}
+
+// Attention leaves out the rows that need no attention (see
+// NeedsAttention), counting them in Hidden, and the readers of those rows.
+// The rows left are numbered afresh; the summary and context still speak
+// of every model.
+func (l *Ledger) Attention() {
+	number := map[int]int{}
+	var rows []LedgerRow
+	for _, row := range l.Rows {
+		if !row.NeedsAttention() {
+			l.Hidden++
+			continue
+		}
+		number[row.Number] = len(rows) + 1
+		row.Number = len(rows) + 1
+		rows = append(rows, row)
+	}
+	var every []LedgerReader
+	for _, e := range l.every {
+		if n, ok := number[e.Row]; ok {
+			e.Row = n
+			every = append(every, e)
+		}
+	}
+	l.Rows = rows
+	l.setReaders(every)
+	l.setLegend()
+}
+
+// HiddenLine says how many models Attention left out, "" when none.
+func (l Ledger) HiddenLine() string {
+	if l.Hidden == 0 {
+		return ""
+	}
+	return "Not shown: " + plural(l.Hidden, "more model") + ", which keep their columns, are new, or have nothing reading what they change."
+}
+
 // Markdown is the report for a pull request: a title and summary, then one
 // row per model with what it changes and who that affects, then every
 // reader.
-func Markdown(r *Report) string {
+func Markdown(r *Report) string { return markdown(r, false) }
+
+// AttentionMarkdown is Markdown with only the rows that need attention
+// (see Ledger.Attention).
+func AttentionMarkdown(r *Report) string { return markdown(r, true) }
+
+func markdown(r *Report, attention bool) string {
 	l := BuildLedger(r)
+	if attention {
+		l.Attention()
+	}
 	lines := []string{"### " + l.Title, "", "**" + l.Summary + "** " + l.Context}
-	if explain := explanation(r, len(l.Rows)); explain != "" {
+	if explain := explanation(r, len(l.Rows)+l.Hidden); explain != "" {
 		lines = append(lines, "", explain)
 	}
-	if len(l.Rows) == 0 {
+	switch {
+	case len(l.Rows) == 0 && l.Hidden > 0:
+		lines = append(lines, "", "Nothing needs attention.", "", "<sub>"+l.HiddenLine()+"</sub>")
+	case len(l.Rows) == 0:
 		lines = append(lines, "", "No table, view or incremental table changed.")
-	} else {
+	default:
 		// Bare numbers: #1 would link to issue 1 on GitHub and GitLab.
 		lines = append(lines, "", "| # | | Model | What changed | Who is affected |", "| --: | :-: | --- | --- | --- |")
 		for _, row := range l.Rows {
 			lines = append(lines, fmt.Sprintf("| %d | %s | %s | %s | %s |", row.Number, row.Mark(), row.Model, row.Changed, strings.Join(row.Affected, "<br>")))
 		}
 		lines = append(lines, "", "<sub>"+strings.Join(l.Legend, " · ")+"</sub>")
+		if hidden := l.HiddenLine(); hidden != "" {
+			lines = append(lines, "", "<sub>"+hidden+"</sub>")
+		}
 	}
 	if l.ReadersTotal > 0 {
 		lines = append(lines, "", fmt.Sprintf("<details><summary>Every reader (%d)</summary>", l.ReadersTotal), "",

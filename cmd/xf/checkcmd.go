@@ -36,6 +36,16 @@ type checkFlags struct {
 	codequality string
 	// preflight runs the probes alone.
 	preflight bool
+	// attention filters the Markdown printed or written to output, not
+	// the comment.
+	attention bool
+}
+
+// printed are the options of the report printed or written to --output.
+func (cf checkFlags) printed() check.Options {
+	o := cf.opts
+	o.Attention = cf.attention
+	return o
 }
 
 // runCheck checks the branch's column impact and query cost in one report
@@ -58,6 +68,7 @@ func runCheck(args []string) int {
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of Markdown")
 	comment := fs.Bool("comment", false, "post the report on the pull request (merge request) as one comment, edited on each push; in GitHub Actions or GitLab CI")
 	codequality := fs.String("codequality", "", "also write the findings as a GitLab Code Quality report to `path`")
+	attention := fs.Bool("attention", false, "list only the models and actions that need a look in the Markdown it prints or writes to --output, as xf impact --attention and xf cost --attention do (a run growing by --quiet-under or more needs one); the --comment stays whole")
 	preflight := fs.Bool("preflight", false, "only probe what the checks need (tools, git history, prod settings, Google access, the token), print the checklist, and exit 0, or 2 when something stops them")
 	commandUsage(fs, "xf check [flags]", `Checks the column impact and the query cost of the actions this branch
 changes, as xf impact and xf cost do, in one report for a pull request:
@@ -80,7 +91,10 @@ or --comment couldn't comment (the checks run first).
 	if err == nil && fs.NArg() > 0 {
 		err = fmt.Errorf("unexpected arguments: %v (see xf check --help)", fs.Args())
 	}
-	cf := checkFlags{pushed: *pushed, output: *output, asJSON: *asJSON, comment: *comment, codequality: *codequality, preflight: *preflight}
+	cf := checkFlags{pushed: *pushed, output: *output, asJSON: *asJSON, comment: *comment, codequality: *codequality, preflight: *preflight, attention: *attention}
+	if err == nil && *attention && *asJSON {
+		err = errors.New("--attention can't be used with --json, which has every model and action")
+	}
 	cf.opts.Cost.USDPerTiB = *usdPerTiB
 	if err == nil {
 		cf.opts.FailOn, cf.opts.Gate, err = parseFailOn(*failOn)
@@ -181,7 +195,7 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	}
 	if r.Preflight.Stops() {
 		if cf.output != "" {
-			if err := writeCheck(os.Stdout, cf.output, r, cf.opts, cf.asJSON); err != nil {
+			if err := writeCheck(os.Stdout, cf.output, r, cf.printed(), cf.asJSON); err != nil {
 				return 0, err
 			}
 		}
@@ -247,7 +261,7 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	}
 
 	if !r.Neither() {
-		if err := writeCheck(os.Stdout, cf.output, r, cf.opts, cf.asJSON); err != nil {
+		if err := writeCheck(os.Stdout, cf.output, r, cf.printed(), cf.asJSON); err != nil {
 			return 0, err
 		}
 		notes := check.Notes(r, cf.opts, gitSource{root: root, mergeBase: mergeBase(r)}, prefix)

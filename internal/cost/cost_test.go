@@ -868,3 +868,31 @@ func TestExplanation(t *testing.T) {
 		t.Errorf("Explanation without a comparison = %q, want \"\"", got)
 	}
 }
+
+// With Attention, only the actions that need a look are listed: one not
+// estimated, one missing a partition filter, or one scanning GrowthOver
+// more than at the merge-base (all of it, when new). The total still
+// counts every action.
+func TestAttentionListsOnlyWhatNeedsALook(t *testing.T) {
+	got := Text(testReport(), Options{Attention: true})
+	want := `4 changed actions in feat/v2 vs origin/main @ abc1234 (working tree)
+⚠ marts.fct_order_items  ≤ 4.20 TiB  $26.25  +4.20 TiB (+$26.23)  (was 3.00 GiB · $0.018)  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
+✓ marts.dim_customers      1.80 GiB  $0.011  new
+? marts.load             not estimated: BigQuery gives no estimate for a script
+Not shown: 1 more action, estimated with partition filters and scanning less than 1.00 GiB more than at the merge-base; the total counts it.
+────────────────────────────────────────────────────────────
+Total scanned: ≤ 4.20 TiB | Estimated cost: ≤ $26.26
+`
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	o := Options{Attention: true, GrowthOver: 2 * gib}
+	md := Markdown(testReport(), o)
+	if strings.Contains(md, "dim_customers") || strings.Contains(md, "stg_pageviews") || !strings.Contains(md, "fct_order_items") ||
+		!strings.Contains(md, "Not shown: 2 more actions, estimated with partition filters and scanning less than 2.00 GiB") || !strings.Contains(md, "load") {
+		t.Errorf("Markdown with attention over 2 GiB:\n%s", md)
+	}
+	if full := Markdown(testReport(), Options{}); !strings.Contains(full, "stg_pageviews") || strings.Contains(full, "Not shown") {
+		t.Errorf("Markdown without attention:\n%s", full)
+	}
+}
