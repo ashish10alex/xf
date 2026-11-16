@@ -94,7 +94,7 @@ var legend = []struct{ mark, text string }{
 	{"🚨", "a column or table something still reads is gone"},
 	{"⚠️", "a column something reads changes type"},
 	{"❔", "not checked, or its readers couldn't be looked up"},
-	{"ℹ️", "changed, but nothing reads it any more"},
+	{"ℹ️", "changed, but nothing reads it any more, or the base branch already changes it"},
 	{"🔁", "renamed on this branch"},
 	{"🆕", "new on this branch"},
 	{"✅", "keeps every column"},
@@ -685,7 +685,10 @@ func (l Ledger) HiddenLine() string {
 	if l.Hidden == 0 {
 		return ""
 	}
-	return "Not shown: " + plural(l.Hidden, "more model") + ", which keep their columns, are new, or have nothing reading what they change."
+	if l.Hidden == 1 {
+		return "Not shown: 1 more model, which keeps its columns, is new, or changes only what nothing reads or the base branch already changes."
+	}
+	return "Not shown: " + plural(l.Hidden, "more model") + ", which keep their columns, are new, or change only what nothing reads or the base branch already changes."
 }
 
 // Markdown is the report for a pull request: a title and summary, then one

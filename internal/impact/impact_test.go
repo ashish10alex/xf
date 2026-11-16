@@ -418,8 +418,8 @@ func TestMarkdownIsALedgerOfModels(t *testing.T) {
 			t.Errorf("orders row lacks %q:\n%s", want, orders)
 		}
 	}
-	if !slices.Contains(lines, "<sub>🚨 a column or table something still reads is gone · ℹ️ changed, but nothing reads it any more · ❔ not checked, or its readers couldn't be looked up · ✅ keeps every column</sub>") &&
-		!slices.Contains(lines, "<sub>🚨 a column or table something still reads is gone · ❔ not checked, or its readers couldn't be looked up · ℹ️ changed, but nothing reads it any more · ✅ keeps every column</sub>") {
+	if !slices.Contains(lines, "<sub>🚨 a column or table something still reads is gone · ℹ️ changed, but nothing reads it any more, or the base branch already changes it · ❔ not checked, or its readers couldn't be looked up · ✅ keeps every column</sub>") &&
+		!slices.Contains(lines, "<sub>🚨 a column or table something still reads is gone · ❔ not checked, or its readers couldn't be looked up · ℹ️ changed, but nothing reads it any more, or the base branch already changes it · ✅ keeps every column</sub>") {
 		t.Errorf("legend of the marks used:\n%s", strings.Join(lines, "\n"))
 	}
 	every := slices.Index(lines, "<details><summary>Every reader (11)</summary>")

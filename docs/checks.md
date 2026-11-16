@@ -14,7 +14,7 @@ Rows are numbered down the left, and a collapsed "Every reader" table follows, e
 On the `--web` page the number is a link to its row.
 The numbers are positions in that report: another check may number the same model differently.
 They are bare digits, since `#1` would link to issue 1 on GitHub and GitLab.
-Each row is marked: 🚨 a column or table something still reads is gone, ⚠️ a column something reads changes type, ❔ not checked or its readers couldn't be looked up, ℹ️ changed but nothing reads it any more, 🔁 renamed, 🆕 new, ✅ keeps every column.
+Each row is marked: 🚨 a column or table something still reads is gone, ⚠️ a column something reads changes type, ❔ not checked or its readers couldn't be looked up, ℹ️ changed but nothing reads it any more or the base branch already changes it, 🔁 renamed, 🆕 new, ✅ keeps every column.
 The terminal draws the same ledger, with words for the marks.
 
 A reader this branch changes that still names a dropped column may only name it: as an alias of a new column, say.

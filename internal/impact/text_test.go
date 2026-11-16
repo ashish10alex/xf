@@ -107,7 +107,7 @@ func TestTextWithAttentionKeepsWhatNeedsIt(t *testing.T) {
 		"1 to fix before merging. 5 models compared with production schemas",
 		"FIX  orders  drops discount, note; retypes amount (FLOAT64 → NUMERIC)\n",
 		"?    ops     not checked: operation: a dry run of a script has no schema\n\n",
-		"Not shown: 3 more models, which keep their columns, are new, or have nothing reading what they change.\n" +
+		"Not shown: 3 more models, which keep their columns, are new, or change only what nothing reads or the base branch already changes.\n" +
 			"FIX: a column or table something still reads is gone · ?: not checked",
 	} {
 		if !strings.Contains(text, want) {
@@ -121,7 +121,7 @@ func TestTextWithAttentionKeepsWhatNeedsIt(t *testing.T) {
 	}
 
 	ok := &Report{ChangedCount: 1, Safe: []Table{{Table: "p.marts.daily", Type: "view", Columns: []Column{}}}}
-	if text := Text(ok, false, true); !strings.Contains(text, "\nNothing needs attention.\nNot shown: 1 more model,") {
+	if text := Text(ok, false, true); !strings.Contains(text, "\nNothing needs attention.\nNot shown: 1 more model, which keeps its columns, is new, or changes only") {
 		t.Errorf("all left out:\n%s", text)
 	}
 	if text := Text(&Report{}, false, true); !strings.Contains(text, "No table, view or incremental table changed.") {
