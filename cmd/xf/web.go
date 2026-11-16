@@ -294,6 +294,12 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 		return editorOpener(client.ShowDocument, nil, ed.get(), root)(file, line)
 	}
 	p := &web.Project{Deps: deps, Close: client.Close, Editor: ed.hook(), Warehouse: lazyClient()}
+	if d, ok := b.(*dbt.Backend); ok {
+		// A dbt project may build in Databricks (ADR 0042): xf web checks
+		// it on its SQL warehouse when asked.
+		pw := newProjectWarehouse(root, d.Target, func() (config.Loaded, error) { return sf.load(root) })
+		p.Databricks = pw.webDatabricks()
+	}
 	if d, ok := b.(dataform.Backend); ok && d.Bin == "" {
 		// Opened without the CLI (openWebBackend): the page says how to
 		// install it, and compiles again once it is on PATH.

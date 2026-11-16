@@ -21,6 +21,7 @@ type manifest struct {
 	Metadata struct {
 		DbtVersion  string `json:"dbt_version"`
 		ProjectName string `json:"project_name,omitempty"`
+		AdapterType string `json:"adapter_type,omitempty"`
 	} `json:"metadata"`
 	Nodes     map[string]node   `json:"nodes"`
 	Sources   map[string]node   `json:"sources"`
@@ -215,6 +216,7 @@ func (m *manifest) graph() (*project.Graph, error) {
 	g.Errors = m.Errors
 	g.Notice = m.Notice
 	g.Package = m.Metadata.ProjectName
+	g.Warehouse = m.Metadata.AdapterType
 	maps.DeleteFunc(m.Macros, func(_ string, mc macro) bool { return slices.Contains(builtinPackages, mc.PackageName) })
 	for _, id := range slices.Sorted(maps.Keys(m.Macros)) {
 		mc := m.Macros[id]

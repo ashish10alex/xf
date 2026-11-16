@@ -14,6 +14,10 @@ var ErrAuth = errors.New("no valid Google credentials")
 // AuthHint tells the user how to fix ErrAuth.
 const AuthHint = "run `gcloud auth application-default login`"
 
+// ErrNoWarehouse means a warehouse that runs queries on compute the user
+// picks (a Databricks SQL warehouse) has none picked yet.
+var ErrNoWarehouse = errors.New("no SQL warehouse chosen")
+
 // APIError is an error response from a warehouse's API other than one
 // ErrAuth stands for.
 type APIError struct {

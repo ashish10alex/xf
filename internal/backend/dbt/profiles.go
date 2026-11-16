@@ -1,6 +1,7 @@
 package dbt
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -22,12 +23,32 @@ type Profile struct {
 }
 
 // Target is one of a profile's outputs: where a compile with it builds.
-// Database is BigQuery's project and Schema its dataset; "" when the
-// output doesn't say, or says with Jinja xf doesn't read.
+// Database is BigQuery's project or Databricks' catalog and Schema the
+// dataset or schema; "" when the output doesn't say, or says with Jinja xf
+// doesn't read.
 type Target struct {
 	Name     string `json:"name"`
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
+	// Type is the adapter, as dbt names it: bigquery, databricks.
+	Type string `json:"type,omitempty"`
+	// Host and HTTPPath are a Databricks output's workspace and SQL
+	// warehouse (/sql/1.0/warehouses/<id>), and Token its personal access
+	// token, never sent to a page.
+	Host     string `json:"host,omitempty"`
+	HTTPPath string `json:"httpPath,omitempty"`
+	Token    string `json:"-"`
+}
+
+// Find is the target named name, or the profile's default for "".
+func (p Profile) Find(name string) (Target, bool) {
+	name = cmp.Or(name, p.Default)
+	for _, t := range p.Targets {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return Target{}, false
 }
 
 // ReadProfile reads the profile of the project at root from the
@@ -69,6 +90,17 @@ func ReadProfile(root string, getenv func(string) string) (Profile, error) {
 		return p, nil
 	}
 	return p, errors.New("no profiles.yml found")
+}
+
+// TargetOf is the target the project at root compiles with: target, else
+// $DBT_TARGET, else the profile's default; false when the profile can't be
+// read or has no such target.
+func TargetOf(root, target string, getenv func(string) string) (Target, bool) {
+	p, err := ReadProfile(root, getenv)
+	if err != nil {
+		return Target{}, false
+	}
+	return p.Find(cmp.Or(target, getenv("DBT_TARGET")))
 }
 
 var profileRE = regexp.MustCompile(`(?m)^profile:\s*["']?([^"'\s#]+)`)
@@ -133,10 +165,18 @@ func parseProfile(text string, p *Profile, getenv func(string) string) bool {
 					for _, f := range children(lines, o) {
 						v := scalar(lines[f].value, getenv)
 						switch lines[f].key {
-						case "project", "database":
+						case "project", "database", "catalog":
 							t.Database = v
 						case "dataset", "schema":
 							t.Schema = v
+						case "type":
+							t.Type = v
+						case "host":
+							t.Host = v
+						case "http_path":
+							t.HTTPPath = v
+						case "token":
+							t.Token = v
 						}
 					}
 					p.Targets = append(p.Targets, t)

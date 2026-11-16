@@ -745,6 +745,9 @@ async function resync() {
 export function setState(st, first) {
   const prev = S.state;
   S.state = st;
+  // A compile can change what the project can do: its manifest says the
+  // warehouse, where the dbt target stood in (ADR 0042).
+  if (st.caps) S.caps = st.caps;
   if (st.compiling && (!prev || !prev.compiling)) {
     S.compileStarted = Date.now();
     if (prev) { readGit(); readBranch(); }
@@ -1217,11 +1220,33 @@ function copyPath(ref) {
   S.copiedRel = ref.id;
 }
 
+// tablesSite is where u opens a table: Databricks' Catalog Explorer or
+// the BigQuery console.
+export const tablesSite = () => S.caps.warehouse === 'databricks' ? 'Catalog Explorer' : 'BigQuery';
+
 function openTable(ref) {
   if (!ref) { say('no action selected'); return; }
-  if (!ref.consoleUrl) { say('u opens a table or view in BigQuery; ' + ref.id + ' has none'); return; }
+  if (!ref.consoleUrl) { say('u opens a table or view in ' + tablesSite() + '; ' + ref.id + ' has none'); return; }
   openLink(ref.consoleUrl);
-  say('opening ' + ref.id + ' in BigQuery');
+  say('opening ' + ref.id + ' in ' + tablesSite());
+}
+
+// checkModel checks the selected model on the Databricks SQL warehouse,
+// which starts it when it is stopped (ADR 0042); the answer comes in its
+// details and columns. With no warehouse chosen, it asks for one first.
+export async function checkModel() {
+  if (!S.caps.check) { say('K checks a Databricks model; this project dry runs on its own'); return; }
+  const v = S.view;
+  if (!v) { say('no model selected'); return; }
+  const r = await post('/api/check', { id: v.id });
+  if (r.kind === 'warehouse') { openWarehousePicker(); return; }
+  say(r.ok ? 'checking ' + v.label + ' on the SQL warehouse' : r.message);
+}
+
+// openWarehousePicker lists the workspace's SQL warehouses to choose the
+// one checks run on (databricks.js, loaded the first time).
+export function openWarehousePicker() {
+  import('./databricks.js').then((m) => m.openWarehousePicker());
 }
 
 // ---- panes ----
@@ -2001,6 +2026,10 @@ function commands() {
     if (kept) add(`Dependency inspector: go back to ${kept.name}`, '', () => import('./inspector.js').then((m) => m.openInspector()));
     if (v && (!kept || kept.model !== v.id)) add('Dependency inspector: filter and query this model\'s upstream tables', '', () => import('./inspector.js').then((m) => m.openInspector(v.id)));
   }
+  if (S.caps.check) {
+    if (v) add('Databricks: check the model on the SQL warehouse (starts it when stopped)', 'K', checkModel);
+    add('Databricks: choose the SQL warehouse checks run on', '', openWarehousePicker);
+  }
   if (S.caps.impact) add('Check: column impact of changes', 'I', openImpact);
   if (S.caps.cost) add('Check: query cost of changes', 'C', openCost);
   if (S.caps.defer) {
@@ -2010,7 +2039,7 @@ function commands() {
   if (v) {
     if (S.caps.open && v.file) add('Open: in editor', 'o', openInEditor);
     if (S.caps.editor) add('Open: choose the editor o uses', '', () => openEditorPicker(null, false));
-    if (v.consoleUrl) add('Open: in BigQuery', 'u', () => openTable(v));
+    if (v.consoleUrl) add('Open: in ' + tablesSite(), 'u', () => openTable(v));
     add('Copy: `table` name', 'y', () => copyTarget(v));
   }
   // The paths are of the file the source pane shows, a file with no
@@ -2460,6 +2489,7 @@ export function handleKey(k) {
       return false; // its own input and buttons
     case 'deferAsk': return deferAskKey(k);
     case 'watch': return false; // its own input
+    case 'dbxWarehouse': return hooks.dbxKey ? hooks.dbxKey(k) : true;
     case 'projects': pickerKey(k); return true;
     case 'changed': changedKey(k); return true;
     case 'errors': return errorsKey(k);
@@ -2541,6 +2571,7 @@ export function handleKey(k) {
     case 'T': openTags(); return true;
     case 'I': openImpact(); return true;
     case 'C': openCost(); return true;
+    case 'K': checkModel(); return true;
     case 'd': toggleFlag('deps'); return true;
     case 'D': toggleFlag('dependents'); return true;
     case 'f': toggleFlag('full'); return true;

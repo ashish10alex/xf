@@ -26,6 +26,12 @@ func (t Target) ID() ActionID {
 	return ActionID(t.Database + "." + t.Schema + "." + t.Name)
 }
 
+// Warehouses a Graph can be in.
+const (
+	BigQuery   = "bigquery"
+	Databricks = "databricks"
+)
+
 // ConsoleURL opens the table or view in the BigQuery console.
 func (t Target) ConsoleURL() string {
 	return fmt.Sprintf("https://console.cloud.google.com/bigquery?project=%s&ws=!1m5!1m4!4m3!1s%s!2s%s!3s%s",
@@ -269,12 +275,26 @@ type Graph struct {
 	// package then name. Both are empty for Dataform.
 	Package string
 	Macros  []Macro
+	// Warehouse is the warehouse the project builds in, as dbt names its
+	// adapter (BigQuery, Databricks, …); "" when the compile doesn't say,
+	// as Dataform's doesn't: Dataform builds in BigQuery alone (ADR 0042).
+	Warehouse string
 	// JSON is the compile result the graph was parsed from, so it can be
 	// sent to another process and parsed there (see backend.Backend.Parse).
 	JSON []byte
 
 	deps       map[ActionID][]ActionID
 	dependents map[ActionID][]ActionID
+}
+
+// WarehouseOr is the warehouse g builds in: its own, else fallback (a dbt
+// target's type, which stands in before a compile says), else BigQuery. g
+// may be nil.
+func (g *Graph) WarehouseOr(fallback string) string {
+	if g != nil && g.Warehouse != "" {
+		return g.Warehouse
+	}
+	return cmp.Or(fallback, BigQuery)
 }
 
 // NewGraph builds a graph from a backend's actions. The first action with

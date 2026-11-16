@@ -4,8 +4,9 @@
 // that callers type-assert, as backend.Runner is for backends: Coster,
 // ViewWriter and JobLister.
 //
-// BigQuery (internal/bigquery) is the only implementation. Names follow it:
-// a TableRef's Project and Dataset are a catalog and schema elsewhere.
+// BigQuery (internal/bigquery) and Databricks (internal/databricks)
+// implement it. Names follow BigQuery: a TableRef's Project and Dataset are
+// a catalog and schema elsewhere.
 package warehouse
 
 import (
@@ -42,6 +43,14 @@ type Warehouse interface {
 	// DefaultProject is the project queries are billed to when nothing
 	// else names one, "" when the credentials name none.
 	DefaultProject() string
+}
+
+// Waker is a warehouse that bills while it runs, as a Databricks SQL
+// warehouse does: a Check or a query starts it when it is stopped. xf checks
+// on such a warehouse only when asked (ADR 0042), and says when it starts.
+type Waker interface {
+	// Running says whether the warehouse is up, without starting it.
+	Running(ctx context.Context) (bool, error)
 }
 
 // Coster is a warehouse that bills a query by the bytes it scans, which its

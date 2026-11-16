@@ -583,7 +583,7 @@ func (p *projectState) sourceRefs(w http.ResponseWriter, r *http.Request) {
 			v.Kind = t.Action.Kind.String()
 		}
 		if v.HasTable && v.Project != "" {
-			v.ConsoleURL = t.Target.ConsoleURL()
+			v.ConsoleURL = p.tableURL(t.Target)
 		}
 		refs = append(refs, v)
 	}
@@ -858,7 +858,8 @@ func (p *projectState) sourceDiagnostics(w http.ResponseWriter, r *http.Request)
 		return os.ReadFile(name)
 	}
 	ds := diagnose.Compile(p.deps.Root, p.tool, errs, read)[abs]
-	if len(ds) == 0 && p.deps.DryRun != nil && g != nil {
+	// A Databricks project is checked only when asked, never on a save.
+	if len(ds) == 0 && p.deps.DryRun != nil && g != nil && !p.databricks() {
 		ctx, cancel := context.WithTimeout(r.Context(), sourceDryRunTimeout)
 		defer cancel()
 		deferred := p.deferredFile(ctx, g, file)

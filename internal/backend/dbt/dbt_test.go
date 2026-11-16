@@ -190,6 +190,22 @@ func TestParseRoundTrip(t *testing.T) {
 	}
 }
 
+// The manifest's adapter is the graph's warehouse (ADR 0042), and goes
+// with the graph to another process.
+func TestParseWarehouse(t *testing.T) {
+	g, err := (&Backend{}).Parse([]byte(`{"metadata": {"dbt_version": "2.0.9", "adapter_type": "databricks"}, "nodes": {}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := (&Backend{}).Parse(g.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Warehouse != project.Databricks || again.Warehouse != project.Databricks {
+		t.Errorf("warehouse = %q, then %q; want databricks", g.Warehouse, again.Warehouse)
+	}
+}
+
 func TestBrokenFixtures(t *testing.T) {
 	for _, f := range []string{"dbt-v2-broken.json", "dbt-core-broken.json", "dbt-v2-broken-windows.json", "dbt-core-broken-windows.json"} {
 		t.Run(f, func(t *testing.T) {

@@ -131,7 +131,9 @@ func (s *server) closed(path string) {
 // round has been superseded.
 func (s *server) dryRun(round context.Context, file string) {
 	g := s.currentGraph()
-	if s.cfg.DryRun == nil || g == nil || !isProjectFile(s.root, file, s.dbt) {
+	// A Databricks project's checks bill a SQL warehouse, so they run only
+	// when asked, in xf web (ADR 0042), never on a save.
+	if s.cfg.DryRun == nil || g == nil || g.Warehouse == project.Databricks || !isProjectFile(s.root, file, s.dbt) {
 		return
 	}
 	src, err := os.ReadFile(file)

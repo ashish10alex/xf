@@ -38,6 +38,9 @@ func (p *projectState) formatText(w http.ResponseWriter, r *http.Request) {
 	}
 	root := p.deps.Root
 	o := format.Options{Root: root, Dir: root}
+	if p.databricks() {
+		o.Dialect = "databricks"
+	}
 	run := format.SQLX
 	switch {
 	case req.Scratch:

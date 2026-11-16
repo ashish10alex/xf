@@ -413,7 +413,7 @@ function ColumnsBody() {
   const v = S.view;
   const c = S.cols;
   if (!v) return S.plainFile ? html`<${PlainNote} />` : html`<div class="dim pad">no action selected</div>`;
-  if (v.columns.reason) return html`<div class=${'pad ' + (v.columns.failed ? 'error' : 'dim')}>${v.columns.reason}</div>`;
+  if (v.columns.reason) return html`<div class=${'pad ' + (v.columns.failed ? 'error' : 'dim')}>${v.columns.reason}${S.caps.check && html` <button class="link" onMouseDown=${(e) => { e.preventDefault(); st.checkModel(); }}>Check (K)</button>`}</div>`;
   const fields = st.filteredColumns();
   const total = v.columns.fields.length;
   return html`<div class="columns">
@@ -439,6 +439,7 @@ function ColumnsBody() {
       </div>
       <span class="dim col-count">${fields.length === total ? `${total} column${total === 1 ? '' : 's'}` : `${fields.length} of ${total}`}</span>
     </div>`}
+    ${v.columns.note && html`<div class="dim col-note">${v.columns.note}</div>`}
     <div class="table-scroll">
       <table class="grid">
         <thead><tr><th>Column</th><th>Type</th><th>Mode</th><th>Description</th></tr></thead>
@@ -945,7 +946,7 @@ function Footer() {
   const target = (ref) => {
     if (!ref) return [];
     const out = [];
-    if (ref.consoleUrl) out.push(['u', 'BigQuery']);
+    if (ref.consoleUrl) out.push(['u', st.tablesSite()]);
     out.push([ref.file ? 'y/Y' : 'y', ref.file ? 'copy name/path' : 'copy name']);
     return out;
   };
@@ -1224,11 +1225,12 @@ function helpSections() {
   if (c.run) run.push(['T', 'run tags']);
   if (c.impact) run.push(['I', 'column impact of changes']);
   if (c.cost) run.push(['C', 'query cost of changes']);
+  if (c.check) run.push(['K', 'check the model on the Databricks SQL warehouse (starts it when stopped)']);
   if (c.run) run.push(['d', 'deps'], ['D', 'dependents'], ['f', 'full refresh']);
   if (c.api) run.push(['a', 'run via Dataform API']);
   const panes = [[st.onMac ? '⌘b' : 'ctrl+b', 'show/hide the file tree'], ['ctrl+g', 'show/hide source control'], [st.projectsKey, 'show/hide open projects'], [st.revealKey, 'show the open file in the file tree'], [search.searchKey + (st.onMac ? '/ctrl+shift+f' : ''), 'search in files'], ['F4/shift+F4', 'next/prev search match'], ['ctrl+0', 'file tree / source control / search'], ['ctrl+1', 'source (left)'], ['ctrl+2', 'inspector / sql (right)'], ['ctrl+3', 'log (bottom)'], [st.rightKey(), 'show/hide pane 2 (right)'],
     ['z', 'zoom pane'], ['esc', 'unzoom'], ['O', 'lineage tab (again: the sql)'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the bottom panel, on its last tab'], [st.termKeyLabel, 'show/hide terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
-  const target = [['u', 'open in BigQuery'], ['y', 'copy `table` name'], ['Y', 'copy file path (again: absolute)']];
+  const target = [['u', 'open in ' + st.tablesSite()], ['y', 'copy `table` name'], ['Y', 'copy file path (again: absolute)']];
   const log = [['g', 'top'], ['G', 'bottom'], ['u', 'open run in browser'], ['y', 'copy the run\'s command for a terminal']];
   if (c.history || c.terminal) log.push([(st.onMac ? '⌥⌘→/t' : 'ctrl+alt+→/t'), 'next tab: ' + [...(c.history ? ['log', 'jobs', 'history'] : ['log']), ...(c.terminal ? ['terminal'] : [])].join(', ') + (st.onMac ? ' (⌥⌘← back; from the terminal too)' : ' (ctrl+alt+← back; from the terminal too)')]);
   if (c.history) log.push(['enter', 'open BigQuery job'], ['/', 'search the jobs (esc clears)'], ['S', 'sort the jobs by the next column'], ['X', 'clear history']);
@@ -1973,6 +1975,7 @@ function Overlay() {
     case 'gitOutput': return html`<${GitOutput} />`;
     case 'buffers': return html`<${BuffersOverlay} />`;
     case 'python': return st.hooks.pythonOverlay ? st.hooks.pythonOverlay() : null;
+    case 'dbxWarehouse': return st.hooks.dbxOverlay ? st.hooks.dbxOverlay() : null;
   }
   return null;
 }

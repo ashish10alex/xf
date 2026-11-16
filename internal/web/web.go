@@ -151,8 +151,11 @@ type Project struct {
 	// Editor changes the editor o opens files with; nil can't.
 	Editor *Editor
 	// Warehouse makes the client scratch queries run with; nil hides the
-	// Scratch view.
+	// Scratch view, as does a Databricks project.
 	Warehouse func(ctx context.Context) (warehouse.Warehouse, error)
+	// Databricks reaches the workspace of a dbt project that builds in
+	// Databricks (databricks.go); nil for one that can't.
+	Databricks *Databricks
 	// ScratchWarnGB and ScratchConfirmGB are the sizes of a scratch's dry
 	// run, in GiB, at which the page turns it amber, and red and asks
 	// before running; 0 uses the defaults.
@@ -869,15 +872,18 @@ type actionRef struct {
 	External bool `json:"external,omitempty"`
 	Unknown  bool `json:"unknown,omitempty"`
 	Changed  bool `json:"changed,omitempty"`
-	// ConsoleURL is its table's page in the BigQuery console, "" when it
-	// has none. An operation with hasOutput has one.
+	// ConsoleURL is its table's page in the BigQuery console, or
+	// Databricks' Catalog Explorer, "" when it has none. An operation with
+	// hasOutput has one.
 	ConsoleURL string `json:"consoleUrl,omitempty"`
 }
 
-func refOf(a *project.Action) actionRef {
+// refOf is a's row in a list: its table's link goes to the BigQuery
+// console, or for a Databricks project to Catalog Explorer.
+func (p *projectState) refOf(a *project.Action) actionRef {
 	url := ""
 	if hasOutputTable(a) {
-		url = a.Target.ConsoleURL()
+		url = p.tableURL(a.Target)
 	}
 	return actionRef{ConsoleURL: url, ID: a.ID, Label: strings.TrimPrefix(a.Target.Schema+"."+a.Target.Name, "."), Name: a.Target.Name,
 		Kind: a.Kind.String(), Short: a.Kind.Short(), File: a.FileName, Disabled: a.Disabled, Runnable: a.Runnable(),

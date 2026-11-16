@@ -13,6 +13,7 @@ into another project's `raw` dataset. To use another project, change
 | [`dataform`](dataform) | A Dataform project: declarations, views, a partitioned table, an incremental table, operations, assertions, JavaScript includes and generated actions |
 | [`dbt`](dbt) | The same project in dbt, under the same names, plus seeds, a snapshot, an ephemeral model, a materialized view, tests, an analysis and an exposure |
 | [`dbt-hooks`](dbt-hooks) | A dbt project with `on-run-start` and `on-run-end` hooks, which dbt v2 runs when it compiles, so xf only parses it |
+| [`dbt-databricks`](dbt-databricks) | A dbt project on Databricks, reading the `samples` catalog every workspace has: xf web checks its models on demand (ADR 0042). Outside the parity test; its `profiles.yml` reads the workspace and token from the environment |
 | [`dataform-broken`](dataform-broken), [`dbt-broken`](dbt-broken) | One bad `ref` each, to see compile errors |
 
 ```bash

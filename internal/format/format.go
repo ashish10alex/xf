@@ -12,6 +12,7 @@ package format
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -61,6 +62,9 @@ type Options struct {
 	Root string
 	// Config is a config file to use instead of the project's, or "".
 	Config string
+	// Dialect is sqlfluff's dialect: "" is bigquery, the warehouse of
+	// Dataform projects; a Databricks project's is databricks (ADR 0042).
+	Dialect string
 	// Run runs sqlfluff; nil runs the binary.
 	Run Runner
 }
@@ -275,7 +279,7 @@ func (s *session) part(ctx context.Context, p navigate.SQLPart) (string, error) 
 // back as a ParseError, with its position in text when locate asks for it
 // (that takes a second run of sqlfluff).
 func (s *session) format(ctx context.Context, text string, locate bool) (string, *ParseError, error) {
-	base := []string{"--dialect", "bigquery", "--templater", "raw", "--nocolor"}
+	base := []string{"--dialect", cmp.Or(s.o.Dialect, "bigquery"), "--templater", "raw", "--nocolor"}
 	args := append(append([]string{"format", "-"}, base...), s.args...)
 	stdout, stderr, code, err := s.run(ctx, args, text)
 	if err != nil {

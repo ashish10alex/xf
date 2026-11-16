@@ -111,6 +111,13 @@ type projectState struct {
 	scratchDirAbs                         string
 	scratchDefProject, scratchDefLocation string
 	standalone, startScratch              bool
+	// dbx reaches a Databricks project's workspace; nil for none. onDbx
+	// says the project builds in Databricks now, for links made without
+	// the lock.
+	dbx   *Databricks
+	onDbx atomic.Bool
+	// dbxCoster says the Databricks client prices queries (a Coster).
+	dbxCoster bool
 	// startCheck is the Checks page's tab the next page to start opens on.
 	startCheck string
 	// sourceAutosaveMs is how long the source pane waits after an edit
@@ -167,9 +174,12 @@ type projectState struct {
 // one comes.
 type dryEntry struct {
 	loading, done bool
-	at            time.Time
-	res           *warehouse.Check
-	err           error
+	// asked marks a Databricks check, which runs only when asked, and woke
+	// one that found the SQL warehouse stopped and so started it.
+	asked, woke bool
+	at          time.Time
+	res         *warehouse.Check
+	err         error
 }
 
 // stale says e's answer is old enough to ask again.
@@ -279,6 +289,7 @@ func (p *projectState) setState(st engine.State) {
 		}
 	}
 	p.st = st
+	p.onDbx.Store(p.databricksLocked())
 	v := p.stateViewLocked()
 	p.mu.Unlock()
 	p.hub.send("state", v)
@@ -292,7 +303,8 @@ func (p *projectState) setState(st engine.State) {
 // the engine is told to forget its own first; see follow).
 func (p *projectState) forgetFailedDryRuns() {
 	for k, e := range p.dry {
-		if e.done && e.err != nil && !e.loading {
+		// A Databricks check is asked again only by the user.
+		if e.done && e.err != nil && !e.loading && !e.asked {
 			delete(p.dry, k)
 		}
 	}
@@ -388,6 +400,9 @@ type stateView struct {
 	// applied, when it isn't.
 	Defer      bool   `json:"defer,omitempty"`
 	DeferError string `json:"deferError,omitempty"`
+	// Caps are what the project can do, which a compile can change: its
+	// manifest says the warehouse, where the dbt target stood in.
+	Caps capabilities `json:"caps"`
 }
 
 func (p *projectState) stateViewLocked() stateView {
@@ -395,7 +410,7 @@ func (p *projectState) stateViewLocked() stateView {
 	v := stateView{Compiling: st.Compiling, Reason: st.Reason, Started: st.Started, Compiles: st.Compiles,
 		CompiledAt: st.CompiledAt, Took: st.Took.Seconds(), Stale: st.Stale, Saved: st.Saved, Outdated: st.Outdated,
 		Partial: st.Partial, Focus: string(st.Focus), ImpactSig: st.ImpactSignature, Editor: p.lastEditor,
-		Defer: st.Defer, DeferError: p.def.err}
+		Defer: st.Defer, DeferError: p.def.err, Caps: p.capsLocked()}
 	if st.WatchErr != nil {
 		v.WatchErr = st.WatchErr.Error()
 	}
@@ -508,6 +523,34 @@ type capabilities struct {
 	// Inspector says the dependency inspector can dry run and run its
 	// queries (ADR 0033).
 	Inspector bool `json:"inspector"`
+	// Check says the project's models are checked when asked (K), not
+	// dry run on their own: a Databricks project (ADR 0042).
+	Check bool `json:"check,omitempty"`
+	// Warehouse is where the project builds: bigquery or databricks.
+	Warehouse string `json:"warehouse"`
+}
+
+// capsLocked is what the project can do now. A Databricks project hides
+// what its warehouse lacks (ADR 0042): cost, which needs a Coster, defer
+// to prod and lineage's source tables, which need the tables a check
+// reads, and, until their phases, impact, scratch queries and the
+// dependency inspector.
+func (p *projectState) capsLocked() capabilities {
+	d := p.deps
+	c := capabilities{
+		Run: d.StartRun != nil, API: d.StartAPIRun != nil, APIDefault: d.RunAPI && d.StartAPIRun != nil,
+		Changed: d.ChangedActions != nil, Impact: d.ColumnImpact != nil, Cost: d.QueryCost != nil,
+		Info: d.Info != nil, Open: d.Open != nil, Follow: d.Editor != nil, History: d.Runs != nil,
+		DryRun: d.DryRun != nil, Table: d.Table != nil, Editor: p.editor != nil, Scratch: p.warehouse != nil,
+		Branches: d.Branches != nil, Terminal: termSupported, Watch: d.WatchWorkflow != nil, Defer: p.deferCaps(),
+		Inspector: p.warehouse != nil && d.DryRun != nil && !p.standalone, Warehouse: project.BigQuery,
+	}
+	if p.databricksLocked() {
+		c.Warehouse, c.Check, c.DryRun = project.Databricks, true, false
+		c.Cost = c.Cost && p.dbxCoster
+		c.Impact, c.Defer, c.Scratch, c.Inspector = false, false, false, false
+	}
+	return c
 }
 
 type resumeView struct {
@@ -531,14 +574,7 @@ func (p *projectState) boot() *projectBoot {
 	return &projectBoot{
 		Root: d.Root, Name: cmp.Or(p.name, lastElem(d.Root)), Backend: p.tool, Target: d.Target, Sep: string(filepath.Separator),
 		DefaultBranch: d.DefaultBranch, Kinds: frontend.KindWords(p.tool), Notice: d.Notice,
-		Caps: capabilities{
-			Run: d.StartRun != nil, API: d.StartAPIRun != nil, APIDefault: d.RunAPI && d.StartAPIRun != nil,
-			Changed: d.ChangedActions != nil, Impact: d.ColumnImpact != nil, Cost: d.QueryCost != nil,
-			Info: d.Info != nil, Open: d.Open != nil, Follow: d.Editor != nil, History: d.Runs != nil,
-			DryRun: d.DryRun != nil, Table: d.Table != nil, Editor: p.editor != nil, Scratch: p.warehouse != nil,
-			Branches: d.Branches != nil, Terminal: termSupported, Watch: d.WatchWorkflow != nil, Defer: p.deferCaps(),
-			Inspector: p.warehouse != nil && d.DryRun != nil && !p.standalone,
-		},
+		Caps: p.capsLocked(),
 		Resume: resumeView{Selected: p.sess.Selected, Recent: append([]project.ActionID{}, p.sess.Recent...), File: lastFile,
 			Buffers: &buffersView{List: append([]buffer{}, p.bufs.List...), Next: p.bufs.Next}},
 		State:            p.stateViewLocked(),
@@ -643,6 +679,9 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 	route("POST /api/inspector/state", (*projectState).inspectorState)
 	route("POST /api/inspector/added", (*projectState).inspectorAdded)
 	route("POST /api/inspector/dryrun", (*projectState).inspectorDryRun)
+	route("POST /api/check", (*projectState).checkAction)
+	route("GET /api/databricks/warehouses", (*projectState).databricksWarehouses)
+	route("POST /api/databricks/warehouse", (*projectState).chooseDatabricksWarehouse)
 	route("POST /api/inspector/run", (*projectState).inspectorRun)
 	route("POST /api/inspector/cancel", (*projectState).inspectorCancel)
 	route("GET /api/inspector/presets", (*projectState).inspectorPresets)
@@ -790,7 +829,7 @@ func (p *projectState) find(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := cmp.Or(req.Limit, 500)
 	for _, a := range found[:min(len(found), limit)] {
-		ref := refOf(a)
+		ref := p.refOf(a)
 		ref.Changed = changed[a.ID]
 		v.Items = append(v.Items, ref)
 	}
@@ -845,6 +884,9 @@ type columnsView struct {
 	Fields []warehouse.Column `json:"fields"`
 	Reason string             `json:"reason,omitempty"`
 	Failed bool               `json:"failed,omitempty"`
+	// Note says where the columns came from, when that isn't a dry run:
+	// a Databricks check, or the built table in Unity Catalog.
+	Note string `json:"note,omitempty"`
 }
 
 // runPreview is what r would run with the page's toggles.
@@ -950,7 +992,7 @@ func (p *projectState) action(w http.ResponseWriter, r *http.Request) {
 	da := p.deferredLocked(a)
 	starts = append(starts, p.startLookupsLocked(g, dpane, ready)...)
 
-	v := actionView{actionRef: refOf(a), Target: string(a.ID), Schema: a.Target.Schema, HasIncremental: a.HasIncrementalVariant(),
+	v := actionView{actionRef: p.refOf(a), Target: string(a.ID), Schema: a.Target.Schema, HasIncremental: a.HasIncrementalVariant(),
 		SQLNote: p.sqlNoteLocked(a), Uncompiled: g.Notice != "", Anchor: anchor.ID}
 	if c := a.CanonicalTarget; c.Name != "" && c != a.Target {
 		v.Canonical = string(c.ID())
@@ -970,20 +1012,20 @@ func (p *projectState) action(w http.ResponseWriter, r *http.Request) {
 	v.Changed = changed[a.ID]
 	auth := false
 	for i, b := range pane {
-		ref := refOf(b)
+		ref := p.refOf(b)
 		ref.Changed = changed[b.ID]
 		details, failed := p.detailsLocked(g, dpane[i], incremental)
 		auth = auth || failed
 		v.Pane = append(v.Pane, paneAction{actionRef: ref, Details: details})
 	}
-	if auth {
+	if auth && !p.databricksLocked() {
 		v.Auth = "dry runs need Google credentials: " + warehouse.AuthHint + ", then c"
 	}
 	for _, d := range byLineageKind(g.Dependencies(a.ID)) {
-		v.Lineage.Up = append(v.Lineage.Up, refOf(d))
+		v.Lineage.Up = append(v.Lineage.Up, p.refOf(d))
 	}
 	for _, d := range byLineageKind(g.Dependents(a.ID)) {
-		v.Lineage.Down = append(v.Lineage.Down, refOf(d))
+		v.Lineage.Down = append(v.Lineage.Down, p.refOf(d))
 	}
 	v.Lineage.Up, v.Lineage.Down = nonNil(v.Lineage.Up), nonNil(v.Lineage.Down)
 	v.Columns = p.columnsLocked(g, da, incremental)
@@ -1129,7 +1171,8 @@ func (p *projectState) startLookupsLocked(g *project.Graph, actions []*project.A
 // yet (or an old one), returning what to run once the lock is let go.
 func (p *projectState) startDryRunsLocked(g *project.Graph, actions []*project.Action) []func() {
 	var starts []func()
-	if dry := p.deps.DryRun; dry != nil && p.st.Outdated == "" && g.Notice == "" {
+	// A Databricks project is checked only when asked (databricks.go).
+	if dry := p.deps.DryRun; dry != nil && p.st.Outdated == "" && g.Notice == "" && !p.databricksLocked() {
 		now := p.deps.Now()
 		for _, a := range actions {
 			proj, location := g.DryRunTarget(a)
@@ -1172,7 +1215,25 @@ func (p *projectState) detailsLocked(g *project.Graph, a *project.Action, increm
 	if c, ok := p.st.Changes.Find(a.ID); ok {
 		details = append(details, detail{Label: "changed", Value: c.ReasonsText() + " " + p.st.Changes.Comparison(), Tone: "warn"})
 	}
-	if p.deps.DryRun != nil {
+	if p.databricksLocked() {
+		proj, location := g.DryRunTarget(a)
+		for _, q := range a.DryRunQueries() {
+			d := detail{Label: q.Label, Dry: true, Tone: "dim"}
+			switch note := p.sqlNoteLocked(a); {
+			case g.Notice != "":
+				d.Value = "not compiled"
+			case note != "":
+				d.Value = note
+			default:
+				d = p.checkDetailLocked(p.dry[dryRunKey(proj, location, q.SQL)], q.Label)
+			}
+			d.Label = cmp.Or(d.Label, "check")
+			if q.Label != "" && (q.Label == "incremental") != incremental && d.Tone != "error" {
+				d.Tone = "dim"
+			}
+			details = append(details, d)
+		}
+	} else if p.deps.DryRun != nil {
 		proj, location := g.DryRunTarget(a)
 		for _, q := range a.DryRunQueries() {
 			e := p.dry[dryRunKey(proj, location, q.SQL)]
@@ -1255,9 +1316,20 @@ func (p *projectState) columnsLocked(g *project.Graph, a *project.Action, increm
 	why := func(reason string, failed bool) columnsView {
 		return columnsView{Fields: []warehouse.Column{}, Reason: reason, Failed: failed}
 	}
+	dbx := p.databricksLocked()
 	switch {
 	case a.Kind.External():
 		return p.externalColumnsLocked(a)
+	case dbx && g.Notice != "":
+		return why("not compiled: Databricks can't check this project's SQL", false)
+	case dbx && len(a.DryRunQueries()) == 0:
+		if e := p.tables[tableRefOf(a)]; e != nil && e.done && e.tbl != nil && len(e.tbl.Schema) > 0 {
+			v := p.describedLocked(a, e.tbl.Schema)
+			v.Note = "the built table's, from Unity Catalog"
+			return v
+		}
+		return why(a.Kind.String()+": nothing to check, so no columns", false)
+	case dbx:
 	case p.deps.DryRun == nil:
 		return why("no dry runs here, so no columns", false)
 	case g.Notice != "":
@@ -1277,6 +1349,9 @@ func (p *projectState) columnsLocked(g *project.Graph, a *project.Action, increm
 		return why("waiting for the compile…", false)
 	}
 	proj, location := g.DryRunTarget(a)
+	if dbx {
+		return p.checkColumnsLocked(a, p.dry[dryRunKey(proj, location, q.SQL)], p.tables[tableRefOf(a)])
+	}
 	if proj == "" {
 		return why("no project to dry run in", false)
 	}

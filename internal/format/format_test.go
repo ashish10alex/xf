@@ -273,6 +273,16 @@ func TestCommandLine(t *testing.T) {
 	if args := strings.Join(r3.args[0], " "); !strings.Contains(args, "--ignore-local-config --config /elsewhere/.sqlfluff") {
 		t.Errorf("config named: %q", args)
 	}
+
+	// A Databricks project's SQL is formatted in its own dialect.
+	r4 := &recorder{}
+	o.Run, o.Dialect = r4.run, "databricks"
+	if _, err := Query(context.Background(), []byte("select 1"), o); err != nil {
+		t.Fatal(err)
+	}
+	if args := strings.Join(r4.args[0], " "); !strings.Contains(args, "--dialect databricks") {
+		t.Errorf("databricks: %q", args)
+	}
 }
 
 func TestProjectConfigIsLookedForUpToTheRoot(t *testing.T) {

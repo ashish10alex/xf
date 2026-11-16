@@ -210,6 +210,7 @@ func openProject(fs *flag.FlagSet, sf *settingFlags, inNvim bool, root, name str
 	defer client.Close()
 
 	deps := projectDeps(root, name, b, settings, client)
+	hideDatabricks(&deps, b, root)
 	// Nobody types within half a second of starting xf, while the
 	// terminal answers its queries.
 	deps.StartupQuiet = 500 * time.Millisecond
@@ -676,10 +677,20 @@ func runServe(args []string) error {
 			return b.Watch(ctx, root, 300*time.Millisecond)
 		},
 	}
-	bq := lazyClient()
-	cfg.DryRun = dryRunner(bq)
-	cfg.Credentials = gcpauth.Generation
 	var eng *engine.Engine
+	// A dbt project may build in Databricks, whose checks xf runs only
+	// when asked: the engine's dry runs refuse there, while its table
+	// lookups read Unity Catalog.
+	pw := newProjectWarehouse(root, dbtTargetName(b), func() (config.Loaded, error) { return sf.load(root) })
+	pw.graph = func() *project.Graph {
+		if eng == nil {
+			return nil
+		}
+		return eng.State().Graph
+	}
+	bq := pw.bq
+	cfg.DryRun = dryRunner(pw.autoClient)
+	cfg.Credentials = gcpauth.Generation
 	// Impact and cost checks dry-run through the engine, once it is made,
 	// to share its cache.
 	engineDryRun := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
@@ -722,7 +733,7 @@ func runServe(args []string) error {
 		logger.Printf("not watching files: %v", err)
 	}
 	logger.Printf("serving %s %s project on %s", root, name, socket)
-	return remote.Serve(ctx, ln, remote.ServerConfig{Root: root, Engine: eng, Table: lazyTables(bq), Build: thisBuild, Log: logger})
+	return remote.Serve(ctx, ln, remote.ServerConfig{Root: root, Engine: eng, Table: lazyTables(pw.client), Build: thisBuild, Log: logger})
 }
 
 // addDataformEngine gives the engine what only Dataform projects have:

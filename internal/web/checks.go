@@ -582,6 +582,9 @@ func (p *projectState) errorsView(w http.ResponseWriter, r *http.Request) {
 	v.DryRun = nonNil(errs)
 	if auth {
 		v.Auth = "no credentials: " + warehouse.AuthHint
+		if p.databricksLocked() {
+			v.Auth = "no credentials: " + p.dbx.AuthHint
+		}
 	}
 	starts := p.retryOldFailuresLocked()
 	p.mu.Unlock()

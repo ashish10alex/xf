@@ -36,7 +36,7 @@ func (p *projectState) externalsLocked(g *project.Graph, a *project.Action) ([]e
 	}
 	rows := make([]externalRow, len(list))
 	for i, b := range list {
-		rows[i].actionRef = refOf(b)
+		rows[i].actionRef = p.refOf(b)
 		if !hasTable(b) || p.tables[tableRefOf(b)] == nil {
 			continue
 		}

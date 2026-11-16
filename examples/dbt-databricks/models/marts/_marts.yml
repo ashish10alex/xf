@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: One row an order, with its lines summed.
+    columns:
+      - name: order_id
+        description: The order's key in TPC-H.
+      - name: net_amount
+        description: What the order's lines come to after discounts.
+  - name: dim_customers
+    description: One row a customer, with when they ordered.
+    columns:
+      - name: orders
+        description: How many orders the customer placed.

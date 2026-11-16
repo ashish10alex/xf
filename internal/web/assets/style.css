@@ -556,6 +556,7 @@ body.v-resizing { cursor: col-resize; user-select: none; }
 }
 .col-search-clear:hover { color: var(--fg); background: var(--bg-2); }
 .col-count { font-size: 12px; white-space: nowrap; margin-left: auto; }
+.col-note { font-size: 12px; padding: 3px 10px; border-bottom: 1px solid var(--rule); }
 .table-scroll { overflow: auto; flex: 1; min-height: 0; }
 table.grid { border-collapse: collapse; width: 100%; }
 table.grid th {

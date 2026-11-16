@@ -52,3 +52,29 @@ Compile errors show against the file dbt names (`e`).
   It isn't asked for, as `prodCompilerOptions` is.
   A dbt v2 project with hooks is only parsed (see above), so it can't be checked.
   The TUI has no `I` in dbt projects.
+
+## Databricks
+
+A dbt project on the dbt-databricks adapter builds in Databricks ([ADR 0042](adr/0042-databricks-is-a-second-warehouse-for-dbt.md)).
+xf knows it from the compiled manifest's adapter, and before the first compile from the `type:` of the dbt target it compiles with.
+Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the warehouse is xf web's, and works differently, since a Databricks SQL warehouse bills while it runs.
+
+- **A model is checked only when you ask**: `K` in xf web, or the palette's *Databricks: check the model*.
+  The check runs `DESCRIBE QUERY` on the model's compiled query (its hooks left out) for the columns it returns, and `EXPLAIN` for its error.
+  A stopped warehouse is started by the check: the model's `check` line says `warehouse starting` while it waits, and `warehouse started` beside the result.
+  Nothing checks on a save, a compile or in the language server.
+- **A built table's columns show without asking**, from Unity Catalog, which wakes no warehouse; the columns tab says they are the built table's.
+  After a check, it shows the columns of the SQL as compiled instead.
+- `u` opens a table in Catalog Explorer.
+- Query cost (`C`), column impact (`I`), defer to prod, scratch queries and the dependency inspector are hidden for now.
+- The TUI shows browsing, lineage, compiles and runs, and says on its status line that dry runs, columns and cost are off.
+
+Where xf connects:
+
+- **The workspace** is the dbt target's `host`, else the `~/.databrickscfg` profile's, else `$DATABRICKS_HOST`.
+- **The SQL warehouse** is the `databricksWarehouse` setting (an ID or an HTTP path), else the dbt target's `http_path`.
+  When neither names one, or names it in Jinja xf doesn't read, the first check lists the workspace's warehouses to pick from and saves the pick to `.xf/config.json`.
+- **The token** is `$DATABRICKS_TOKEN`, else the dbt target's `token`, else the profile's `token`, else `databricks auth token --profile <profile>`, which refreshes an OAuth login (`databricks auth login --host <workspace>` first).
+  The profile is the `databricksProfile` setting, else the `~/.databrickscfg` profile whose host is the dbt target's, else `DEFAULT`.
+
+`examples/dbt-databricks` is a small project that reads the `samples` catalog every workspace has.

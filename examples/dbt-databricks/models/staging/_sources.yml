@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: tpch
+    description: The TPC-H tables every Databricks workspace has in its samples catalog.
+    database: samples
+    schema: tpch
+    tables:
+      - name: orders
+      - name: customer
+      - name: lineitem

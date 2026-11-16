@@ -225,7 +225,7 @@ func TestRefOfConsoleURL(t *testing.T) {
 		{"operation with output", project.Action{Kind: project.KindOperation, HasOutput: true, Target: tgt}, tgt.ConsoleURL()},
 		{"operation without output", project.Action{Kind: project.KindOperation, Target: tgt}, ""},
 	} {
-		if got := refOf(&tt.a).ConsoleURL; got != tt.want {
+		if got := (&projectState{}).refOf(&tt.a).ConsoleURL; got != tt.want {
 			t.Errorf("%s: consoleUrl = %q, want %q", tt.name, got, tt.want)
 		}
 	}

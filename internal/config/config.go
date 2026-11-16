@@ -36,6 +36,11 @@ const (
 	// KeyDbtCompileWithHooks compiles dbt v2 projects that have
 	// on-run-start or on-run-end hooks, which dbt v2 runs when it compiles.
 	KeyDbtCompileWithHooks = "dbtCompileWithHooks"
+	// KeyDatabricksWarehouse is the SQL warehouse a Databricks project's
+	// checks run on, by ID or HTTP path, and KeyDatabricksProfile the
+	// ~/.databrickscfg profile its token comes from (ADR 0042).
+	KeyDatabricksWarehouse = "databricksWarehouse"
+	KeyDatabricksProfile   = "databricksProfile"
 	KeyRunMode             = "runMode"
 	KeyDataformLocation    = "dataformLocation"
 	KeyDataformRepo        = "dataformRepo"
@@ -240,6 +245,8 @@ var Titles = map[string]string{
 	KeyDbtTarget:            "dbt target",
 	KeyDbtProdTarget:        "dbt prod target",
 	KeyDbtCompileWithHooks:  "Compile dbt v2 projects with hooks",
+	KeyDatabricksWarehouse:  "Databricks SQL warehouse",
+	KeyDatabricksProfile:    "Databricks CLI profile",
 	KeyRunMode:              "Run mode",
 	KeyDataformLocation:     "Dataform region",
 	KeyDataformRepo:         "Dataform repository",
@@ -300,6 +307,8 @@ var Defaults = func() map[string]string {
 		KeyDbtTarget:            "the profile's target ($DBT_TARGET first)",
 		KeyDbtProdTarget:        NoDefault + " (dbtTarget's)",
 		KeyDbtCompileWithHooks:  "false",
+		KeyDatabricksWarehouse:  "the dbt target's http_path, else asked",
+		KeyDatabricksProfile:    "the profile with the dbt target's host, else DEFAULT",
 		KeyRunMode:              "cli",
 		KeyDataformLocation:     "defaultLocation of the workflow settings",
 		KeyDataformRepo:         "the origin remote's name",
@@ -340,7 +349,7 @@ var Defaults = func() map[string]string {
 }()
 
 // Keys lists every key in the order they are documented.
-var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
+var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
@@ -355,6 +364,8 @@ var Flags = map[string]string{
 	KeyDbtTarget:           "dbt-target",
 	KeyDbtProdTarget:       "dbt-prod-target",
 	KeyDbtCompileWithHooks: "dbt-compile-with-hooks",
+	KeyDatabricksWarehouse: "databricks-warehouse",
+	KeyDatabricksProfile:   "databricks-profile",
 	KeyRunMode:             "run-mode",
 	KeyDataformLocation:    "dataform-location",
 	KeyDataformRepo:        "dataform-repo",
@@ -418,10 +429,14 @@ type Settings struct {
 	DbtProdTarget string
 	// DbtCompileWithHooks is "true" to compile dbt v2 projects with hooks
 	DbtCompileWithHooks string
-	RunMode             string // "cli" or "api": how r runs to start with
-	DataformLocation    string // region of the Dataform repository, for API runs
-	DataformRepo        string // name of the Dataform repository, for API runs
-	DefaultBranch       string // the branch R (run changed) compares against
+	// DatabricksWarehouse is a Databricks project's SQL warehouse
+	DatabricksWarehouse string
+	// DatabricksProfile is its ~/.databrickscfg profile
+	DatabricksProfile string
+	RunMode           string // "cli" or "api": how r runs to start with
+	DataformLocation  string // region of the Dataform repository, for API runs
+	DataformRepo      string // name of the Dataform repository, for API runs
+	DefaultBranch     string // the branch R (run changed) compares against
 	// DevCompilerOptions are the compiler options of the user's dev runs
 	DevCompilerOptions string
 	// ProdCompilerOptions are the compiler options of the project's prod
@@ -486,6 +501,10 @@ func (s *Settings) field(key string) *string {
 		return &s.DbtProdTarget
 	case KeyDbtCompileWithHooks:
 		return &s.DbtCompileWithHooks
+	case KeyDatabricksWarehouse:
+		return &s.DatabricksWarehouse
+	case KeyDatabricksProfile:
+		return &s.DatabricksProfile
 	case KeyRunMode:
 		return &s.RunMode
 	case KeyDataformLocation:
