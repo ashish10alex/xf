@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/forge"
 	"github.com/ashish10alex/xf/internal/gcpauth"
 	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func TestVerdictUnsetAndDryRuns(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPreflightStopsOnlyOnTheImpossible(t *testing.T) {
 	p.CoreVersion = ""
 	p.DryRun = func(_ context.Context, project, _ string) error {
 		if project == "acme-dev" {
-			return &bigquery.APIError{Status: 403, Message: "Access Denied: Project acme-dev: User does not have bigquery.jobs.create permission in project acme-dev."}
+			return &warehouse.APIError{Status: 403, Message: "Access Denied: Project acme-dev: User does not have bigquery.jobs.create permission in project acme-dev."}
 		}
 		return nil
 	}

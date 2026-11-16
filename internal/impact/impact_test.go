@@ -11,22 +11,22 @@ import (
 	"testing"
 
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // These port the extension's suites: "Column impact: schema diff"
 // (columnImpactRules.test.ts) and "Column impact summary"
 // (columnImpactSummary.test.ts). Keep them in step.
 
-func f(name, typ string) bigquery.Field { return bigquery.Field{Name: name, Type: typ} }
+func f(name, typ string) warehouse.Column { return warehouse.Column{Name: name, Type: typ} }
 
 func TestDiffSchemas(t *testing.T) {
 	got := DiffSchemas(
-		[]bigquery.Field{f("PLAYER_ID", "INTEGER"), f("goals", "STRING"), f("is_captain", "BOOL")},
-		[]bigquery.Field{f("player_id", "INT64"), f("goals", "INTEGER"), f("assists", "INTEGER"), f("is_captain", "BOOLEAN")},
+		[]warehouse.Column{f("PLAYER_ID", "INTEGER"), f("goals", "STRING"), f("is_captain", "BOOL")},
+		[]warehouse.Column{f("player_id", "INT64"), f("goals", "INTEGER"), f("assists", "INTEGER"), f("is_captain", "BOOLEAN")},
 	)
 	want := []ColumnImpact{
 		{"goals", ColumnChange{Kind: TypeChanged, From: "INT64", To: "STRING"}},
@@ -35,10 +35,10 @@ func TestDiffSchemas(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v", got)
 	}
-	if got := DiffSchemas([]bigquery.Field{f("player_id", "INT64")}, []bigquery.Field{f("PLAYER_ID", "INTEGER")}); len(got) != 0 {
+	if got := DiffSchemas([]warehouse.Column{f("player_id", "INT64")}, []warehouse.Column{f("PLAYER_ID", "INTEGER")}); len(got) != 0 {
 		t.Errorf("matching schemas: %+v", got)
 	}
-	if got := DiffSchemas([]bigquery.Field{f("price", "DECIMAL"), f("total", "BIGDECIMAL")}, []bigquery.Field{f("price", "NUMERIC"), f("total", "BIGNUMERIC")}); len(got) != 0 {
+	if got := DiffSchemas([]warehouse.Column{f("price", "DECIMAL"), f("total", "BIGDECIMAL")}, []warehouse.Column{f("price", "NUMERIC"), f("total", "BIGNUMERIC")}); len(got) != 0 {
 		t.Errorf("DECIMAL and BIGDECIMAL are NUMERIC and BIGNUMERIC: %+v", got)
 	}
 }
@@ -183,16 +183,16 @@ var orders = Candidate{
 	Table:    "p.marts.orders",
 	FileName: "definitions/orders.sqlx",
 	Type:     "table",
-	Prod:     []bigquery.Field{f("order_id", "INT64"), f("discount", "NUMERIC"), f("amount", "FLOAT"), f("note", "STRING")},
-	Dev:      []bigquery.Field{f("order_id", "INTEGER"), f("amount", "NUMERIC"), f("note", "STRING"), f("channel", "STRING")},
+	Prod:     []warehouse.Column{f("order_id", "INT64"), f("discount", "NUMERIC"), f("amount", "FLOAT"), f("note", "STRING")},
+	Dev:      []warehouse.Column{f("order_id", "INTEGER"), f("amount", "NUMERIC"), f("note", "STRING"), f("channel", "STRING")},
 }
 
 var unchangedView = Candidate{
 	Table:    "p.marts.daily",
 	FileName: "definitions/daily.sqlx",
 	Type:     "view",
-	Prod:     []bigquery.Field{f("day", "DATE")},
-	Dev:      []bigquery.Field{f("day", "DATE"), f("orders", "INT64")},
+	Prod:     []warehouse.Column{f("day", "DATE")},
+	Dev:      []warehouse.Column{f("day", "DATE"), f("orders", "INT64")},
 }
 
 func tables(ts []Table) []string {
@@ -325,7 +325,7 @@ func TestBuildKeepsAFailedLookupOnItsColumn(t *testing.T) {
 }
 
 func TestBuildStopsStartingLookupsOnceCancelled(t *testing.T) {
-	wide := Candidate{Table: "p.marts.wide", Type: "table", Dev: []bigquery.Field{f("id", "INT64")}}
+	wide := Candidate{Table: "p.marts.wide", Type: "table", Dev: []warehouse.Column{f("id", "INT64")}}
 	for i := range 10 {
 		wide.Prod = append(wide.Prod, f(fmt.Sprintf("c%d", i), "INT64"))
 	}
@@ -603,7 +603,7 @@ func TestRunDryRunsChangedTablesAndComparesWithProd(t *testing.T) {
 			},
 		},
 	}
-	prod := map[string][]bigquery.Field{
+	prod := map[string][]warehouse.Column{
 		"p.marts.orders":    {f("order_id", "INT64"), f("amount", "FLOAT"), f("discount", "NUMERIC")},
 		"p.marts.daily":     {f("day", "DATE")},
 		"p.marts.customers": {f("id", "INT64")},
@@ -611,15 +611,15 @@ func TestRunDryRunsChangedTablesAndComparesWithProd(t *testing.T) {
 	var dryRuns []string
 	var mu sync.Mutex
 	deps := Deps{
-		Schema: func(_ context.Context, table string) ([]bigquery.Field, error) { return prod[table], nil },
-		DryRun: func(_ context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+		Schema: func(_ context.Context, table string) ([]warehouse.Column, error) { return prod[table], nil },
+		DryRun: func(_ context.Context, project, location, sql string) (*warehouse.Check, error) {
 			mu.Lock()
 			dryRuns = append(dryRuns, project+"/"+location+": "+sql)
 			mu.Unlock()
 			if strings.Contains(sql, "day") {
-				return nil, &bigquery.APIError{Status: 400, Message: "Unrecognized name: day"}
+				return nil, &warehouse.APIError{Status: 400, Message: "Unrecognized name: day"}
 			}
-			return &bigquery.DryRun{Schema: []bigquery.Field{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
+			return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
 		},
 		Readers: &fakeSource{
 			columnLinks: map[string][]lineage.ColumnLink{"p.marts.orders#discount": {{Table: "p.fin.margins", Column: "discount", DependencyType: lineage.ExactCopy}}},
@@ -689,17 +689,17 @@ func TestRunComparesANewActionWhoseTableExists(t *testing.T) {
 			{ID: "p.marts.orders", FileName: "definitions/orders.sqlx", Type: "table", Reasons: []changes.Reason{changes.ReasonNew}},
 		}},
 	}
-	prod := map[string][]bigquery.Field{
+	prod := map[string][]warehouse.Column{
 		"p.marts.orders": {f("order_id", "INT64"), f("amount", "FLOAT"), f("discount", "NUMERIC")},
 		"p.marts.daily":  {f("day", "DATE")},
 	}
 	deps := Deps{
-		Schema: func(_ context.Context, table string) ([]bigquery.Field, error) { return prod[table], nil },
-		DryRun: func(_ context.Context, _, _, sql string) (*bigquery.DryRun, error) {
+		Schema: func(_ context.Context, table string) ([]warehouse.Column, error) { return prod[table], nil },
+		DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
 			if strings.Contains(sql, "day") {
-				return &bigquery.DryRun{Schema: []bigquery.Field{f("day", "DATE"), f("week", "DATE")}}, nil
+				return &warehouse.Check{Schema: []warehouse.Column{f("day", "DATE"), f("week", "DATE")}}, nil
 			}
-			return &bigquery.DryRun{Schema: []bigquery.Field{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
+			return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
 		},
 		Readers: &fakeSource{},
 	}
@@ -747,7 +747,7 @@ func TestRunSaysWhatReadsANewTable(t *testing.T) {
 			{ID: "p.marts.out", Type: "table", Reasons: []changes.Reason{changes.ReasonNew}},
 		}}}
 	deps := Deps{
-		Schema:  func(context.Context, string) ([]bigquery.Field, error) { return nil, nil },
+		Schema:  func(context.Context, string) ([]warehouse.Column, error) { return nil, nil },
 		Readers: &fakeSource{},
 	}
 	report, err := Run(context.Background(), res, g, deps, func(Progress) {})
@@ -784,7 +784,7 @@ func TestRunComparesARenamedActionWithItsOldTable(t *testing.T) {
 		},
 	}
 	// Neither new name has a table yet; of the old ones only orders_old does.
-	prod := map[string][]bigquery.Field{
+	prod := map[string][]warehouse.Column{
 		"p.marts.orders_old": {f("order_id", "INT64"), f("amount", "FLOAT"), f("discount", "NUMERIC")},
 		"p.marts.daily":      {f("day", "DATE")},
 	}
@@ -797,12 +797,12 @@ func TestRunComparesARenamedActionWithItsOldTable(t *testing.T) {
 		},
 	}
 	deps := Deps{
-		Schema: func(_ context.Context, table string) ([]bigquery.Field, error) { return prod[table], nil },
-		DryRun: func(_ context.Context, _, _, sql string) (*bigquery.DryRun, error) {
+		Schema: func(_ context.Context, table string) ([]warehouse.Column, error) { return prod[table], nil },
+		DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
 			if strings.Contains(sql, "day") {
-				return &bigquery.DryRun{Schema: []bigquery.Field{f("day", "DATE")}}, nil
+				return &warehouse.Check{Schema: []warehouse.Column{f("day", "DATE")}}, nil
 			}
-			return &bigquery.DryRun{Schema: []bigquery.Field{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
+			return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
 		},
 		Readers: src,
 	}
@@ -902,7 +902,7 @@ func TestRunComparesWithProdTargets(t *testing.T) {
 		},
 	}
 	prodRuns := DevToProd(prodCompile, g, res.Deleted)
-	schemas := map[string][]bigquery.Field{
+	schemas := map[string][]warehouse.Column{
 		// The default targets match the branch: built from it already.
 		"p.marts.orders": {f("order_id", "INT64"), f("amount", "FLOAT")},
 		"p.marts.fresh":  {f("a", "INT64")},
@@ -914,17 +914,17 @@ func TestRunComparesWithProdTargets(t *testing.T) {
 	var read []string
 	var mu sync.Mutex
 	deps := Deps{
-		Schema: func(_ context.Context, table string) ([]bigquery.Field, error) {
+		Schema: func(_ context.Context, table string) ([]warehouse.Column, error) {
 			mu.Lock()
 			read = append(read, table)
 			mu.Unlock()
 			return schemas[table], nil
 		},
-		DryRun: func(_ context.Context, _, _, sql string) (*bigquery.DryRun, error) {
+		DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
 			if strings.Contains(sql, "day") {
-				return &bigquery.DryRun{Schema: []bigquery.Field{f("day", "DATE")}}, nil
+				return &warehouse.Check{Schema: []warehouse.Column{f("day", "DATE")}}, nil
 			}
-			return &bigquery.DryRun{Schema: []bigquery.Field{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
+			return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
 		},
 		Readers: &fakeSource{
 			columnLinks: map[string][]lineage.ColumnLink{"prd.marts.orders#discount": {
@@ -990,18 +990,18 @@ func TestRunTellsTheBaseBranchsChangesFromTheBranchsOwn(t *testing.T) {
 			{ID: "p.marts.orders", FileName: "definitions/orders.sqlx", Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
 		}},
 	}
-	prod := []bigquery.Field{f("order_id", "STRING"), f("amount", "FLOAT"), f("discount", "NUMERIC")}
+	prod := []warehouse.Column{f("order_id", "STRING"), f("amount", "FLOAT"), f("discount", "NUMERIC")}
 	reader := func(col string) []lineage.ColumnLink {
 		return []lineage.ColumnLink{{Table: "p.fin.margins", Column: col, DependencyType: lineage.ExactCopy}}
 	}
 	baseAsked := 0
 	deps := Deps{
-		Schema: func(context.Context, string) ([]bigquery.Field, error) { return prod, nil },
-		DryRun: func(_ context.Context, _, _, sql string) (*bigquery.DryRun, error) {
+		Schema: func(context.Context, string) ([]warehouse.Column, error) { return prod, nil },
+		DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
 			if strings.Contains(sql, "amount") { // the merge-base's
-				return &bigquery.DryRun{Schema: []bigquery.Field{f("order_id", "INT64"), f("amount", "FLOAT64")}}, nil
+				return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INT64"), f("amount", "FLOAT64")}}, nil
 			}
-			return &bigquery.DryRun{Schema: []bigquery.Field{f("order_id", "INT64")}}, nil
+			return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INT64")}}, nil
 		},
 		Readers: &fakeSource{columnLinks: map[string][]lineage.ColumnLink{
 			"p.marts.orders#amount": reader("amount"), "p.marts.orders#discount": reader("discount"), "p.marts.orders#order_id": reader("order_id"),
@@ -1112,11 +1112,11 @@ func TestRunFlagsADropThatBreaksAnIncrementalTablesOwnRun(t *testing.T) {
 		{ID: "p.marts.inventory", FileName: "definitions/inventory.sqlx", Type: "incremental", Reasons: []changes.Reason{changes.ReasonSQL}},
 		{ID: "p.marts.orders", FileName: "definitions/orders.sqlx", Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
 	}}}
-	prod := []bigquery.Field{f("sku", "STRING"), f("period", "DATE"), f("amount", "FLOAT64"), f("row_num", "INT64"), f("note", "STRING")}
+	prod := []warehouse.Column{f("sku", "STRING"), f("period", "DATE"), f("amount", "FLOAT64"), f("row_num", "INT64"), f("note", "STRING")}
 	deps := Deps{
-		Schema: func(context.Context, string) ([]bigquery.Field, error) { return prod, nil },
-		DryRun: func(context.Context, string, string, string) (*bigquery.DryRun, error) {
-			return &bigquery.DryRun{Schema: []bigquery.Field{f("sku", "STRING"), f("period", "DATE"), f("amount", "FLOAT64")}}, nil
+		Schema: func(context.Context, string) ([]warehouse.Column, error) { return prod, nil },
+		DryRun: func(context.Context, string, string, string) (*warehouse.Check, error) {
+			return &warehouse.Check{Schema: []warehouse.Column{f("sku", "STRING"), f("period", "DATE"), f("amount", "FLOAT64")}}, nil
 		},
 		Readers: &fakeSource{},
 	}
@@ -1176,7 +1176,7 @@ func TestRunTellsARunBreakTheBaseBranchMadeFromOneThisBranchMakes(t *testing.T) 
 	res := &changes.Result{BaseRef: "origin/develop", MergeBase: "abcdef123456", HeadRef: "fix", Diff: changes.Diff{Changed: []changes.Changed{
 		{ID: "p.marts.inventory", FileName: "definitions/inventory.sqlx", Type: "incremental", Reasons: []changes.Reason{changes.ReasonSQL}},
 	}}}
-	prod := []bigquery.Field{f("sku", "STRING"), f("amount", "FLOAT64"), f("rwn", "INT64")}
+	prod := []warehouse.Column{f("sku", "STRING"), f("amount", "FLOAT64"), f("rwn", "INT64")}
 	withKey, without := `["sku","RWN"]`, `["sku"]`
 	for _, tc := range []struct {
 		name, base, head string
@@ -1194,9 +1194,9 @@ func TestRunTellsARunBreakTheBaseBranchMadeFromOneThisBranchMakes(t *testing.T) 
 	} {
 		base := compile(tc.base)
 		deps := Deps{
-			Schema: func(context.Context, string) ([]bigquery.Field, error) { return prod, nil },
-			DryRun: func(context.Context, string, string, string) (*bigquery.DryRun, error) {
-				return &bigquery.DryRun{Schema: []bigquery.Field{f("sku", "STRING"), f("amount", "FLOAT64")}}, nil
+			Schema: func(context.Context, string) ([]warehouse.Column, error) { return prod, nil },
+			DryRun: func(context.Context, string, string, string) (*warehouse.Check, error) {
+				return &warehouse.Check{Schema: []warehouse.Column{f("sku", "STRING"), f("amount", "FLOAT64")}}, nil
 			},
 			Readers: &fakeSource{},
 			Base:    func(context.Context) (*project.Graph, error) { return base, nil },

@@ -2,6 +2,7 @@ package bigquery
 
 import (
 	"errors"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestRoleHint(t *testing.T) {
 		}
 	}
 	err := apiError(403, []byte(`{"error":{"message":"Access Denied: Project p: User does not have bigquery.jobs.create permission in project p."}}`))
-	var e *APIError
+	var e *warehouse.APIError
 	if !errors.As(err, &e) || e.Message != "Access Denied: Project p: User does not have bigquery.jobs.create permission in project p. (needs roles/bigquery.jobUser on p)" {
 		t.Errorf("apiError = %v", err)
 	}

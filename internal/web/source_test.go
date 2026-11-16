@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // newSourceTest serves testGraph's project from a temporary root holding
@@ -337,11 +337,11 @@ func TestSourceDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	eng := newFakeEngine(testGraph())
-	dry := func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+	dry := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 		if strings.Contains(sql, "SELECT id") {
-			return nil, &bigquery.APIError{Status: 400, Message: "Unrecognized name: id at [1:8]"}
+			return nil, &warehouse.APIError{Status: 400, Message: "Unrecognized name: id at [1:8]"}
 		}
-		return &bigquery.DryRun{}, nil
+		return &warehouse.Check{}, nil
 	}
 	s, ts, c := newTest(t, frontend.Deps{Root: root, Engine: eng, DryRun: dry})
 
@@ -386,8 +386,8 @@ func TestSourceDiagnosticsDbt(t *testing.T) {
 	m := project.Target{Database: "p", Schema: "d", Name: "m"}
 	a := &project.Action{ID: m.ID(), Target: m, CanonicalTarget: m, Kind: project.KindTable, FileName: "models/m.sql", RawOps: true,
 		Query: "\n\nselect id\nfrom `p`.`d`.`orders`"}
-	dry := func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
-		return nil, &bigquery.APIError{Status: 404, Message: "Not found: Table p:d.orders was not found in location EU"}
+	dry := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
+		return nil, &warehouse.APIError{Status: 404, Message: "Not found: Table p:d.orders was not found in location EU"}
 	}
 	s, ts, c := newTest(t, frontend.Deps{Root: root, Engine: newFakeEngine(project.NewGraph([]*project.Action{a})), DryRun: dry})
 	s.only().tool = "dbt"

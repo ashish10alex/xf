@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // deferGraph is a table reading two upstream tables in dev: customers,
@@ -60,11 +60,11 @@ func (f *fakeDeferral) ask(_ context.Context, req engine.DeferralRequest) (*engi
 func TestDeferRewritesWhatIsDryRunAndShown(t *testing.T) {
 	var mu sync.Mutex
 	var sqls []string
-	dry := func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+	dry := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 		mu.Lock()
 		sqls = append(sqls, sql)
 		mu.Unlock()
-		return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise, StatementType: "SELECT"}, nil
+		return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise, StatementType: "SELECT"}, nil
 	}
 	fd := &fakeDeferral{}
 	_, ts, c := newTest(t, frontend.Deps{Engine: deferEngine(deferGraph(), true), DryRun: dry, Deferral: fd.ask, SetDefer: func(bool) {}})
@@ -147,24 +147,24 @@ func TestTurningDeferOnAsksForProdOptionsFirst(t *testing.T) {
 // fakeWriter records the Proxy Views made.
 type fakeWriter struct {
 	mu      sync.Mutex
-	created []bigquery.ViewSpec
+	created []warehouse.ViewSpec
 }
 
-func (w *fakeWriter) View(context.Context, string, string, string) (*bigquery.ViewInfo, error) {
+func (w *fakeWriter) View(context.Context, string, string, string) (*warehouse.ViewInfo, error) {
 	return nil, nil
 }
 
-func (w *fakeWriter) CreateView(_ context.Context, v bigquery.ViewSpec) error {
+func (w *fakeWriter) CreateView(_ context.Context, v warehouse.ViewSpec) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.created = append(w.created, v)
 	return nil
 }
-func (w *fakeWriter) UpdateView(context.Context, bigquery.ViewSpec) error { return nil }
+func (w *fakeWriter) UpdateView(context.Context, warehouse.ViewSpec) error { return nil }
 func (w *fakeWriter) DeleteTable(context.Context, string, string, string) error {
 	return nil
 }
-func (w *fakeWriter) ListTablesLabelled(context.Context, string, string) ([]bigquery.LabelledTable, error) {
+func (w *fakeWriter) ListTablesLabelled(context.Context, string, string) ([]warehouse.LabelledTable, error) {
 	return nil, nil
 }
 

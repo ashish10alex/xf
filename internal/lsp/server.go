@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Engine is the project engine the server works from: its own
@@ -30,7 +30,7 @@ type Engine interface {
 	Subscribe() (<-chan engine.State, func())
 	State() engine.State
 	FirstCompile() <-chan struct{}
-	DryRun(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error)
+	DryRun(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 }
 
 // Config wires the server to the outside world.
@@ -48,10 +48,10 @@ type Config struct {
 	Watch func(ctx context.Context, root string) (<-chan struct{}, error)
 	// Tables fetches a table's BigQuery metadata for hover cards. Nil means
 	// cards show only what the compile knows.
-	Tables func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error)
+	Tables func(ctx context.Context, project, dataset, table string) (*warehouse.Table, error)
 	// DryRun asks BigQuery to plan a query in a job in project, for
 	// diagnostics and cost hints. Nil means no dry runs.
-	DryRun func(ctx context.Context, project, location, query string) (*bigquery.DryRun, error)
+	DryRun func(ctx context.Context, project, location, query string) (*warehouse.Check, error)
 	// Credentials is the credentials' generation, for an engine of the
 	// server's own (engine.Config.Credentials).
 	Credentials func() uint64
@@ -421,7 +421,7 @@ func (s *server) hover(ctx context.Context, path string, text []byte, pos Positi
 	defer cancel()
 	cards := make([]string, len(refs))
 	for i, ref := range refs {
-		var tbl *bigquery.Table
+		var tbl *warehouse.Table
 		var err error
 		// An ephemeral model, a test or an operation without hasOutput has
 		// no table to look up.

@@ -8,29 +8,29 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // fakeBQ is BigQuery holding tables by "db.schema" and the views made.
 type fakeBQ struct {
 	mu       sync.Mutex
-	datasets map[string][]bigquery.LabelledTable
+	datasets map[string][]warehouse.LabelledTable
 	prod     map[string]error // "db.schema.name" → nil (exists) or an error
-	views    map[string]*bigquery.ViewInfo
+	views    map[string]*warehouse.ViewInfo
 	lists    int
-	created  []bigquery.ViewSpec
-	updated  []bigquery.ViewSpec
+	created  []warehouse.ViewSpec
+	updated  []warehouse.ViewSpec
 	deleted  []string
 }
 
-func (f *fakeBQ) ListTablesLabelled(_ context.Context, db, schema string) ([]bigquery.LabelledTable, error) {
+func (f *fakeBQ) ListTablesLabelled(_ context.Context, db, schema string) ([]warehouse.LabelledTable, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lists++
 	ts, ok := f.datasets[db+"."+schema]
 	if !ok {
-		return nil, &bigquery.APIError{Status: http.StatusNotFound, Message: "not found"}
+		return nil, &warehouse.APIError{Status: http.StatusNotFound, Message: "not found"}
 	}
 	return ts, nil
 }
@@ -45,18 +45,18 @@ func (f *fakeBQ) Exists(_ context.Context, db, schema, name string, _ bool) (boo
 	return err == nil, err
 }
 
-func (f *fakeBQ) View(_ context.Context, db, schema, name string) (*bigquery.ViewInfo, error) {
+func (f *fakeBQ) View(_ context.Context, db, schema, name string) (*warehouse.ViewInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.views[db+"."+schema+"."+name], nil
 }
 
-func (f *fakeBQ) CreateView(_ context.Context, v bigquery.ViewSpec) error {
+func (f *fakeBQ) CreateView(_ context.Context, v warehouse.ViewSpec) error {
 	f.created = append(f.created, v)
 	return nil
 }
 
-func (f *fakeBQ) UpdateView(_ context.Context, v bigquery.ViewSpec) error {
+func (f *fakeBQ) UpdateView(_ context.Context, v warehouse.ViewSpec) error {
 	f.updated = append(f.updated, v)
 	return nil
 }
@@ -73,9 +73,9 @@ func lookupsOf(f *fakeBQ) *Lookups {
 func TestResolve(t *testing.T) {
 	dev, prod := fixture()
 	f := &fakeBQ{
-		datasets: map[string][]bigquery.LabelledTable{"dev-proj.sales_dev": {{ID: "payments", Type: "VIEW"}}},
+		datasets: map[string][]warehouse.LabelledTable{"dev-proj.sales_dev": {{ID: "payments", Type: "VIEW"}}},
 		prod:     map[string]error{"prod-proj.sales.customers": nil},
-		views:    map[string]*bigquery.ViewInfo{"dev-proj.sales_dev.payments": {LastModified: time.UnixMilli(1000)}},
+		views:    map[string]*warehouse.ViewInfo{"dev-proj.sales_dev.payments": {LastModified: time.UnixMilli(1000)}},
 	}
 	l := lookupsOf(f)
 	changed := func(id project.ActionID) bool { return id == "dev-proj.sales_dev.customers" }
@@ -105,8 +105,8 @@ func TestResolve(t *testing.T) {
 func TestResolveProxyCountsAsMissingAndForbiddenProd(t *testing.T) {
 	dev, prod := fixture()
 	f := &fakeBQ{
-		datasets: map[string][]bigquery.LabelledTable{"dev-proj.sales_dev": {{ID: "customers", Labels: map[string]string{ProxyLabel: "true"}}}},
-		prod:     map[string]error{"prod-proj.sales.payments": &bigquery.APIError{Status: http.StatusForbidden}, "prod-proj.sales.customers": nil},
+		datasets: map[string][]warehouse.LabelledTable{"dev-proj.sales_dev": {{ID: "customers", Labels: map[string]string{ProxyLabel: "true"}}}},
+		prod:     map[string]error{"prod-proj.sales.payments": &warehouse.APIError{Status: http.StatusForbidden}, "prod-proj.sales.customers": nil},
 	}
 	l := lookupsOf(f)
 	d, err := Resolve(context.Background(), dev, []project.ActionID{"dev-proj.sales_dev.orders"}, NewProdTargets(prod), l, nil)
@@ -128,10 +128,10 @@ func TestResolveProxyCountsAsMissingAndForbiddenProd(t *testing.T) {
 
 func TestBuiltInDev(t *testing.T) {
 	f := &fakeBQ{
-		datasets: map[string][]bigquery.LabelledTable{"dev-proj.sales_dev": {
+		datasets: map[string][]warehouse.LabelledTable{"dev-proj.sales_dev": {
 			{ID: "agg"}, {ID: "proxied", Labels: map[string]string{ProxyLabel: "true"}},
 		}},
-		views: map[string]*bigquery.ViewInfo{"dev-proj.sales_dev.agg": {LastModified: time.UnixMilli(2000)}},
+		views: map[string]*warehouse.ViewInfo{"dev-proj.sales_dev.agg": {LastModified: time.UnixMilli(2000)}},
 	}
 	l := lookupsOf(f)
 	ctx := context.Background()
@@ -166,7 +166,7 @@ func TestResolveListingFails(t *testing.T) {
 
 func TestEnsureProxies(t *testing.T) {
 	p1, p2, p3 := tgt("p", "s", "a"), tgt("p", "s", "b"), tgt("p", "s", "c")
-	f := &fakeBQ{views: map[string]*bigquery.ViewInfo{
+	f := &fakeBQ{views: map[string]*warehouse.ViewInfo{
 		"d.s.b": {Labels: map[string]string{ProxyLabel: "true"}, Query: ProxyQuery(p2)},
 		"d.s.c": {Labels: map[string]string{ProxyLabel: "true"}, Query: "SELECT * FROM `p.s.old`"},
 	}}
@@ -191,7 +191,7 @@ func TestEnsureProxies(t *testing.T) {
 
 func TestRemoveProxies(t *testing.T) {
 	dev, _ := fixture()
-	f := &fakeBQ{datasets: map[string][]bigquery.LabelledTable{"dev-proj.sales_dev": {
+	f := &fakeBQ{datasets: map[string][]warehouse.LabelledTable{"dev-proj.sales_dev": {
 		{ID: "customers", Labels: map[string]string{ProxyLabel: "true"}}, {ID: "payments"},
 	}}}
 	found, err := RemoveProxies(context.Background(), f, dev, false)

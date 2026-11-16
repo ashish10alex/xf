@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // dryRunTimeout bounds one dry run; BigQuery usually answers in about a second.
@@ -16,13 +16,13 @@ const dryRunTimeout = time.Minute
 // dryRunEntry is a dry run started for one script, and its result once done.
 type dryRunEntry struct {
 	done bool
-	res  *bigquery.DryRun
+	res  *warehouse.Check
 	err  error
 }
 
 type dryRunMsg struct {
 	key string
-	res *bigquery.DryRun
+	res *warehouse.Check
 	err error
 }
 
@@ -72,7 +72,7 @@ func (m *Model) startDryRuns() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func dryRunCmd(dryRun func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error), key, project, location, sql string) tea.Cmd {
+func dryRunCmd(dryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error), key, project, location, sql string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), dryRunTimeout)
 		defer cancel()

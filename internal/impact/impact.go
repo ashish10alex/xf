@@ -34,8 +34,8 @@ import (
 	"golang.org/x/text/collate"
 	"golang.org/x/text/language"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/lineage"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -123,8 +123,8 @@ func normaliseType(t string) string {
 // DiffSchemas is the top-level columns prod has that the dry run no longer
 // produces, and those whose type changed. Names compare case-insensitively,
 // as in BigQuery. Nested fields and mode changes are left out.
-func DiffSchemas(dev, prod []bigquery.Field) []ColumnImpact {
-	byName := map[string]bigquery.Field{}
+func DiffSchemas(dev, prod []warehouse.Column) []ColumnImpact {
+	byName := map[string]warehouse.Column{}
 	for _, f := range dev {
 		byName[strings.ToLower(f.Name)] = f
 	}

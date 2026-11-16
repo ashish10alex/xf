@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // JSONVersion is the version of the JSON document, as impact's and cost's.
@@ -230,7 +230,7 @@ func costVerdict(r *Report, o Options) string {
 		return "nothing to dry run"
 	}
 	total, bound := c.Total()
-	totalText := bound + bigquery.FormatBytes(total)
+	totalText := bound + warehouse.FormatBytes(total)
 	text := ""
 	if base, ok := c.BaseTotal(); ok {
 		d := total - base
@@ -238,9 +238,9 @@ func costVerdict(r *Report, o Options) string {
 		case d == 0:
 			text = "no change per run · " + totalText + " total"
 		case d < 0:
-			text = fmt.Sprintf("-%s per run (≈ %s) · %s total", bigquery.FormatBytes(-d), cost.SignedUSD(o.Cost.USD(d)), totalText)
+			text = fmt.Sprintf("-%s per run (≈ %s) · %s total", warehouse.FormatBytes(-d), cost.SignedUSD(o.Cost.USD(d)), totalText)
 		default:
-			text = fmt.Sprintf("+%s per run (≈ %s) · %s total", bigquery.FormatBytes(d), cost.SignedUSD(o.Cost.USD(d)), totalText)
+			text = fmt.Sprintf("+%s per run (≈ %s) · %s total", warehouse.FormatBytes(d), cost.SignedUSD(o.Cost.USD(d)), totalText)
 		}
 	} else {
 		text = fmt.Sprintf("%s per run (≈ %s%s)", totalText, bound, cost.FormatUSD(o.Cost.USD(total)))
@@ -255,7 +255,7 @@ func costVerdict(r *Report, o Options) string {
 		text += " · ⚠️ " + count(unfiltered, "query") + " without a partition filter"
 	}
 	if r.CostTripped(o) {
-		text += " · ❌ over the " + bigquery.FormatBytes(o.Cost.Threshold) + " limit"
+		text += " · ❌ over the " + warehouse.FormatBytes(o.Cost.Threshold) + " limit"
 	}
 	return text
 }

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // A file of declarations alone has the declarations table: its rows in
@@ -34,18 +34,18 @@ func TestDeclarationsTable(t *testing.T) {
 
 	var mu sync.Mutex
 	looked := map[string]int{}
-	table := func(ctx context.Context, p, d, tb string) (*bigquery.Table, error) {
+	table := func(ctx context.Context, p, d, tb string) (*warehouse.Table, error) {
 		mu.Lock()
 		looked[tb]++
 		mu.Unlock()
 		switch tb {
 		case "zeta":
-			return nil, &bigquery.APIError{Status: http.StatusForbidden, Message: "Access Denied: Table p:raw.zeta"}
+			return nil, &warehouse.APIError{Status: http.StatusForbidden, Message: "Access Denied: Table p:raw.zeta"}
 		case "pre_built":
-			return &bigquery.Table{Type: "VIEW", ViewQuery: "SELECT 1 AS x\n", Schema: []bigquery.Field{{Name: "x", Type: "INTEGER"}}}, nil
+			return &warehouse.Table{Type: "VIEW", ViewQuery: "SELECT 1 AS x\n", Schema: []warehouse.Column{{Name: "x", Type: "INTEGER"}}}, nil
 		}
-		return &bigquery.Table{Type: "TABLE", LastModified: time.Date(2026, 10, 20, 9, 0, 0, 0, time.Local),
-			Schema: []bigquery.Field{{Name: "id", Type: "INTEGER"}, {Name: "name", Type: "STRING"}}}, nil
+		return &warehouse.Table{Type: "TABLE", LastModified: time.Date(2026, 10, 20, 9, 0, 0, 0, time.Local),
+			Schema: []warehouse.Column{{Name: "id", Type: "INTEGER"}, {Name: "name", Type: "STRING"}}}, nil
 	}
 	now := func() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.Local) }
 	_, ts, c := newTest(t, frontend.Deps{Root: root, Engine: newFakeEngine(g), Table: table, Now: now})

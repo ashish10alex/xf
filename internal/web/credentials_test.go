@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/frontend"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // A new Google login has the failed dry runs asked again, with no
@@ -20,11 +20,11 @@ func TestNewLoginRetriesFailedDryRuns(t *testing.T) {
 		t.Run(via, func(t *testing.T) {
 			var gen atomic.Uint64
 			var loggedIn atomic.Bool
-			dry := func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+			dry := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 				if !loggedIn.Load() {
-					return nil, bigquery.ErrAuth
+					return nil, warehouse.ErrAuth
 				}
-				return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise, StatementType: "SELECT"}, nil
+				return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise, StatementType: "SELECT"}, nil
 			}
 			s, ts, c := newTestConfig(t, Config{
 				Project:     &Project{Deps: frontend.Deps{Engine: newFakeEngine(testGraph()), DryRun: dry}},

@@ -3,6 +3,7 @@ package bigquery
 import (
 	"context"
 	"encoding/json"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -13,30 +14,30 @@ import (
 func raw(s string) json.RawMessage { return json.RawMessage(s) }
 
 func TestCell(t *testing.T) {
-	rec := Field{Type: "RECORD", Fields: []Field{{Name: "a", Type: "INTEGER"}, {Name: "ts", Type: "TIMESTAMP"}, {Name: "xs", Type: "STRING", Mode: "REPEATED"}}}
+	rec := warehouse.Column{Type: "RECORD", Fields: []warehouse.Column{{Name: "a", Type: "INTEGER"}, {Name: "ts", Type: "TIMESTAMP"}, {Name: "xs", Type: "STRING", Repeated: true}}}
 	tests := []struct {
 		name string
-		f    Field
+		f    warehouse.Column
 		v    string
 		want any
 	}{
-		{"null", Field{Type: "STRING"}, `null`, nil},
-		{"int64 keeps every digit", Field{Type: "INTEGER"}, `"9007199254740993"`, "9007199254740993"},
-		{"bignumeric", Field{Type: "BIGNUMERIC"}, `"1234567890123456789012345678901234567.12345678901234567890123456789012345678"`, "1234567890123456789012345678901234567.12345678901234567890123456789012345678"},
-		{"nan", Field{Type: "FLOAT"}, `"NaN"`, "NaN"},
-		{"timestamp micros", Field{Type: "TIMESTAMP"}, `"1704164645123456"`, "2024-01-02 03:04:05.123456 UTC"},
-		{"timestamp whole seconds", Field{Type: "TIMESTAMP"}, `"1704164645000000"`, "2024-01-02 03:04:05 UTC"},
-		{"pre-epoch timestamp", Field{Type: "TIMESTAMP"}, `"-1"`, "1969-12-31 23:59:59.999999 UTC"},
-		{"bytes", Field{Type: "BYTES"}, `"Ynl0ZXMA/w=="`, map[string]any{"b64": "Ynl0ZXMA/w==", "len": 7}},
-		{"date and json and geography stay as sent", Field{Type: "JSON"}, `"{\"a\":[1,2]}"`, `{"a":[1,2]}`},
-		{"array", Field{Type: "INTEGER", Mode: "REPEATED"}, `[{"v":"1"},{"v":null},{"v":"3"}]`, []any{"1", nil, "3"}},
-		{"empty array", Field{Type: "INTEGER", Mode: "REPEATED"}, `[]`, []any{}},
+		{"null", warehouse.Column{Type: "STRING"}, `null`, nil},
+		{"int64 keeps every digit", warehouse.Column{Type: "INTEGER"}, `"9007199254740993"`, "9007199254740993"},
+		{"bignumeric", warehouse.Column{Type: "BIGNUMERIC"}, `"1234567890123456789012345678901234567.12345678901234567890123456789012345678"`, "1234567890123456789012345678901234567.12345678901234567890123456789012345678"},
+		{"nan", warehouse.Column{Type: "FLOAT"}, `"NaN"`, "NaN"},
+		{"timestamp micros", warehouse.Column{Type: "TIMESTAMP"}, `"1704164645123456"`, "2024-01-02 03:04:05.123456 UTC"},
+		{"timestamp whole seconds", warehouse.Column{Type: "TIMESTAMP"}, `"1704164645000000"`, "2024-01-02 03:04:05 UTC"},
+		{"pre-epoch timestamp", warehouse.Column{Type: "TIMESTAMP"}, `"-1"`, "1969-12-31 23:59:59.999999 UTC"},
+		{"bytes", warehouse.Column{Type: "BYTES"}, `"Ynl0ZXMA/w=="`, map[string]any{"b64": "Ynl0ZXMA/w==", "len": 7}},
+		{"date and json and geography stay as sent", warehouse.Column{Type: "JSON"}, `"{\"a\":[1,2]}"`, `{"a":[1,2]}`},
+		{"array", warehouse.Column{Type: "INTEGER", Repeated: true}, `[{"v":"1"},{"v":null},{"v":"3"}]`, []any{"1", nil, "3"}},
+		{"empty array", warehouse.Column{Type: "INTEGER", Repeated: true}, `[]`, []any{}},
 		{"struct with a timestamp and an array", rec, `{"f":[{"v":"7"},{"v":"1704164645000000"},{"v":[{"v":"x"},{"v":"y"}]}]}`,
 			[]any{"7", "2024-01-02 03:04:05 UTC", []any{"x", "y"}}},
-		{"array of structs", Field{Type: "RECORD", Mode: "REPEATED", Fields: []Field{{Name: "k", Type: "STRING"}}}, `[{"v":{"f":[{"v":"k1"}]}}]`, []any{[]any{"k1"}}},
-		{"range as a string", Field{Type: "RANGE", RangeElementType: &RangeElement{Type: "DATE"}}, `"[2024-01-01, UNBOUNDED)"`, "[2024-01-01, UNBOUNDED)"},
-		{"range as bounds", Field{Type: "RANGE", RangeElementType: &RangeElement{Type: "TIMESTAMP"}}, `{"start":{"v":"1704164645000000"},"end":{"v":null}}`, []any{"2024-01-02 03:04:05 UTC", nil}},
-		{"bare bool", Field{Type: "BOOLEAN"}, `true`, "true"},
+		{"array of structs", warehouse.Column{Type: "RECORD", Repeated: true, Fields: []warehouse.Column{{Name: "k", Type: "STRING"}}}, `[{"v":{"f":[{"v":"k1"}]}}]`, []any{[]any{"k1"}}},
+		{"range as a string", warehouse.Column{Type: "RANGE", RangeElement: "DATE"}, `"[2024-01-01, UNBOUNDED)"`, "[2024-01-01, UNBOUNDED)"},
+		{"range as bounds", warehouse.Column{Type: "RANGE", RangeElement: "TIMESTAMP"}, `{"start":{"v":"1704164645000000"},"end":{"v":null}}`, []any{"2024-01-02 03:04:05 UTC", nil}},
+		{"bare bool", warehouse.Column{Type: "BOOLEAN"}, `true`, "true"},
 	}
 	for _, tt := range tests {
 		if got := Cell(tt.f, raw(tt.v)); !reflect.DeepEqual(got, tt.want) {
@@ -53,8 +54,8 @@ func TestCellText(t *testing.T) {
 		{nil, ""}, {"a,b", "a,b"}, {map[string]any{"b64": "AAE=", "len": 2}, "AAE="},
 		{[]any{"1", nil, []any{"x"}}, `["1",null,["x"]]`},
 	} {
-		if got := CellText(tt.v); got != tt.want {
-			t.Errorf("CellText(%#v) = %q, want %q", tt.v, got, tt.want)
+		if got := warehouse.CellText(tt.v); got != tt.want {
+			t.Errorf("warehouse.CellText(%#v) = %q, want %q", tt.v, got, tt.want)
 		}
 	}
 }
@@ -108,7 +109,7 @@ func TestQueryLifecycle(t *testing.T) {
 	var got []string
 	c := fakeBigQuery(t, &got)
 	ctx := context.Background()
-	ref, err := c.StartQuery(ctx, QueryOptions{Project: "p", Location: "", SQL: "SELECT 1", Labels: map[string]string{"xf-scratch": "true"}})
+	ref, err := c.StartQuery(ctx, warehouse.QueryOptions{Project: "p", Location: "", SQL: "SELECT 1", Labels: map[string]string{"xf-scratch": "true"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestQueryJobFailed(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":{"state":"DONE","errorResult":{"reason":"invalidQuery","message":"Unrecognized name: x at [1:8]"}}}`))
 	}))
 	defer srv.Close()
-	st, err := NewClientWithHTTP(srv.Client(), srv.URL, "").QueryJob(context.Background(), JobRef{Project: "p", ID: "j"})
+	st, err := NewClientWithHTTP(srv.Client(), srv.URL, "").QueryJob(context.Background(), warehouse.JobRef{Project: "p", ID: "j"})
 	if err != nil {
 		t.Fatal(err)
 	}

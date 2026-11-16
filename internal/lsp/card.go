@@ -9,9 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // The hover card follows vscode-dataform-tools' createHoverContentForTable
@@ -29,7 +29,7 @@ const (
 
 // card renders the hover for one table reference. tbl is BigQuery's metadata,
 // or nil with bqErr saying why (bqErr is also nil when BigQuery wasn't asked).
-func card(ref navigate.TableRef, tbl *bigquery.Table, bqErr error, timeout time.Duration) string {
+func card(ref navigate.TableRef, tbl *warehouse.Table, bqErr error, timeout time.Duration) string {
 	var b strings.Builder
 	t := ref.Target
 	fmt.Fprintf(&b, "#### [%s](%s)", string(t.ID()), t.ConsoleURL())
@@ -102,7 +102,7 @@ func hasOutputTable(a *project.Action) bool {
 
 // noSchema says why a card with no BigQuery error has no schema to show.
 // a is nil for a table outside the project.
-func noSchema(a *project.Action, tbl *bigquery.Table) string {
+func noSchema(a *project.Action, tbl *warehouse.Table) string {
 	switch {
 	case a != nil && a.Kind == project.KindOperation && a.HasOutput && !hasOutputTable(a):
 		return "no schema: this operation's target names no project to look it up in"
@@ -128,8 +128,8 @@ func unavailable(err error, timeout time.Duration) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		reason = fmt.Sprintf("timed out after %s", timeout)
-	case errors.Is(err, bigquery.ErrAuth):
-		reason += "; " + bigquery.AuthHint
+	case errors.Is(err, warehouse.ErrAuth):
+		reason += "; " + warehouse.AuthHint
 	}
 	return "⚠ **BigQuery metadata unavailable:** " + reason
 }
@@ -142,10 +142,10 @@ type schemaRow struct {
 // schemaRows flattens a schema depth first. A column documented in the
 // action's config (matched by its full path) takes that description: config
 // descriptions reach BigQuery only when the table is next built.
-func schemaRows(fields []bigquery.Field, columns []project.ColumnDescription) []schemaRow {
+func schemaRows(fields []warehouse.Column, columns []project.ColumnDescription) []schemaRow {
 	var rows []schemaRow
-	var walk func(fields []bigquery.Field, path []string)
-	walk = func(fields []bigquery.Field, path []string) {
+	var walk func(fields []warehouse.Column, path []string)
+	walk = func(fields []warehouse.Column, path []string) {
 		for _, f := range fields {
 			p := append(slices.Clone(path), f.Name)
 			desc := f.Description
@@ -155,8 +155,8 @@ func schemaRows(fields []bigquery.Field, columns []project.ColumnDescription) []
 				}
 			}
 			typ := f.Type
-			if f.Mode != "" && f.Mode != "NULLABLE" {
-				typ += " " + f.Mode
+			if f.Mode() != "" && f.Mode() != "NULLABLE" {
+				typ += " " + f.Mode()
 			}
 			rows = append(rows, schemaRow{name: f.Name, typ: typ, description: desc, depth: len(path)})
 			walk(f.Fields, p)

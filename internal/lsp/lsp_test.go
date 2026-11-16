@@ -16,8 +16,8 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend/dataform"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func testdata(t *testing.T, parts ...string) string {
@@ -375,12 +375,12 @@ func TestServeHover(t *testing.T) {
 	report := filepath.Join(root, "definitions", "marts", "report.sqlx")
 	var asked []string
 	cfg := fixtureConfig(t)
-	cfg.Tables = func(_ context.Context, project, dataset, table string) (*bigquery.Table, error) {
+	cfg.Tables = func(_ context.Context, project, dataset, table string) (*warehouse.Table, error) {
 		asked = append(asked, project+"."+dataset+"."+table)
 		if table == "orders" {
 			return nil, errors.New("Access Denied (HTTP 403)")
 		}
-		return &bigquery.Table{Type: "VIEW", Location: "EU", Schema: []bigquery.Field{{Name: "user_id", Type: "STRING"}}}, nil
+		return &warehouse.Table{Type: "VIEW", Location: "EU", Schema: []warehouse.Column{{Name: "user_id", Type: "STRING"}}}, nil
 	}
 	c := startServer(t, cfg)
 	if caps := c.initialize(root); !caps.HoverProvider {
@@ -465,9 +465,9 @@ func TestServeHoverOperation(t *testing.T) {
 	}
 	var asked []string
 	cfg := Config{Compile: func(context.Context, string) (*project.Graph, error) { return g, nil }}
-	cfg.Tables = func(_ context.Context, project, dataset, table string) (*bigquery.Table, error) {
+	cfg.Tables = func(_ context.Context, project, dataset, table string) (*warehouse.Table, error) {
 		asked = append(asked, project+"."+dataset+"."+table)
-		return &bigquery.Table{Type: "TABLE", Schema: []bigquery.Field{{Name: "run_id", Type: "INT64"}}}, nil
+		return &warehouse.Table{Type: "TABLE", Schema: []warehouse.Column{{Name: "run_id", Type: "INT64"}}}, nil
 	}
 	c := startServer(t, cfg)
 	c.initialize(root)
@@ -498,7 +498,7 @@ func TestServeHoverTimesOutWithoutBlocking(t *testing.T) {
 	release := make(chan struct{})
 	cfg := fixtureConfig(t)
 	cfg.HoverTimeout = 300 * time.Millisecond
-	cfg.Tables = func(ctx context.Context, _, _, _ string) (*bigquery.Table, error) {
+	cfg.Tables = func(ctx context.Context, _, _, _ string) (*warehouse.Table, error) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -586,8 +586,8 @@ func TestServeDbt(t *testing.T) {
 	}
 	c := startServer(t, Config{
 		Compile: func(context.Context, string) (*project.Graph, error) { return g, nil },
-		DryRun: func(context.Context, string, string, string) (*bigquery.DryRun, error) {
-			return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise}, nil
+		DryRun: func(context.Context, string, string, string) (*warehouse.Check, error) {
+			return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise}, nil
 		},
 		Dbt: func(r string) bool { return r == root },
 	})

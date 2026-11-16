@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // The first tests port the extension's "Column lineage from Data Lineage
@@ -211,18 +211,18 @@ func TestSourceFindsReadersInTheTablesRegion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tables := NewTables(func(_ context.Context, project, dataset, table string) (*bigquery.Table, error) {
+	tables := NewTables(func(_ context.Context, project, dataset, table string) (*warehouse.Table, error) {
 		switch dataset + "." + table {
 		case "mart.orders":
-			return &bigquery.Table{Location: "EU", Schema: []bigquery.Field{{Name: "Discount", Type: "NUMERIC"}}}, nil
+			return &warehouse.Table{Location: "EU", Schema: []warehouse.Column{{Name: "Discount", Type: "NUMERIC"}}}, nil
 		case "rpt.daily":
-			return &bigquery.Table{Location: "EU", Schema: []bigquery.Field{{Name: "Discount_Total", Type: "NUMERIC"}, {Name: "day", Type: "DATE"}}}, nil
+			return &warehouse.Table{Location: "EU", Schema: []warehouse.Column{{Name: "Discount_Total", Type: "NUMERIC"}, {Name: "day", Type: "DATE"}}}, nil
 		case "ml.scores":
-			return &bigquery.Table{Location: "EU", Schema: []bigquery.Field{{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}}}, nil
+			return &warehouse.Table{Location: "EU", Schema: []warehouse.Column{{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}}}, nil
 		case "fin.margins":
-			return &bigquery.Table{Location: "EU", Schema: []bigquery.Field{{Name: "a"}}}, nil
+			return &warehouse.Table{Location: "EU", Schema: []warehouse.Column{{Name: "a"}}}, nil
 		}
-		return nil, &bigquery.APIError{Status: http.StatusNotFound, Message: "not found"}
+		return nil, &warehouse.APIError{Status: http.StatusNotFound, Message: "not found"}
 	})
 	search := &fakeSearch{
 		links: map[string][]Link{
@@ -294,17 +294,17 @@ func TestSourceFindsReadersInTheTablesRegion(t *testing.T) {
 func TestTablesRetryAFailedReadButNotAMissingTable(t *testing.T) {
 	var mu sync.Mutex
 	reads := map[string]int{}
-	tables := NewTables(func(_ context.Context, project, dataset, table string) (*bigquery.Table, error) {
+	tables := NewTables(func(_ context.Context, project, dataset, table string) (*warehouse.Table, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		reads[table]++
 		switch {
 		case table == "gone":
-			return nil, &bigquery.APIError{Status: http.StatusNotFound, Message: "not found"}
+			return nil, &warehouse.APIError{Status: http.StatusNotFound, Message: "not found"}
 		case reads[table] == 1:
-			return nil, &bigquery.APIError{Status: http.StatusTooManyRequests, Message: "rate limited"}
+			return nil, &warehouse.APIError{Status: http.StatusTooManyRequests, Message: "rate limited"}
 		}
-		return &bigquery.Table{Schema: []bigquery.Field{{Name: "a"}}}, nil
+		return &warehouse.Table{Schema: []warehouse.Column{{Name: "a"}}}, nil
 	})
 	ctx := context.Background()
 	if _, err := tables.Schema(ctx, "p.d.flaky"); err == nil {
@@ -324,8 +324,8 @@ func TestTablesRetryAFailedReadButNotAMissingTable(t *testing.T) {
 }
 
 func TestSourceProbesAgainAfterAFailedProbe(t *testing.T) {
-	tables := NewTables(func(_ context.Context, project, dataset, table string) (*bigquery.Table, error) {
-		return &bigquery.Table{Location: "EU", Schema: []bigquery.Field{{Name: "a"}}}, nil
+	tables := NewTables(func(_ context.Context, project, dataset, table string) (*warehouse.Table, error) {
+		return &warehouse.Table{Location: "EU", Schema: []warehouse.Column{{Name: "a"}}}, nil
 	})
 	search := &fakeSearch{targets: map[string]int{"p.fin.margins#a": 1}, failProbes: 1}
 	s := NewSource(search, tables, &project.Graph{}, nil)

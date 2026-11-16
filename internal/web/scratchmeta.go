@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/bqfuncs"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -175,7 +175,7 @@ func (p *projectState) scratchTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ts == nil {
-		ts = []bigquery.TableListing{}
+		ts = []warehouse.TableListing{}
 	}
 	p.meta.put(key, ts, p.deps.Now())
 	writeJSON(w, ts)
@@ -202,8 +202,8 @@ type tableCard struct {
 	Table   string `json:"table"`
 	// Detail is BigQuery's word on the table; nil when it has none, and
 	// Error says why: it doesn't exist (yet), or the call failed.
-	Detail *bigquery.TableDetail `json:"detail,omitempty"`
-	Error  string                `json:"error,omitempty"`
+	Detail *warehouse.TableDetail `json:"detail,omitempty"`
+	Error  string                 `json:"error,omitempty"`
 	// Model is the project's action that builds the table, if one does.
 	Model *modelCard `json:"model,omitempty"`
 }
@@ -250,10 +250,10 @@ func (p *projectState) scratchTable(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), metaTimeout)
 	defer cancel()
 	d, err := c.Describe(ctx, proj, ds, table)
-	switch apiErr, isAPI := errors.AsType[*bigquery.APIError](err); {
+	switch apiErr, isAPI := errors.AsType[*warehouse.APIError](err); {
 	case err == nil:
 		card.Detail = d
-	case errors.Is(err, bigquery.ErrAuth):
+	case errors.Is(err, warehouse.ErrAuth):
 		writeError(w, err)
 		return
 	case isAPI && apiErr.Status == http.StatusNotFound:
@@ -299,31 +299,31 @@ type filterRequest struct {
 type filterView struct {
 	// NeedsConfirm says the result's table is over the confirm size and
 	// the request didn't say to go ahead.
-	NeedsConfirm bool             `json:"needsConfirm,omitempty"`
-	Bytes        int64            `json:"bytes"`
-	Job          *bigquery.JobRef `json:"job,omitempty"`
+	NeedsConfirm bool              `json:"needsConfirm,omitempty"`
+	Bytes        int64             `json:"bytes"`
+	Job          *warehouse.JobRef `json:"job,omitempty"`
 }
 
 // filterExpr is the SQL text of a column to look for a substring in.
-func filterExpr(f bigquery.Field) string {
+func filterExpr(f warehouse.Column) string {
 	col := "`" + strings.ReplaceAll(f.Name, "`", "\\`") + "`"
 	switch strings.ToUpper(f.Type) {
 	case "BYTES":
-		if f.Mode != "REPEATED" {
+		if f.Mode() != "REPEATED" {
 			return "TO_BASE64(" + col + ")"
 		}
 	case "RECORD", "STRUCT", "JSON":
 		return "TO_JSON_STRING(" + col + ")"
 	}
-	if f.Mode == "REPEATED" {
+	if f.Mode() == "REPEATED" {
 		return "TO_JSON_STRING(" + col + ")"
 	}
 	return "SAFE_CAST(" + col + " AS STRING)"
 }
 
 // orderable says BigQuery can ORDER BY a column of the type.
-func orderable(f bigquery.Field) bool {
-	if f.Mode == "REPEATED" {
+func orderable(f warehouse.Column) bool {
+	if f.Mode() == "REPEATED" {
 		return false
 	}
 	switch strings.ToUpper(f.Type) {
@@ -336,14 +336,14 @@ func orderable(f bigquery.Field) bool {
 // filterSQL keeps the rows of table whose columns hold every term,
 // ignoring case, in the order asked for; the terms are query parameters,
 // never SQL.
-func filterSQL(table bigquery.TableRef, schema []bigquery.Field, terms []filterTerm, sorts []sortTerm) (string, map[string]string, error) {
+func filterSQL(table warehouse.TableRef, schema []warehouse.Column, terms []filterTerm, sorts []sortTerm) (string, map[string]string, error) {
 	params := map[string]string{}
 	var where []string
 	for _, t := range terms {
 		if t.Value == "" {
 			continue
 		}
-		i := slices.IndexFunc(schema, func(f bigquery.Field) bool { return f.Name == t.Column })
+		i := slices.IndexFunc(schema, func(f warehouse.Column) bool { return f.Name == t.Column })
 		if i < 0 {
 			return "", nil, fmt.Errorf("the result has no column %q", t.Column)
 		}
@@ -353,7 +353,7 @@ func filterSQL(table bigquery.TableRef, schema []bigquery.Field, terms []filterT
 	}
 	var order []string
 	for _, t := range sorts {
-		i := slices.IndexFunc(schema, func(f bigquery.Field) bool { return f.Name == t.Column })
+		i := slices.IndexFunc(schema, func(f warehouse.Column) bool { return f.Name == t.Column })
 		if i < 0 {
 			return "", nil, fmt.Errorf("the result has no column %q", t.Column)
 		}
@@ -403,7 +403,7 @@ func (p *projectState) scratchFilter(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), scratchCallLimit)
 	defer cancel()
-	ref := bigquery.JobRef{Project: req.Project, Location: req.Location, ID: req.ID}
+	ref := warehouse.JobRef{Project: req.Project, Location: req.Location, ID: req.ID}
 	st, err := c.QueryJob(ctx, ref)
 	if err != nil {
 		writeError(w, queryError(err))
@@ -430,7 +430,7 @@ func (p *projectState) scratchFilter(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, v)
 		return
 	}
-	job, err := c.StartQuery(ctx, bigquery.QueryOptions{Project: req.Project, Location: cmpOr(d.Location, req.Location), SQL: sql, Params: params,
+	job, err := c.StartQuery(ctx, warehouse.QueryOptions{Project: req.Project, Location: cmpOr(d.Location, req.Location), SQL: sql, Params: params,
 		Labels: map[string]string{scratchLabel: "true"}})
 	if err != nil {
 		writeError(w, queryError(err))

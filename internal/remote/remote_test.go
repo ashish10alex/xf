@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/testutil"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func loadGraph(t *testing.T, fixture string) *project.Graph {
@@ -209,16 +209,16 @@ func TestDryRunOverTheWire(t *testing.T) {
 	g := loadGraph(t, "basic.json")
 	startServer(t, path, "/proj", engine.Config{
 		Compile: fixed(g),
-		DryRun: func(_ context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+		DryRun: func(_ context.Context, project, location, sql string) (*warehouse.Check, error) {
 			switch sql {
 			case "missing":
-				return nil, &bigquery.APIError{Status: 404, Message: "Not found: Table x"}
+				return nil, &warehouse.APIError{Status: 404, Message: "Not found: Table x"}
 			case "login":
-				return nil, errors.Join(bigquery.ErrAuth, errors.New("token expired"))
+				return nil, errors.Join(warehouse.ErrAuth, errors.New("token expired"))
 			case "slow":
 				return nil, context.DeadlineExceeded
 			}
-			return &bigquery.DryRun{Bytes: 42, Accuracy: bigquery.AccuracyPrecise, StatementType: project + "/" + location}, nil
+			return &warehouse.Check{Bytes: 42, Accuracy: warehouse.AccuracyPrecise, StatementType: project + "/" + location}, nil
 		},
 	}, time.Minute)
 	c := connect(t, path, noStart)
@@ -228,10 +228,10 @@ func TestDryRunOverTheWire(t *testing.T) {
 		t.Errorf("ok: %+v, %v", r, err)
 	}
 	_, err := c.DryRun(ctx, "p", "EU", "missing")
-	if api, ok := errors.AsType[*bigquery.APIError](err); !ok || api.Status != 404 || api.Message != "Not found: Table x" {
+	if api, ok := errors.AsType[*warehouse.APIError](err); !ok || api.Status != 404 || api.Message != "Not found: Table x" {
 		t.Errorf("api error: %v", err)
 	}
-	if _, err := c.DryRun(ctx, "p", "EU", "login"); !errors.Is(err, bigquery.ErrAuth) {
+	if _, err := c.DryRun(ctx, "p", "EU", "login"); !errors.Is(err, warehouse.ErrAuth) {
 		t.Errorf("auth error: %v", err)
 	}
 	if _, err := c.DryRun(ctx, "p", "EU", "slow"); !errors.Is(err, context.DeadlineExceeded) {
@@ -240,11 +240,11 @@ func TestDryRunOverTheWire(t *testing.T) {
 }
 
 // testTable is the table lookup of the test servers: only p.d.orders exists.
-func testTable(_ context.Context, project, dataset, table string) (*bigquery.Table, error) {
+func testTable(_ context.Context, project, dataset, table string) (*warehouse.Table, error) {
 	if project+"."+dataset+"."+table != "p.d.orders" {
-		return nil, &bigquery.APIError{Status: 404, Message: "Not found: Table " + table}
+		return nil, &warehouse.APIError{Status: 404, Message: "Not found: Table " + table}
 	}
-	return &bigquery.Table{Type: "TABLE", LastModified: time.UnixMilli(1759835220000).UTC()}, nil
+	return &warehouse.Table{Type: "TABLE", LastModified: time.UnixMilli(1759835220000).UTC()}, nil
 }
 
 func TestTableOverTheWire(t *testing.T) {
@@ -257,7 +257,7 @@ func TestTableOverTheWire(t *testing.T) {
 		t.Errorf("ok: %+v, %v", tbl, err)
 	}
 	_, err := c.Table(ctx, "p", "d", "nope")
-	if api, ok := errors.AsType[*bigquery.APIError](err); !ok || api.Status != 404 {
+	if api, ok := errors.AsType[*warehouse.APIError](err); !ok || api.Status != 404 {
 		t.Errorf("a table that doesn't exist: %v", err)
 	}
 }
@@ -309,8 +309,8 @@ func TestTakeover(t *testing.T) {
 	g := loadGraph(t, "basic.json")
 	ecfg := engine.Config{
 		Compile: fixed(g),
-		DryRun: func(context.Context, string, string, string) (*bigquery.DryRun, error) {
-			return &bigquery.DryRun{Bytes: 7}, nil
+		DryRun: func(context.Context, string, string, string) (*warehouse.Check, error) {
+			return &warehouse.Check{Bytes: 7}, nil
 		},
 	}
 	first := startServer(t, path, "/proj", ecfg, time.Minute)
@@ -441,14 +441,14 @@ func TestDryRunInFlightMovesToNewServer(t *testing.T) {
 	path := socketPath(t)
 	g := loadGraph(t, "basic.json")
 	asked := make(chan struct{}, 1)
-	stuck := engine.Config{Compile: fixed(g), DryRun: func(ctx context.Context, _, _, _ string) (*bigquery.DryRun, error) {
+	stuck := engine.Config{Compile: fixed(g), DryRun: func(ctx context.Context, _, _, _ string) (*warehouse.Check, error) {
 		asked <- struct{}{}
 		select {} // never answers
 	}}
 	first := startServer(t, path, "/proj", stuck, time.Minute)
 	start := func() error {
-		startServer(t, path, "/proj", engine.Config{Compile: fixed(g), DryRun: func(context.Context, string, string, string) (*bigquery.DryRun, error) {
-			return &bigquery.DryRun{Bytes: 9}, nil
+		startServer(t, path, "/proj", engine.Config{Compile: fixed(g), DryRun: func(context.Context, string, string, string) (*warehouse.Check, error) {
+			return &warehouse.Check{Bytes: 9}, nil
 		}}, time.Minute)
 		return nil
 	}

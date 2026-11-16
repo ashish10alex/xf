@@ -16,11 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/session"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -45,10 +45,10 @@ type inspectorRuns struct {
 
 // inspectorRun is one row's query, queued, running or ended.
 type inspectorRun struct {
-	Phase string           `json:"phase"` // queued, running, done, failed, cancelled
-	SQL   string           `json:"sql"`
-	Job   *bigquery.JobRef `json:"job,omitempty"`
-	Rows  int64            `json:"rows"`
+	Phase string            `json:"phase"` // queued, running, done, failed, cancelled
+	SQL   string            `json:"sql"`
+	Job   *warehouse.JobRef `json:"job,omitempty"`
+	Rows  int64             `json:"rows"`
 	// Cost is what the billed bytes cost on demand, once done.
 	Cost   string    `json:"cost,omitempty"`
 	Billed int64     `json:"billed"`
@@ -355,14 +355,14 @@ func (p *projectState) inspectorDryRun(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	d, err := p.deps.DryRun(ctx, def.Project, def.Location, inspectorSQL(req.Table, req.Filter))
 	if err != nil {
-		v.Auth = errors.Is(err, bigquery.ErrAuth)
+		v.Auth = errors.Is(err, warehouse.ErrAuth)
 		v.Error = queryError(err).Error()
 		writeJSON(w, v)
 		return
 	}
 	v.OK, v.Bytes, v.Accuracy, v.StatementType = true, d.Bytes, d.Accuracy, d.StatementType
-	v.Text = bigquery.FormatBytes(d.Bytes)
-	if d.Accuracy == bigquery.AccuracyUnknown {
+	v.Text = warehouse.FormatBytes(d.Bytes)
+	if d.Accuracy == warehouse.AccuracyUnknown {
 		v.Text = "unknown"
 	} else {
 		v.Cost = cost.FormatUSD(d.CostUSD())
@@ -467,7 +467,7 @@ func (p *projectState) runInspected(ctx context.Context, def scratchDefaultsView
 		end("failed", err.Error())
 		return
 	}
-	ref, err := c.StartQuery(ctx, bigquery.QueryOptions{Project: def.Project, Location: def.Location, SQL: run.SQL, Labels: map[string]string{inspectorLabel: "true"}})
+	ref, err := c.StartQuery(ctx, warehouse.QueryOptions{Project: def.Project, Location: def.Location, SQL: run.SQL, Labels: map[string]string{inspectorLabel: "true"}})
 	if err != nil {
 		if ctx.Err() != nil {
 			end("cancelled", "")
@@ -515,7 +515,9 @@ func (p *projectState) runInspected(ctx context.Context, def scratchDefaultsView
 		}
 		changed(func() {
 			run.Rows, run.Billed = page.Total, st.BytesBilled
-			run.Cost = cost.FormatUSD(bigquery.CostUSD(st.BytesBilled))
+			if co, ok := c.(warehouse.Coster); ok {
+				run.Cost = cost.FormatUSD(co.CostUSD(st.BytesBilled))
+			}
 		})
 		end("done", "")
 		return

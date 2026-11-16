@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/forge"
 	"github.com/ashish10alex/xf/internal/gcpauth"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Status is how one preflight line came out.
@@ -328,7 +328,7 @@ func access(ctx context.Context, p Probes, out *Preflight, add func(Line)) {
 		if strings.Contains(errText(err), "(needs roles/") {
 			fix = "grant it to the identity xf runs as"
 		}
-		if errors.Is(err, bigquery.ErrAuth) {
+		if errors.Is(err, warehouse.ErrAuth) {
 			fix = googleFix(p.AsYou)
 		}
 		add(Line{Name: "BigQuery", Status: Fail, Detail: "jobs in " + u.project + " (" + u.why + asYou + "): " + oneLine(errText(err)), Fix: fix})
@@ -353,7 +353,7 @@ func access(ctx context.Context, p Probes, out *Preflight, add func(Line)) {
 
 // errText is a BigQuery error's message, without the "(HTTP 403)".
 func errText(err error) string {
-	if e, ok := errors.AsType[*bigquery.APIError](err); ok {
+	if e, ok := errors.AsType[*warehouse.APIError](err); ok {
 		return e.Message
 	}
 	return err.Error()

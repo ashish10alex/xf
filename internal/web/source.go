@@ -16,12 +16,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/diagnose"
 	"github.com/ashish10alex/xf/internal/gitscm"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // The source pane edits the file of the selected action. A save names the
@@ -862,7 +862,7 @@ func (p *projectState) sourceDiagnostics(w http.ResponseWriter, r *http.Request)
 		ctx, cancel := context.WithTimeout(r.Context(), sourceDryRunTimeout)
 		defer cancel()
 		deferred := p.deferredFile(ctx, g, file)
-		run := func(ctx context.Context, a *project.Action, query string) (*bigquery.DryRun, error) {
+		run := func(ctx context.Context, a *project.Action, query string) (*warehouse.Check, error) {
 			project, location := g.DryRunTarget(a)
 			if d := deferred[a.ID]; d != nil {
 				query = deferral.Rewrite(query, d.Entries)

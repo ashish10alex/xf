@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Level is how loud a note on a changed line is.
@@ -132,7 +132,7 @@ func Notes(r *Report, o Options, src Source, prefix string) []Note {
 		if r.CostTripped(o) {
 			total, bound := r.Cost.Total()
 			notes = append(notes, Note{Level: Error, Check: "xf/cost-limit", Title: "Over the cost limit",
-				Text: fmt.Sprintf("The changed actions scan %s%s between them, over the limit of %s.", bound, bigquery.FormatBytes(total), bigquery.FormatBytes(o.Cost.Threshold))})
+				Text: fmt.Sprintf("The changed actions scan %s%s between them, over the limit of %s.", bound, warehouse.FormatBytes(total), warehouse.FormatBytes(o.Cost.Threshold))})
 		}
 	}
 	return notes

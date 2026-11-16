@@ -9,13 +9,13 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // dbtTargets compiles a dbt project for column impact and query cost with
@@ -124,7 +124,7 @@ func compiledSQL(g *project.Graph) error {
 // xf's target fold into the actions they run. The merge-base is compiled
 // with the same target, to tell the base branch's changes from the
 // branch's.
-func dbtImpact(bq func(context.Context) (*bigquery.Client, error), dryRun dryRunFunc, targets *dbtTargets) engine.ImpactFunc {
+func dbtImpact(bq func(context.Context) (warehouse.Warehouse, error), dryRun dryRunFunc, targets *dbtTargets) engine.ImpactFunc {
 	lc := lazyLineage()
 	return func(ctx context.Context, req engine.ImpactRequest, res *changes.Result, g *project.Graph, progress func(impact.Progress)) (*impact.Report, error) {
 		if g == nil {

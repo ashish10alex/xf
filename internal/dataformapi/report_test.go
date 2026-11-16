@@ -10,20 +10,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // fakeJobs answers job lookups from jobs, and fails the rest.
 type fakeJobs struct {
 	mu    sync.Mutex
-	jobs  map[string]bigquery.Job
+	jobs  map[string]warehouse.Job
 	asked []string // "project/location/id"
 	// onlyIn, when set, is the one location the jobs are found in.
 	onlyIn string
 }
 
-func (f *fakeJobs) Job(_ context.Context, proj, location, id string) (*bigquery.Job, error) {
+func (f *fakeJobs) Job(_ context.Context, proj, location, id string) (*warehouse.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.asked = append(f.asked, proj+"/"+location+"/"+id)
@@ -69,7 +69,7 @@ func TestRunReport(t *testing.T) {
 		{state: StateFailed, actions: []Action{act("c", "SKIPPED"), done, failed}},
 	}}
 	start := time.Date(2026, 10, 5, 10, 0, 1, 0, time.UTC)
-	jobs := &fakeJobs{jobs: map[string]bigquery.Job{
+	jobs := &fakeJobs{jobs: map[string]warehouse.Job{
 		"job_a": {Location: "EU", BytesBilled: 1 << 40, BytesProcessed: 1 << 39, SlotMs: 64000, Started: start, Ended: start.Add(3 * time.Second)},
 	}}
 	opts := testOpts

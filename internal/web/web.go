@@ -43,13 +43,13 @@ import (
 	"time"
 
 	"github.com/ashish10alex/xf/internal/backend"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/gcpauth"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/session"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"github.com/ashish10alex/xf/internal/webtheme"
 )
 
@@ -150,9 +150,9 @@ type Project struct {
 	Close func()
 	// Editor changes the editor o opens files with; nil can't.
 	Editor *Editor
-	// BigQuery makes the client scratch queries run with; nil hides the
+	// Warehouse makes the client scratch queries run with; nil hides the
 	// Scratch view.
-	BigQuery func(ctx context.Context) (*bigquery.Client, error)
+	Warehouse func(ctx context.Context) (warehouse.Warehouse, error)
 	// ScratchWarnGB and ScratchConfirmGB are the sizes of a scratch's dry
 	// run, in GiB, at which the page turns it amber, and red and asks
 	// before running; 0 uses the defaults.
@@ -836,7 +836,7 @@ func writeError(w http.ResponseWriter, err error) {
 		v.Kind = "stale"
 	case strings.Contains(err.Error(), "could not compile"):
 		v.Kind = "compile"
-	case errors.Is(err, bigquery.ErrAuth):
+	case errors.Is(err, warehouse.ErrAuth):
 		v.Kind = "auth"
 	}
 	_ = json.NewEncoder(w).Encode(v)

@@ -16,6 +16,7 @@ import (
 	"github.com/ashish10alex/xf/internal/bqfuncs"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func TestScratchHeader(t *testing.T) {
@@ -34,7 +35,7 @@ func TestScratchHeader(t *testing.T) {
 }
 
 func TestSelectColumns(t *testing.T) {
-	got := selectColumns("p", "d", "t", []bigquery.Field{{Name: "id"}, {Name: "order"}, {Name: "my col"}, {Name: "amount"}})
+	got := selectColumns("p", "d", "t", []warehouse.Column{{Name: "id"}, {Name: "order"}, {Name: "my col"}, {Name: "amount"}})
 	want := "SELECT\n  id,\n  `order`,\n  `my col`,\n  amount\nFROM `p.d.t`\n"
 	if got != want {
 		t.Errorf("select =\n%s\nwant\n%s", got, want)
@@ -129,19 +130,19 @@ func newScratchTest(t *testing.T, deps frontend.Deps, bq *bigquery.Client) (stri
 		deps.Engine = newFakeEngine(testGraph())
 	}
 	if deps.DryRun == nil {
-		deps.DryRun = func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
-			return bq.DryRun(ctx, project, location, sql)
+		deps.DryRun = func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
+			return bq.Check(ctx, project, location, sql)
 		}
 	}
-	_, ts, c := newTestProject(t, &Project{Deps: deps, BigQuery: func(context.Context) (*bigquery.Client, error) { return bq, nil }, ScratchWarnGB: 1, ScratchConfirmGB: 50})
+	_, ts, c := newTestProject(t, &Project{Deps: deps, Warehouse: func(context.Context) (warehouse.Warehouse, error) { return bq, nil }, ScratchWarnGB: 1, ScratchConfirmGB: 50})
 	return root, ts, c
 }
 
 func TestScratchCreateEditAndDelete(t *testing.T) {
 	bq, _ := fakeScratchBQ(t)
 	root, ts, c := newScratchTest(t, frontend.Deps{
-		Table: func(ctx context.Context, p, d, tb string) (*bigquery.Table, error) {
-			return &bigquery.Table{Location: "EU", Schema: []bigquery.Field{{Name: "id"}, {Name: "amount"}}}, nil
+		Table: func(ctx context.Context, p, d, tb string) (*warehouse.Table, error) {
+			return &warehouse.Table{Location: "EU", Schema: []warehouse.Column{{Name: "id"}, {Name: "amount"}}}, nil
 		},
 	}, bq)
 
@@ -233,8 +234,8 @@ func TestRefOfConsoleURL(t *testing.T) {
 func TestScratchColumnsNeedTheTable(t *testing.T) {
 	bq, _ := fakeScratchBQ(t)
 	_, ts, c := newScratchTest(t, frontend.Deps{
-		Table: func(ctx context.Context, p, d, tb string) (*bigquery.Table, error) {
-			return nil, &bigquery.APIError{Status: 404, Message: "Not found"}
+		Table: func(ctx context.Context, p, d, tb string) (*warehouse.Table, error) {
+			return nil, &warehouse.APIError{Status: 404, Message: "Not found"}
 		},
 	}, bq)
 	res, err := c.Post(ts.URL+"/api/scratch/create", "application/json", strings.NewReader(`{"id":"p.mart.orders","form":"columns"}`))
@@ -279,7 +280,7 @@ func TestScratchRunAndExport(t *testing.T) {
 	var f scratchFile
 	postJSON(t, c, ts.URL+"/api/scratch/create", map[string]any{"id": "p.mart.orders", "form": "compiled"}, &f)
 
-	var ref bigquery.JobRef
+	var ref warehouse.JobRef
 	postJSON(t, c, ts.URL+"/api/scratch/run", map[string]any{"id": f.ID, "sql": "SELECT 1"}, &ref)
 	if ref.Project != "p" || ref.Location != "EU" && ref.Location != "" || !strings.HasPrefix(ref.ID, "xf_scratch_") {
 		t.Errorf("job = %+v", ref)
@@ -291,7 +292,7 @@ func TestScratchRunAndExport(t *testing.T) {
 	if job.State != "DONE" || job.BytesBilled != 10485760 || job.StatementType != "SELECT" || job.Cost != "$0.000" {
 		t.Errorf("job view = %+v, cost %q", job.QueryStatus, job.Cost)
 	}
-	var page bigquery.Page
+	var page warehouse.Page
 	getJSON(t, c, ts.URL+"/api/scratch/rows?"+q, &page)
 	if page.Total != 2 || len(page.Rows) != 2 || page.Rows[0][1] != "x,y" || page.Rows[1][1] != nil {
 		t.Errorf("rows = %+v", page)
@@ -329,7 +330,7 @@ func TestScratchMetaIsCachedAndCleared(t *testing.T) {
 	if len(ds) != 2 || ds[0] != "sales" || count("/datasets") != 1 {
 		t.Errorf("datasets = %v after %d calls, want 2 and one call", ds, count("/datasets"))
 	}
-	var ts2 []bigquery.TableListing
+	var ts2 []warehouse.TableListing
 	getJSON(t, c, ts.URL+"/api/scratch/meta/tables?project=p&dataset=sales", &ts2)
 	if len(ts2) != 2 || ts2[1].Type != "VIEW" {
 		t.Errorf("tables = %+v", ts2)
@@ -411,8 +412,8 @@ func TestClearsMeta(t *testing.T) {
 }
 
 func TestFilterSQL(t *testing.T) {
-	schema := []bigquery.Field{{Name: "country", Type: "STRING"}, {Name: "tags", Type: "STRING", Mode: "REPEATED"}, {Name: "blob", Type: "BYTES"}, {Name: "s", Type: "RECORD"}, {Name: "n", Type: "INTEGER"}}
-	sql, params, err := filterSQL(bigquery.TableRef{Project: "p", Dataset: "_d", Table: "t"}, schema,
+	schema := []warehouse.Column{{Name: "country", Type: "STRING"}, {Name: "tags", Type: "STRING", Repeated: true}, {Name: "blob", Type: "BYTES"}, {Name: "s", Type: "RECORD"}, {Name: "n", Type: "INTEGER"}}
+	sql, params, err := filterSQL(warehouse.TableRef{Project: "p", Dataset: "_d", Table: "t"}, schema,
 		[]filterTerm{{"country", "uk"}, {"tags", "x"}, {"blob", "y"}, {"s", "z"}, {"n", ""}, {"n", "5"}}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -425,21 +426,21 @@ func TestFilterSQL(t *testing.T) {
 		t.Errorf("params = %v", params)
 	}
 	// Text is never SQL, and a column is only one the result has.
-	if _, _, err := filterSQL(bigquery.TableRef{}, schema, []filterTerm{{"nope", "x"}}, nil); err == nil {
+	if _, _, err := filterSQL(warehouse.TableRef{}, schema, []filterTerm{{"nope", "x"}}, nil); err == nil {
 		t.Error("a filter on a missing column passed")
 	}
-	if _, _, err := filterSQL(bigquery.TableRef{}, schema, []filterTerm{{"country", ""}}, nil); err == nil {
+	if _, _, err := filterSQL(warehouse.TableRef{}, schema, []filterTerm{{"country", ""}}, nil); err == nil {
 		t.Error("no filter text passed")
 	}
-	sql, params, _ = filterSQL(bigquery.TableRef{Project: "p", Dataset: "d", Table: "t"}, schema, []filterTerm{{"country", "'; DROP TABLE x; --"}}, nil)
+	sql, params, _ = filterSQL(warehouse.TableRef{Project: "p", Dataset: "d", Table: "t"}, schema, []filterTerm{{"country", "'; DROP TABLE x; --"}}, nil)
 	if strings.Contains(sql, "DROP") || params["f0"] != "'; DROP TABLE x; --" {
 		t.Errorf("filter text reached the SQL: %s", sql)
 	}
 }
 
 func TestFilterSQLSorts(t *testing.T) {
-	schema := []bigquery.Field{{Name: "country", Type: "STRING"}, {Name: "tags", Type: "STRING", Mode: "REPEATED"}, {Name: "s", Type: "RECORD"}, {Name: "b", Type: "BYTES"}}
-	tbl := bigquery.TableRef{Project: "p", Dataset: "d", Table: "t"}
+	schema := []warehouse.Column{{Name: "country", Type: "STRING"}, {Name: "tags", Type: "STRING", Repeated: true}, {Name: "s", Type: "RECORD"}, {Name: "b", Type: "BYTES"}}
+	tbl := warehouse.TableRef{Project: "p", Dataset: "d", Table: "t"}
 	got, params, err := filterSQL(tbl, schema, nil, []sortTerm{{"country", true}})
 	if err != nil || got != "SELECT * FROM `p.d.t` ORDER BY `country` DESC" || len(params) != 0 {
 		t.Errorf("sort only = %q %v %v", got, params, err)
@@ -532,8 +533,8 @@ func TestStandaloneScratchFolder(t *testing.T) {
 	bq, _ := fakeScratchBQ(t)
 	dir := filepath.Join(t.TempDir(), "xf", "tmp")
 	s, ts, c := newTestProject(t, &Project{
-		Deps:       frontend.Deps{Root: filepath.Dir(dir), Engine: newFakeEngine(project.NewGraph(nil)), DryRun: bq.DryRun},
-		BigQuery:   func(context.Context) (*bigquery.Client, error) { return bq, nil },
+		Deps:       frontend.Deps{Root: filepath.Dir(dir), Engine: newFakeEngine(project.NewGraph(nil)), DryRun: bq.Check},
+		Warehouse:  func(context.Context) (warehouse.Warehouse, error) { return bq, nil },
 		ScratchDir: dir, ScratchProject: "flag-proj", ScratchLocation: "EU", Standalone: true, StartScratch: true,
 	})
 	var def scratchDefaultsView

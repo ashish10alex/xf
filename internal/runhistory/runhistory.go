@@ -19,10 +19,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/dataformapi"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/runjobs"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Keep is how many runs of a project are kept.
@@ -344,7 +344,7 @@ func Refresh(ctx context.Context, jobs runjobs.JobReader, e Entry) Entry {
 	return e
 }
 
-func lookUp(ctx context.Context, jobs runjobs.JobReader, ref dataformapi.JobRef) (*bigquery.Job, error) {
+func lookUp(ctx context.Context, jobs runjobs.JobReader, ref dataformapi.JobRef) (*warehouse.Job, error) {
 	if jobs == nil {
 		return nil, errors.New("no BigQuery client")
 	}

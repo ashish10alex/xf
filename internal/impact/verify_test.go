@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func TestSwapTable(t *testing.T) {
@@ -58,25 +58,25 @@ func TestRunDryRunsReadersThatStillNameADroppedColumn(t *testing.T) {
 					{ID: "p.marts.daily", FileName: "definitions/daily.sqlx", Type: "view", Reasons: []changes.Reason{changes.ReasonSQL}},
 					{ID: "p.marts.orders", FileName: "definitions/orders.sqlx", Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
 				}}}
-			prod := map[string][]bigquery.Field{
+			prod := map[string][]warehouse.Column{
 				"p.marts.orders": {f("order_id", "INT64"), f("amount", "FLOAT"), f("discount", "NUMERIC")},
 				"p.marts.daily":  {f("discount", "FLOAT")},
 			}
 			var swapped []string
 			deps := Deps{
-				Schema: func(_ context.Context, table string) ([]bigquery.Field, error) { return prod[table], nil },
-				DryRun: func(_ context.Context, _, _, sql string) (*bigquery.DryRun, error) {
+				Schema: func(_ context.Context, table string) ([]warehouse.Column, error) { return prod[table], nil },
+				DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
 					switch {
 					case strings.Contains(sql, "FROM (\nSELECT order_id, amount FROM src\n)"):
 						swapped = append(swapped, sql)
 						if tc.dryRunErr != "" {
-							return nil, &bigquery.APIError{Status: 400, Message: tc.dryRunErr}
+							return nil, &warehouse.APIError{Status: 400, Message: tc.dryRunErr}
 						}
-						return &bigquery.DryRun{Schema: []bigquery.Field{f("discount", "FLOAT")}}, nil
+						return &warehouse.Check{Schema: []warehouse.Column{f("discount", "FLOAT")}}, nil
 					case strings.Contains(sql, "p.marts.orders"):
-						return &bigquery.DryRun{Schema: []bigquery.Field{f("discount", "FLOAT")}}, nil
+						return &warehouse.Check{Schema: []warehouse.Column{f("discount", "FLOAT")}}, nil
 					}
-					return &bigquery.DryRun{Schema: []bigquery.Field{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
+					return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INTEGER"), f("amount", "FLOAT")}}, nil
 				},
 				Readers: &fakeSource{columnLinks: map[string][]lineage.ColumnLink{
 					"p.marts.orders#discount": {{Table: "p.marts.daily", Column: "discount", DependencyType: lineage.Other}},

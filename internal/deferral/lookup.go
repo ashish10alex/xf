@@ -7,16 +7,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
-// BigQuery is what the lookups ask of BigQuery; *bigquery.Client is one.
+// BigQuery is what the lookups ask of BigQuery; a warehouse.ViewWriter is one.
 type BigQuery interface {
-	ListTablesLabelled(ctx context.Context, project, dataset string) ([]bigquery.LabelledTable, error)
+	ListTablesLabelled(ctx context.Context, project, dataset string) ([]warehouse.LabelledTable, error)
 	ListRoutines(ctx context.Context, project, dataset string) ([]string, error)
 	Exists(ctx context.Context, project, dataset, name string, routine bool) (bool, error)
-	View(ctx context.Context, project, dataset, table string) (*bigquery.ViewInfo, error)
+	View(ctx context.Context, project, dataset, table string) (*warehouse.ViewInfo, error)
 }
 
 // lookupTTL is how long a listing or a prod lookup is kept, so a dry run
@@ -123,9 +123,9 @@ func (l *Lookups) list(ctx context.Context, database, schema string) (*listing, 
 	out := &listing{at: l.now(), tables: map[string]bool{}, proxies: map[string]bool{}}
 	tables, err := bq.ListTablesLabelled(ctx, database, schema)
 	switch {
-	case bigquery.IsNotFound(err):
+	case warehouse.IsNotFound(err):
 		out.missing = true
-	case bigquery.IsForbidden(err):
+	case warehouse.IsForbidden(err):
 		return nil, fmt.Errorf("no permission to list the dev dataset %s, so it isn't known which upstream tables are built in dev: %w", key, err)
 	case err != nil:
 		return nil, fmt.Errorf("listing the dev dataset %s: %w", key, err)
@@ -207,7 +207,7 @@ func (l *Lookups) prodStatus(ctx context.Context, t project.Target, routine bool
 		var ok bool
 		ok, err = bq.Exists(ctx, t.Database, t.Schema, t.Name, routine)
 		switch {
-		case bigquery.IsForbidden(err):
+		case warehouse.IsForbidden(err):
 			status = ProdUnreadable
 		case err != nil:
 			return ProdMissing // not kept: it may pass next time

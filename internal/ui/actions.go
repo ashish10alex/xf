@@ -8,8 +8,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // The Actions pane lists every action the selected action's file defines
@@ -56,7 +56,7 @@ func (m Model) actionsLines(width int, focused bool) (lines []string, starts []i
 		}
 	}
 	if authFailed {
-		lines = append(lines, s.warnText.Render("dry runs need Google credentials: "+bigquery.AuthHint+", then c"))
+		lines = append(lines, s.warnText.Render("dry runs need Google credentials: "+warehouse.AuthHint+", then c"))
 		if hint := m.accountHint(); hint != "" {
 			lines = append(lines, s.dim.Render(hint))
 		}
@@ -192,12 +192,12 @@ func (m Model) actionDetails(a *project.Action) (details []detail, auth bool) {
 				d.value, d.style = m.sqlNote(a), s.dim
 			case e == nil || !e.done:
 				d.value, d.style = "running…", s.dim
-			case errors.Is(e.err, bigquery.ErrAuth):
+			case errors.Is(e.err, warehouse.ErrAuth):
 				auth = true
 				d.value, d.style = "no credentials", s.warnText
 			case e.err != nil:
 				msg := e.err.Error()
-				if apiErr, ok := errors.AsType[*bigquery.APIError](e.err); ok {
+				if apiErr, ok := errors.AsType[*warehouse.APIError](e.err); ok {
 					msg = apiErr.Message
 				}
 				d.value, d.style = "✗ "+firstLine(msg), s.errorText

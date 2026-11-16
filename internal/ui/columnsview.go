@@ -13,9 +13,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // columnsView is the SQL pane's other view: the columns the selected
@@ -76,12 +76,12 @@ func (v *columnsView) setAction(a *project.Action) {
 
 // match keeps the fields whose name holds the name filter and whose type
 // holds the type filter, whatever their case.
-func (v columnsView) match(fields []bigquery.Field) []bigquery.Field {
+func (v columnsView) match(fields []warehouse.Column) []warehouse.Column {
 	name, typ := strings.ToLower(strings.TrimSpace(v.name.Value())), strings.ToLower(strings.TrimSpace(v.typ.Value()))
 	if name == "" && typ == "" {
 		return fields
 	}
-	var out []bigquery.Field
+	var out []warehouse.Column
 	for _, f := range fields {
 		if strings.Contains(strings.ToLower(f.Name), name) && strings.Contains(strings.ToLower(f.Type), typ) {
 			out = append(out, f)
@@ -136,7 +136,7 @@ func (m Model) columnsQuery(a *project.Action) (project.DryRunQuery, bool) {
 // columns is the selected action's columns and their nested fields by name
 // (see frontend.FlattenFields), or why there are none
 // to show; failed is set when that is an error.
-func (m Model) columns() (fields []bigquery.Field, reason string, failed bool) {
+func (m Model) columns() (fields []warehouse.Column, reason string, failed bool) {
 	a := m.selected
 	switch {
 	case m.graph == nil && m.compiling:
@@ -165,11 +165,11 @@ func (m Model) columns() (fields []bigquery.Field, reason string, failed bool) {
 	switch {
 	case e == nil || !e.done:
 		return nil, "dry run…", false
-	case errors.Is(e.err, bigquery.ErrAuth):
+	case errors.Is(e.err, warehouse.ErrAuth):
 		return nil, "no credentials for the dry run — press e for details", true
 	case e.err != nil:
 		msg := e.err.Error()
-		if apiErr, ok := errors.AsType[*bigquery.APIError](e.err); ok {
+		if apiErr, ok := errors.AsType[*warehouse.APIError](e.err); ok {
 			msg = apiErr.Message
 		}
 		return nil, "✗ " + firstLine(msg) + " — press e for details", true
@@ -212,7 +212,7 @@ const modeColW = 8
 // the type as wide as their widest (and wide enough for their filters'
 // boxes), so a type sits beside its name on a wide pane; the name gives way
 // on a narrow one.
-func columnsLayout(fields []bigquery.Field, width int) []table.Column {
+func columnsLayout(fields []warehouse.Column, width int) []table.Column {
 	nameW, typeW := 24, 12
 	for _, f := range fields {
 		nameW = max(nameW, ansi.StringWidth(f.Name))
@@ -225,11 +225,11 @@ func columnsLayout(fields []bigquery.Field, width int) []table.Column {
 
 // columnMode is a field's mode as its cell shows it: NULLABLE, which
 // BigQuery often leaves out, is blank.
-func columnMode(f bigquery.Field) string {
-	if strings.EqualFold(f.Mode, "NULLABLE") {
+func columnMode(f warehouse.Column) string {
+	if strings.EqualFold(f.Mode(), "NULLABLE") {
 		return ""
 	}
-	return f.Mode
+	return f.Mode()
 }
 
 // columnsBody renders the columns view in the SQL pane's cells: the table,
@@ -345,7 +345,7 @@ func (m *Model) handleColumnsKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	shown := v.match(fields)
 	n, h := len(shown), m.sql.height
 	page := max(v.columnRows(h)/2, 1)
-	copyColumn := func(text func(f bigquery.Field) string) tea.Cmd {
+	copyColumn := func(text func(f warehouse.Column) string) tea.Cmd {
 		if n == 0 {
 			return nil
 		}
@@ -373,9 +373,9 @@ func (m *Model) handleColumnsKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	case key.Matches(msg, k.Bottom):
 		v.move(n, n, h)
 	case key.Matches(msg, k.CopyColumn):
-		return true, copyColumn(func(f bigquery.Field) string { return f.Name })
+		return true, copyColumn(func(f warehouse.Column) string { return f.Name })
 	case key.Matches(msg, k.CopyColumnType):
-		return true, copyColumn(func(f bigquery.Field) string { return f.Name + " " + f.Type })
+		return true, copyColumn(func(f warehouse.Column) string { return f.Name + " " + f.Type })
 	default:
 		return false, nil
 	}

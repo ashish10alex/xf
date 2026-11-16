@@ -9,26 +9,26 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // fakeTables answers table lookups from canned replies by table name;
 // anything else doesn't exist.
 type fakeTables struct {
 	mu      sync.Mutex
-	replies map[string]func() (*bigquery.Table, error)
+	replies map[string]func() (*warehouse.Table, error)
 	calls   []string // "project.dataset.table"
 }
 
-func (f *fakeTables) table(_ context.Context, project, dataset, table string) (*bigquery.Table, error) {
+func (f *fakeTables) table(_ context.Context, project, dataset, table string) (*warehouse.Table, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, project+"."+dataset+"."+table)
 	if reply := f.replies[table]; reply != nil {
 		return reply()
 	}
-	return nil, &bigquery.APIError{Status: 404, Message: "Not found: Table " + table}
+	return nil, &warehouse.APIError{Status: 404, Message: "Not found: Table " + table}
 }
 
 func (f *fakeTables) count(name string) int {
@@ -47,12 +47,12 @@ func TestActionsPaneShowsWhenTheTableWasUpdated(t *testing.T) {
 	now := testNow()
 	updated := now.Add(-3 * time.Hour)
 	var failing error
-	bq := &fakeTables{replies: map[string]func() (*bigquery.Table, error){
-		"daily_orders": func() (*bigquery.Table, error) {
+	bq := &fakeTables{replies: map[string]func() (*warehouse.Table, error){
+		"daily_orders": func() (*warehouse.Table, error) {
 			if failing != nil {
 				return nil, failing
 			}
-			return &bigquery.Table{Type: "TABLE", LastModified: updated}, nil
+			return &warehouse.Table{Type: "TABLE", LastModified: updated}, nil
 		},
 	}}
 	fc := &fakeCompiler{t: t, fixtures: []string{"basic.json"}}
@@ -103,7 +103,7 @@ func TestActionsPaneShowsWhenTheTableWasUpdated(t *testing.T) {
 	}
 
 	// A failed lookup says why.
-	failing = &bigquery.APIError{Status: 403, Message: "Access Denied: Table daily_orders"}
+	failing = &warehouse.APIError{Status: 403, Message: "Access Denied: Table daily_orders"}
 	m.expireTables(false)
 	m = drive(t, m, nil, tea.WindowSizeMsg{Width: 140, Height: 40})
 	assertContains(t, screen(m), "    updated      ✗ Access Denied: Table daily_orders")

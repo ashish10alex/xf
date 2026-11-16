@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/commanduse"
 	"github.com/ashish10alex/xf/internal/cost"
@@ -22,6 +21,7 @@ import (
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/runhistory"
 	"github.com/ashish10alex/xf/internal/session"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Engine keeps the project compiled (see package engine). main passes the
@@ -149,15 +149,15 @@ type Deps struct {
 	// DryRun asks BigQuery to plan sql in a job in project and location,
 	// without running it; nil turns dry runs off. main passes the engine's
 	// cached DryRun.
-	DryRun func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error)
+	DryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 	// ForgetFailedDryRuns has whatever caches DryRun's answers try the
 	// failed ones again, after a run that may have built the tables they
 	// read; nil when DryRun keeps nothing.
 	ForgetFailedDryRuns func()
 	// Table fetches the BigQuery metadata of project.dataset.table, for
 	// when an action's table was last updated; a table that doesn't exist
-	// is a *bigquery.APIError with Status 404. Nil hides the line.
-	Table func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error)
+	// is a *warehouse.APIError with Status 404. Nil hides the line.
+	Table func(ctx context.Context, project, dataset, table string) (*warehouse.Table, error)
 	// Editor reports the file active in the editor (see nvim/plugin/xf.lua);
 	// nil disables following the editor.
 	Editor <-chan project.EditorEvent

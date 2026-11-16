@@ -16,7 +16,6 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/cost"
@@ -24,6 +23,7 @@ import (
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Exit codes of xf cost.
@@ -42,7 +42,7 @@ func runCost(args []string) int {
 		config.KeyDefaultBranch, config.KeyProdCompilerOptions)
 	pushed := fs.Bool("pushed", false, "estimate the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOver := fs.String("fail-over", "", "exit 1 when the changed actions scan more than this `size` between them, e.g. 100GB (units are binary: 1 GB is 2^30 bytes)")
-	usdPerTiB := fs.Float64("usd-per-tib", bigquery.OnDemandUSDPerTiB, "the `price` in dollars of a TiB scanned")
+	usdPerTiB := fs.Float64("usd-per-tib", warehouse.OnDemandUSDPerTiB, "the `price` in dollars of a TiB scanned")
 	output := fs.String("output", "", "also write the report to `path`: as Markdown, for a pull request comment, or as JSON with --json")
 	fs.StringVar(output, "o", "", "")
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of text")
@@ -219,8 +219,8 @@ func costCacheDir(logger *log.Logger) string {
 
 // partitionLookup reads how a table is partitioned with the client bq
 // makes.
-func partitionLookup(bq func(context.Context) (*bigquery.Client, error)) func(ctx context.Context, t bigquery.TableRef) (*bigquery.Partition, error) {
-	return func(ctx context.Context, t bigquery.TableRef) (*bigquery.Partition, error) {
+func partitionLookup(bq func(context.Context) (warehouse.Warehouse, error)) func(ctx context.Context, t warehouse.TableRef) (*warehouse.Partition, error) {
+	return func(ctx context.Context, t warehouse.TableRef) (*warehouse.Partition, error) {
 		c, err := bq(ctx)
 		if err != nil {
 			return nil, err
@@ -233,7 +233,7 @@ func partitionLookup(bq func(context.Context) (*bigquery.Client, error)) func(ct
 	}
 }
 
-type dryRunFunc = func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error)
+type dryRunFunc = func(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 
 // dataformCost checks query cost for xf serve in a Dataform project: dry
 // runs through dryRun (the engine's cached ones) and tables' partitioning
@@ -243,7 +243,7 @@ type dryRunFunc = func(ctx context.Context, project, location, sql string) (*big
 // those compiles are what is dry run, so the estimates are of the tables
 // prod runs read. With defer to prod on, a table the branch adds that prod
 // doesn't have is read from dev when lookups find it built there.
-func dataformCost(bq func(context.Context) (*bigquery.Client, error), dryRun dryRunFunc, b dataform.Backend, root string, plain *changes.Source, lookups *deferral.Lookups, logger *log.Logger) engine.CostFunc {
+func dataformCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun dryRunFunc, b dataform.Backend, root string, plain *changes.Source, lookups *deferral.Lookups, logger *log.Logger) engine.CostFunc {
 	var mu sync.Mutex
 	prodSources := map[string]*changes.Source{}
 	prodSource := func(options string, args []string) *changes.Source {
@@ -338,7 +338,7 @@ func inDev(g *project.Graph, lookups *deferral.Lookups, logger *log.Logger) func
 // the merge-base is a snapshot compiled for the purpose, as Changed Actions
 // only parse theirs. With dbtProdTarget set to another target, both are
 // compiled with it instead, so the dry runs read prod's tables.
-func dbtCost(bq func(context.Context) (*bigquery.Client, error), dryRun dryRunFunc, targets *dbtTargets) engine.CostFunc {
+func dbtCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun dryRunFunc, targets *dbtTargets) engine.CostFunc {
 	return func(ctx context.Context, req engine.CostRequest, res *changes.Result, g *project.Graph, progress func(cost.Progress)) (*cost.Report, error) {
 		if g == nil {
 			return nil, changes.ErrWorktreeOnly

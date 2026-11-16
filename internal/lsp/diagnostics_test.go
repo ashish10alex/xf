@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/ashish10alex/xf/internal/backend/dbt"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // waitDiagnostics returns the next diagnostics published for path that
@@ -89,14 +89,14 @@ func TestServeDryRunDiagnostics(t *testing.T) {
 	var mu sync.Mutex
 	var jobs []string
 	cfg := fixtureConfig(t)
-	cfg.DryRun = func(_ context.Context, project, location, query string) (*bigquery.DryRun, error) {
+	cfg.DryRun = func(_ context.Context, project, location, query string) (*warehouse.Check, error) {
 		mu.Lock()
 		jobs = append(jobs, project+"/"+location)
 		mu.Unlock()
 		if strings.Contains(query, "dev_js_view") {
-			return nil, &bigquery.APIError{Status: 404, Message: "Not found: Table demo-project:analytics.dev_js_view was not found in location EU"}
+			return nil, &warehouse.APIError{Status: 404, Message: "Not found: Table demo-project:analytics.dev_js_view was not found in location EU"}
 		}
-		return &bigquery.DryRun{Bytes: 1 << 30, Accuracy: bigquery.AccuracyPrecise}, nil
+		return &warehouse.Check{Bytes: 1 << 30, Accuracy: warehouse.AccuracyPrecise}, nil
 	}
 	c := startServer(t, cfg)
 	c.initialize(root, encodingUTF8)
@@ -121,8 +121,8 @@ func TestServeDryRunCostHint(t *testing.T) {
 	root := testdata(t, "projects", "navigation")
 	stg := filepath.Join(root, "definitions", "staging", "stg_events.sqlx")
 	cfg := fixtureConfig(t)
-	cfg.DryRun = func(context.Context, string, string, string) (*bigquery.DryRun, error) {
-		return &bigquery.DryRun{Bytes: 3 << 30, Accuracy: bigquery.AccuracyPrecise}, nil
+	cfg.DryRun = func(context.Context, string, string, string) (*warehouse.Check, error) {
+		return &warehouse.Check{Bytes: 3 << 30, Accuracy: warehouse.AccuracyPrecise}, nil
 	}
 	c := startServer(t, cfg)
 	c.initialize(root)
@@ -159,13 +159,13 @@ func TestServeStaleDryRunsAreDropped(t *testing.T) {
 		},
 		Watch: func(context.Context, string) (<-chan struct{}, error) { return changes, nil },
 	}
-	cfg.DryRun = func(_ context.Context, _, _, query string) (*bigquery.DryRun, error) {
+	cfg.DryRun = func(_ context.Context, _, _, query string) (*warehouse.Check, error) {
 		if query != "SELECT 2" {
 			started <- struct{}{}
 			<-release // ignores cancellation, like a slow network
-			return nil, &bigquery.APIError{Status: 400, Message: "stale error at [5:3]"}
+			return nil, &warehouse.APIError{Status: 400, Message: "stale error at [5:3]"}
 		}
-		return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise}, nil
+		return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise}, nil
 	}
 	c := startServer(t, cfg)
 	c.initialize(root)
@@ -195,11 +195,11 @@ func TestServeDryRunsAreCached(t *testing.T) {
 	calls := 0
 	cfg := fixtureConfig(t)
 	cfg.Watch = func(context.Context, string) (<-chan struct{}, error) { return changes, nil }
-	cfg.DryRun = func(context.Context, string, string, string) (*bigquery.DryRun, error) {
+	cfg.DryRun = func(context.Context, string, string, string) (*warehouse.Check, error) {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise}, nil
+		return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise}, nil
 	}
 	c := startServer(t, cfg)
 	c.initialize(root)
@@ -304,13 +304,13 @@ func TestServeDbtDryRunDiagnostics(t *testing.T) {
 	}
 	c := startServer(t, Config{
 		Compile: func(context.Context, string) (*project.Graph, error) { return g, nil },
-		DryRun: func(_ context.Context, _, _, query string) (*bigquery.DryRun, error) {
+		DryRun: func(_ context.Context, _, _, query string) (*warehouse.Check, error) {
 			i := strings.Index(query, "amount) as lifetime_value")
 			if i < 0 {
-				return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise}, nil
+				return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise}, nil
 			}
 			line, col := strings.Count(query[:i], "\n")+1, i-strings.LastIndex(query[:i], "\n")
-			return nil, &bigquery.APIError{Status: 400, Message: fmt.Sprintf("Unrecognized name: amount; Did you mean amounts? at [%d:%d]", line, col)}
+			return nil, &warehouse.APIError{Status: 400, Message: fmt.Sprintf("Unrecognized name: amount; Did you mean amounts? at [%d:%d]", line, col)}
 		},
 		Dbt: func(r string) bool { return r == root },
 	})

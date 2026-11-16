@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 var t0 = time.Date(2026, 10, 7, 11, 0, 0, 0, time.UTC)
@@ -93,9 +93,9 @@ func TestResultState(t *testing.T) {
 	}
 }
 
-type jobs map[string]*bigquery.Job
+type jobs map[string]*warehouse.Job
 
-func (j jobs) Job(_ context.Context, _, _, id string) (*bigquery.Job, error) {
+func (j jobs) Job(_ context.Context, _, _, id string) (*warehouse.Job, error) {
 	if job := j[id]; job != nil {
 		return job, nil
 	}

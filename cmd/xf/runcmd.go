@@ -18,7 +18,6 @@ import (
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/deferral"
@@ -26,6 +25,7 @@ import (
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/remote"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // xf run (ADR 0038): `dataform run` or `dbt build`, with the tool's own
@@ -121,7 +121,7 @@ type runCtx struct {
 // runEngine is what xf run asks of the engine; *remote.Client is one.
 type runEngine interface {
 	Deferral(ctx context.Context, req engine.DeferralRequest) (*engine.DeferralResult, error)
-	DryRun(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error)
+	DryRun(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 	ChangedActions(ctx context.Context, req changes.Request) (*changes.Result, error)
 }
 
@@ -174,13 +174,7 @@ func xfRun(ctx context.Context, ra runArgs) (int, error) {
 		return 0, err
 	}
 	rc := &runCtx{ra: ra, ta: ta, root: root, tool: name, settings: settings, b: b, engine: client, client: client, g: g, out: os.Stdout,
-		writer: func(ctx context.Context) (deferral.Writer, error) {
-			c, err := bigquery.NewClient(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return c, nil
-		}}
+		writer: newViewWriter}
 	if ra.removeViews {
 		return rc.removeViews(ctx)
 	}

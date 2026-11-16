@@ -17,13 +17,13 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Exit codes of xf impact.
@@ -250,7 +250,7 @@ func (p *progressPrinter) done() {
 // that are dev or prod runs fold into the actions they run, and with prod
 // options the changes are compared with the tables prod runs build. plain
 // compiles the merge-base, as it did for the Changed Actions.
-func impactChecker(bq func(context.Context) (*bigquery.Client, error), dryRun func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error), bin, root string, plain *changes.Source) engine.ImpactFunc {
+func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error), bin, root string, plain *changes.Source) engine.ImpactFunc {
 	lc := lazyLineage()
 	return func(ctx context.Context, req engine.ImpactRequest, res *changes.Result, g *project.Graph, progress func(impact.Progress)) (*impact.Report, error) {
 		if g == nil {

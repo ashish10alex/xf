@@ -16,7 +16,6 @@ import (
 	"syscall"
 
 	"github.com/ashish10alex/xf/internal/backend"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/check"
 	"github.com/ashish10alex/xf/internal/config"
@@ -24,6 +23,7 @@ import (
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/forge"
 	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // checkFlags are xf check's own flags.
@@ -61,7 +61,7 @@ func runCheck(args []string) int {
 	pushed := fs.Bool("pushed", false, "check the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOn := fs.String("fail-on", "", "exit 1 when a column change of this `severity` or worse is found: critical or warning")
 	failOver := fs.String("fail-over", "", "exit 1 when the changed actions scan more than this `size` between them, e.g. 100GB (units are binary)")
-	usdPerTiB := fs.Float64("usd-per-tib", bigquery.OnDemandUSDPerTiB, "the `price` in dollars of a TiB scanned")
+	usdPerTiB := fs.Float64("usd-per-tib", warehouse.OnDemandUSDPerTiB, "the `price` in dollars of a TiB scanned")
 	quietUnder := fs.String("quiet-under", "1GiB", "a run that grows by less than this `size` isn't worth a comment on cost alone")
 	output := fs.String("output", "", "write the report to `path` instead of stdout")
 	fs.StringVar(output, "o", "", "")

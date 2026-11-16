@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/cost"
@@ -21,6 +20,7 @@ import (
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -451,11 +451,11 @@ func (p *projectState) dryRunErrorsLocked() (errs []dryRunError, auth bool) {
 			e := p.dry[dryRunKey(proj, location, q.SQL)]
 			switch {
 			case e == nil || !e.done || e.err == nil:
-			case errors.Is(e.err, bigquery.ErrAuth):
+			case errors.Is(e.err, warehouse.ErrAuth):
 				auth = true
 			default:
 				msg, denied := e.err.Error(), false
-				if apiErr, ok := errors.AsType[*bigquery.APIError](e.err); ok {
+				if apiErr, ok := errors.AsType[*warehouse.APIError](e.err); ok {
 					msg, denied = apiErr.Message, apiErr.Status == http.StatusForbidden
 				}
 				errs = append(errs, dryRunError{Name: a.Target.Schema + "." + a.Target.Name, Label: q.Label, File: a.FileName,
@@ -581,7 +581,7 @@ func (p *projectState) errorsView(w http.ResponseWriter, r *http.Request) {
 	errs, auth := p.dryRunErrorsLocked()
 	v.DryRun = nonNil(errs)
 	if auth {
-		v.Auth = "no credentials: " + bigquery.AuthHint
+		v.Auth = "no credentials: " + warehouse.AuthHint
 	}
 	starts := p.retryOldFailuresLocked()
 	p.mu.Unlock()

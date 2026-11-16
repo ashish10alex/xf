@@ -11,8 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // errorsOverlay is the e overlay's state: the compile and dry run errors,
@@ -45,11 +45,11 @@ func (m Model) dryRunErrors() (errs []dryRunError, auth bool) {
 			e := m.dryRuns[dryRunKey(project, location, q.SQL)]
 			switch {
 			case e == nil || !e.done || e.err == nil:
-			case errors.Is(e.err, bigquery.ErrAuth):
+			case errors.Is(e.err, warehouse.ErrAuth):
 				auth = true
 			default:
 				msg, denied := e.err.Error(), false
-				if apiErr, ok := errors.AsType[*bigquery.APIError](e.err); ok {
+				if apiErr, ok := errors.AsType[*warehouse.APIError](e.err); ok {
 					msg, denied = apiErr.Message, apiErr.Status == http.StatusForbidden
 				}
 				errs = append(errs, dryRunError{action: a, label: q.Label, msg: msg, denied: denied})
@@ -97,7 +97,7 @@ func (m Model) errorLines() []string {
 		lines = append(lines, s.title.Render("dry run errors"))
 	}
 	if auth {
-		lines = append(lines, s.warnText.Render("no credentials: "+bigquery.AuthHint))
+		lines = append(lines, s.warnText.Render("no credentials: "+warehouse.AuthHint))
 		if hint := m.accountHint(); hint != "" {
 			lines = append(lines, s.dim.Render(hint))
 		}

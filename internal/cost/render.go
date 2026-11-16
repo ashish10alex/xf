@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Options are how a report is priced and judged.
@@ -72,7 +72,7 @@ func HiddenLine(hidden int, o Options) string {
 		return ""
 	}
 	return fmt.Sprintf("Not shown: %s, estimated with partition filters and scanning less than %s more than at the merge-base; the total counts %s.",
-		plural(hidden, "more action", "more actions"), bigquery.FormatBytes(o.growthOver()), map[bool]string{true: "it", false: "them"}[hidden == 1])
+		plural(hidden, "more action", "more actions"), warehouse.FormatBytes(o.growthOver()), map[bool]string{true: "it", false: "them"}[hidden == 1])
 }
 
 // ANSI styles of Text.
@@ -112,7 +112,7 @@ func (o Options) price() float64 {
 	if o.USDPerTiB > 0 {
 		return o.USDPerTiB
 	}
-	return bigquery.OnDemandUSDPerTiB
+	return warehouse.OnDemandUSDPerTiB
 }
 
 // USD is the price of scanning bytes.
@@ -129,7 +129,7 @@ func FormatUSD(v float64) string {
 }
 
 // Size is an estimate as shown: "≤ 1.20 GiB".
-func Size(e Estimate) string { return e.Bound() + bigquery.FormatBytes(e.Bytes) }
+func Size(e Estimate) string { return e.Bound() + warehouse.FormatBytes(e.Bytes) }
 
 // DeltaText is the action's change against the merge-base as shown: "new",
 // "+1.20 GiB", "-300.00 MiB", "no change", or "" when it isn't known.
@@ -144,9 +144,9 @@ func DeltaText(a Action) string {
 	case d == 0:
 		return "no change"
 	case d < 0:
-		return "-" + bigquery.FormatBytes(-d)
+		return "-" + warehouse.FormatBytes(-d)
 	}
-	return "+" + bigquery.FormatBytes(d)
+	return "+" + warehouse.FormatBytes(d)
 }
 
 // SignedUSD is "+$0.52" or "-$0.522".
@@ -202,13 +202,13 @@ func LaterLine(r *Report, o Options) string {
 	if !ok {
 		return ""
 	}
-	return fmt.Sprintf("Each run after the first: %s%s | %s%s", bound, bigquery.FormatBytes(total), bound, FormatUSD(o.USD(total)))
+	return fmt.Sprintf("Each run after the first: %s%s | %s%s", bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)))
 }
 
 // TotalLine is "Total scanned: 4.20 TiB | Estimated cost: $26.26".
 func TotalLine(r *Report, o Options) string {
 	total, bound := r.Total()
-	return fmt.Sprintf("Total scanned: %s%s | Estimated cost: %s%s", bound, bigquery.FormatBytes(total), bound, FormatUSD(o.USD(total)))
+	return fmt.Sprintf("Total scanned: %s%s | Estimated cost: %s%s", bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)))
 }
 
 // GateLine says how the report's total compares with o.Threshold; "" when
@@ -219,9 +219,9 @@ func GateLine(r *Report, o Options) string {
 	}
 	total, _ := r.Total()
 	if r.Exceeds(o.Threshold) {
-		return fmt.Sprintf("Gate failed: %s exceeds the limit of %s", bigquery.FormatBytes(total), bigquery.FormatBytes(o.Threshold))
+		return fmt.Sprintf("Gate failed: %s exceeds the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
 	}
-	return fmt.Sprintf("Gate passed: %s is within the limit of %s", bigquery.FormatBytes(total), bigquery.FormatBytes(o.Threshold))
+	return fmt.Sprintf("Gate passed: %s is within the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
 }
 
 // UnsetHint is what a report whose dry runs read the default tables says,
@@ -461,7 +461,7 @@ func Markdown(r *Report, o Options) string {
 	}
 	total, bound := r.Total()
 	lines = append(lines, fmt.Sprintf("**Total scanned:** %s%s | **Estimated cost:** %s%s (on demand, at %s per TiB)",
-		bound, bigquery.FormatBytes(total), bound, FormatUSD(o.USD(total)), FormatUSD(o.price())))
+		bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)), FormatUSD(o.price())))
 	if later := LaterLine(r, o); later != "" {
 		lines = append(lines, "", later)
 	}

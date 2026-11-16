@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // ActionState words an action's state for its cell: "✓ succeeded".
@@ -81,7 +81,7 @@ func FirstLine(s string) string {
 }
 
 // FormatBytes uses binary units, as BigQuery bills: "0 B", "512 B", "1.20 GiB".
-func FormatBytes(n int64) string { return bigquery.FormatBytes(n) }
+func FormatBytes(n int64) string { return warehouse.FormatBytes(n) }
 
 // FormatCost is an estimated cost, to the hundredth of a cent the extension
 // shows.
@@ -204,9 +204,9 @@ const RenamedReason = "renamed"
 // flattenFields appends fields to out by name, each RECORD followed by the
 // fields in it, named by their path from the column ("items.sku"), which is
 // what a query names them by once the column is unnested.
-func flattenFields(out []bigquery.Field, prefix string, fields []bigquery.Field) []bigquery.Field {
+func flattenFields(out []warehouse.Column, prefix string, fields []warehouse.Column) []warehouse.Column {
 	fields = slices.Clone(fields)
-	slices.SortStableFunc(fields, func(x, y bigquery.Field) int {
+	slices.SortStableFunc(fields, func(x, y warehouse.Column) int {
 		return cmp.Or(cmp.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name)), cmp.Compare(x.Name, y.Name))
 	})
 	for _, f := range fields {
@@ -225,18 +225,18 @@ func flattenFields(out []bigquery.Field, prefix string, fields []bigquery.Field)
 // $0.007", "≤ 1.20 GiB $0.007" for an upper bound. warn is set when there is
 // no real estimate: BigQuery reports 0 bytes when it cannot tell, and the
 // query still scans data when it runs.
-func FormatDryRun(d *bigquery.DryRun) (text string, warn bool) {
+func FormatDryRun(d *warehouse.Check) (text string, warn bool) {
 	switch {
-	case d.Accuracy == bigquery.AccuracyUnknown:
+	case d.Accuracy == warehouse.AccuracyUnknown:
 		return "⚠ bytes unknown", true
-	case d.StatementType == "SCRIPT" && d.Accuracy != bigquery.AccuracyPrecise && d.Accuracy != bigquery.AccuracyUpperBound:
+	case d.StatementType == "SCRIPT" && d.Accuracy != warehouse.AccuracyPrecise && d.Accuracy != warehouse.AccuracyUpperBound:
 		return "⚠ no estimate for script", true
 	}
 	var prefix string
 	switch d.Accuracy {
-	case bigquery.AccuracyUpperBound:
+	case warehouse.AccuracyUpperBound:
 		prefix = "≤ "
-	case bigquery.AccuracyLowerBound:
+	case warehouse.AccuracyLowerBound:
 		prefix = "≥ "
 	}
 	return fmt.Sprintf("%s%s $%.3f", prefix, FormatBytes(d.Bytes), d.CostUSD()), false

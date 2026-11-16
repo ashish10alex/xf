@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/jsonrpc"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // DefaultGrace is how long a server waits for a client before exiting.
@@ -29,7 +29,7 @@ type ServerConfig struct {
 	// Engine is the started engine to share.
 	Engine *engine.Engine
 	// Table fetches a table's BigQuery metadata; nil turns lookups off.
-	Table func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error)
+	Table func(ctx context.Context, project, dataset, table string) (*warehouse.Table, error)
 	// Build is this server's build. It stops when a client from a newer
 	// one connects, so that client starts a server of its own build (see
 	// Build).
@@ -427,7 +427,7 @@ func (s *server) handle(ctx context.Context, jc *jsonrpc.Conn, m *jsonrpc.Messag
 			return
 		}
 		go func() {
-			res, err := (*bigquery.Table)(nil), engine.ErrNoDryRun
+			res, err := (*warehouse.Table)(nil), engine.ErrNoDryRun
 			if s.cfg.Table != nil {
 				res, err = s.cfg.Table(ctx, p.Project, p.Dataset, p.Table)
 			}

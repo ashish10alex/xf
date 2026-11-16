@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/ashish10alex/xf/internal/backend/cmdrun"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/commanduse"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/dataformapi"
@@ -27,6 +26,7 @@ import (
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/session"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"github.com/ashish10alex/xf/internal/webtheme"
 )
 
@@ -414,11 +414,11 @@ func TestRunStreamsToEveryPage(t *testing.T) {
 // the engine having forgotten its own failure first.
 func TestRunRetriesFailedDryRuns(t *testing.T) {
 	var built, forgot atomic.Bool
-	dry := func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+	dry := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 		if !built.Load() {
-			return nil, &bigquery.APIError{Status: 400, Message: "Unrecognized name: id at [1:8]"}
+			return nil, &warehouse.APIError{Status: 400, Message: "Unrecognized name: id at [1:8]"}
 		}
-		return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise, StatementType: "SELECT"}, nil
+		return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise, StatementType: "SELECT"}, nil
 	}
 	started := make(chan *fakeRun, 1)
 	start := func(ctx context.Context, o project.RunOptions) (*project.Run, error) {
@@ -467,11 +467,11 @@ func TestRunRetriesFailedDryRuns(t *testing.T) {
 // built outside xf) leaves it and the status line.
 func TestOldDryRunFailuresAskedAgain(t *testing.T) {
 	var fixed atomic.Bool
-	dry := func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+	dry := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 		if strings.Contains(sql, "raw.orders") && !fixed.Load() {
-			return nil, &bigquery.APIError{Status: 404, Message: "Not found: Table p:raw.orders\nwas not found"}
+			return nil, &warehouse.APIError{Status: 404, Message: "Not found: Table p:raw.orders\nwas not found"}
 		}
-		return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise, StatementType: "SELECT"}, nil
+		return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise, StatementType: "SELECT"}, nil
 	}
 	var mu sync.Mutex
 	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
@@ -1227,11 +1227,11 @@ func TestOperationWithOutputShowsUpdated(t *testing.T) {
 	g := project.NewGraph([]*project.Action{op("calendar", true), op("cleanup", false)})
 	var mu sync.Mutex
 	looked := map[string]int{}
-	table := func(ctx context.Context, p, d, tb string) (*bigquery.Table, error) {
+	table := func(ctx context.Context, p, d, tb string) (*warehouse.Table, error) {
 		mu.Lock()
 		looked[tb]++
 		mu.Unlock()
-		return &bigquery.Table{Type: "TABLE", LastModified: time.Date(2026, 10, 20, 9, 0, 0, 0, time.Local)}, nil
+		return &warehouse.Table{Type: "TABLE", LastModified: time.Date(2026, 10, 20, 9, 0, 0, 0, time.Local)}, nil
 	}
 	now := func() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.Local) }
 	_, ts, c := newTest(t, frontend.Deps{Engine: newFakeEngine(g), Table: table, Now: now})

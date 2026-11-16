@@ -11,13 +11,13 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend/cmdrun"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/dataformapi"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/remote"
 	"github.com/ashish10alex/xf/internal/runhistory"
 	"github.com/ashish10alex/xf/internal/runjobs"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // keptRuns is a project's kept runs, as the TUI's history has them.
@@ -26,14 +26,14 @@ type keptRuns struct {
 	root  string
 
 	mu sync.Mutex
-	bq *bigquery.Client
+	wh warehouse.Warehouse
 }
 
 func (k *keptRuns) List() ([]runhistory.Entry, error) { return k.store.Load(k.root) }
 
 func (k *keptRuns) Refresh(ctx context.Context, e runhistory.Entry) (runhistory.Entry, error) {
 	var jobs runjobs.JobReader
-	if c := k.bigquery(); c != nil {
+	if c, ok := k.client().(warehouse.JobLister); ok {
 		jobs = c
 	}
 	return k.store.PutRefreshed(k.root, e, runhistory.Refresh(ctx, jobs, e))
@@ -41,18 +41,18 @@ func (k *keptRuns) Refresh(ctx context.Context, e runhistory.Entry) (runhistory.
 
 func (k *keptRuns) Clear() error { return k.store.Clear(k.root, time.Now()) }
 
-// bigquery is a BigQuery client, nil while there are no credentials for
+// client is a warehouse client, nil while there are no credentials for
 // one: a client is tried for again the next time.
-func (k *keptRuns) bigquery() *bigquery.Client {
+func (k *keptRuns) client() warehouse.Warehouse {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if k.bq == nil {
+	if k.wh == nil {
 		// Not a run's context: the client outlives the run it is made for.
-		if c, err := bigquery.NewClient(context.Background()); err == nil {
-			k.bq = c
+		if c, err := newWarehouse(context.Background()); err == nil {
+			k.wh = c
 		}
 	}
-	return k.bq
+	return k.wh
 }
 
 // addRunJobs has the TUI follow the BigQuery jobs of the runs of a Dataform
@@ -112,10 +112,11 @@ func addRunJobs(deps *frontend.Deps, root string, b dataform.Backend, client *re
 			// else in the Application Default Credentials' own.
 			opts := runjobs.Options{}
 			opts.Project, opts.Location = dataform.JobTarget(root)
-			bq := k.bigquery()
-			if bq != nil {
-				opts.Jobs, opts.Active = bq, bq
-				opts.Project = cmp.Or(opts.Project, os.Getenv("GOOGLE_CLOUD_PROJECT"), bq.QuotaProject())
+			if wh := k.client(); wh != nil {
+				if jobs, ok := wh.(warehouse.JobLister); ok {
+					opts.Jobs, opts.Active = jobs, jobs
+				}
+				opts.Project = cmp.Or(opts.Project, os.Getenv("GOOGLE_CLOUD_PROJECT"), wh.DefaultProject())
 			}
 			if g := client.State().Graph; g != nil {
 				opts.Project, opts.Location = cmp.Or(opts.Project, g.DefaultDatabase), cmp.Or(opts.Location, g.DefaultLocation)

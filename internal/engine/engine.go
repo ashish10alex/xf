@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // ReasonFileChanged is the Reason of a compile started by a file change.
@@ -59,7 +59,7 @@ type Config struct {
 	Watch func(ctx context.Context) (<-chan struct{}, error)
 	// DryRun asks BigQuery to plan sql in a job in project and location,
 	// without running it. Nil turns dry runs off.
-	DryRun func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error)
+	DryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 	// Changes works out Changed Actions; nil turns them off.
 	Changes ChangesSource
 	// Impact works out the column impact of Changed Actions (see
@@ -502,7 +502,7 @@ type dryRunKey struct{ project, location, sql string }
 type dryRun struct {
 	done chan struct{}
 	at   time.Time
-	res  *bigquery.DryRun
+	res  *warehouse.Check
 	err  error
 }
 
@@ -514,7 +514,7 @@ type dryRun struct {
 // ForgetFailedDryRuns. ctx
 // bounds only this caller's wait: a call others share runs on, bounded by
 // its own timeout.
-func (e *Engine) DryRun(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+func (e *Engine) DryRun(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 	if e.cfg.DryRun == nil {
 		return nil, ErrNoDryRun
 	}

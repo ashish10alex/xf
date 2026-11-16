@@ -112,8 +112,8 @@ func TestPlanText(t *testing.T) {
 			{ID: "p.a.y", Type: "view", DryRuns: []plannedDryRun{{BuiltByRun: "p.a.x"}}},
 			{ID: "p.a.z", Type: "table", DryRuns: []plannedDryRun{{Error: "Syntax error\nmore"}}},
 		},
-		Prod: []plannedRead{{Dev: "d.a.s", Prod: "p.a.s", Stale: true}},
-		Dev:  []plannedDev{{Table: "d.a.t", BuiltAt: &built}},
+		Prod:       []plannedRead{{Dev: "d.a.s", Prod: "p.a.s", Stale: true}},
+		Dev:        []plannedDev{{Table: "d.a.t", BuiltAt: &built}},
 		TotalBytes: 1 << 30, Failed: 1,
 	}, now)
 	for _, want := range []string{

@@ -13,9 +13,9 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend/dataform"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func testdata(t *testing.T, parts ...string) string {
@@ -284,7 +284,7 @@ type rule struct {
 	bytes int64
 }
 
-func (f *fakeDryRun) run(_ context.Context, _ *project.Action, q string) (*bigquery.DryRun, error) {
+func (f *fakeDryRun) run(_ context.Context, _ *project.Action, q string) (*warehouse.Check, error) {
 	f.mu.Lock()
 	f.queries = append(f.queries, q)
 	f.mu.Unlock()
@@ -296,7 +296,7 @@ func (f *fakeDryRun) run(_ context.Context, _ *project.Action, q string) (*bigqu
 			return nil, r.err
 		}
 		if r.msg == "" {
-			return &bigquery.DryRun{Bytes: r.bytes, Accuracy: bigquery.AccuracyPrecise}, nil
+			return &warehouse.Check{Bytes: r.bytes, Accuracy: warehouse.AccuracyPrecise}, nil
 		}
 		msg := r.msg
 		if r.token != "" {
@@ -305,9 +305,9 @@ func (f *fakeDryRun) run(_ context.Context, _ *project.Action, q string) (*bigqu
 			col := i - strings.LastIndex(q[:i], "\n")
 			msg += fmt.Sprintf(" at [%d:%d]", line, col)
 		}
-		return nil, &bigquery.APIError{Status: 400, Message: msg}
+		return nil, &warehouse.APIError{Status: 400, Message: msg}
 	}
-	return &bigquery.DryRun{Bytes: 1 << 30, Accuracy: bigquery.AccuracyPrecise}, nil
+	return &warehouse.Check{Bytes: 1 << 30, Accuracy: warehouse.AccuracyPrecise}, nil
 }
 
 func TestDryRunIncrementalWithOps(t *testing.T) {
@@ -393,14 +393,14 @@ func TestDryRunFailures(t *testing.T) {
 	file := filepath.Join(p.Root, "definitions", "weekly_revenue.sqlx")
 	src := read(t, file)
 
-	f := &fakeDryRun{rules: []rule{{when: "SELECT", err: fmt.Errorf("%w: invalid_rapt", bigquery.ErrAuth)}}}
+	f := &fakeDryRun{rules: []rule{{when: "SELECT", err: fmt.Errorf("%w: invalid_rapt", warehouse.ErrAuth)}}}
 	got := renderAll(src, DryRunFile(context.Background(), p, file, src, f.run))
 	want := []string{"0 hint \"config { type: \\\"view\\\" }\": Dry run didn't run: no valid Google credentials: invalid_rapt; run `gcloud auth application-default login`"}
 	if !slices.Equal(got, want) {
 		t.Errorf("auth: got %q", got)
 	}
 
-	f = &fakeDryRun{rules: []rule{{when: "SELECT", err: &bigquery.APIError{Status: 403, Message: "Access Denied: Project p: User does not have bigquery.jobs.create permission"}}}}
+	f = &fakeDryRun{rules: []rule{{when: "SELECT", err: &warehouse.APIError{Status: 403, Message: "Access Denied: Project p: User does not have bigquery.jobs.create permission"}}}}
 	if got := renderAll(src, DryRunFile(context.Background(), p, file, src, f.run)); len(got) != 1 || !strings.Contains(got[0], "hint") || !strings.Contains(got[0], "jobs.create") {
 		t.Errorf("403: got %q", got)
 	}
@@ -413,7 +413,7 @@ func TestDryRunFailures(t *testing.T) {
 
 	ctx, cancel = context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
-	slow := func(ctx context.Context, _ *project.Action, _ string) (*bigquery.DryRun, error) {
+	slow := func(ctx context.Context, _ *project.Action, _ string) (*warehouse.Check, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -421,8 +421,8 @@ func TestDryRunFailures(t *testing.T) {
 		t.Errorf("timed out: got %q", got)
 	}
 
-	unknown := func(context.Context, *project.Action, string) (*bigquery.DryRun, error) {
-		return &bigquery.DryRun{Accuracy: bigquery.AccuracyUnknown}, nil
+	unknown := func(context.Context, *project.Action, string) (*warehouse.Check, error) {
+		return &warehouse.Check{Accuracy: warehouse.AccuracyUnknown}, nil
 	}
 	if got := renderAll(src, DryRunFile(context.Background(), p, file, src, unknown)); len(got) != 1 || !strings.HasSuffix(got[0], "Dry run: bytes unknown") {
 		t.Errorf("unknown bytes: got %q", got)
@@ -441,15 +441,15 @@ func TestCostText(t *testing.T) {
 		{"incremental", 20 << 20, "incremental 20.00 MB processed (≈ $0.0001)"},
 	}
 	for _, tt := range tests {
-		if got := costText(tt.label, &bigquery.DryRun{Bytes: tt.bytes, Accuracy: bigquery.AccuracyPrecise}); got != tt.want {
+		if got := costText(tt.label, &warehouse.Check{Bytes: tt.bytes, Accuracy: warehouse.AccuracyPrecise}); got != tt.want {
 			t.Errorf("costText(%q, %d) = %q, want %q", tt.label, tt.bytes, got, tt.want)
 		}
 	}
 	// Seen from BigQuery: a real figure with UNKNOWN accuracy.
-	if got := costText("", &bigquery.DryRun{Bytes: 1212666725, Accuracy: bigquery.AccuracyUnknown}); got != "1.13 GB processed (≈ $0.0069)" {
+	if got := costText("", &warehouse.Check{Bytes: 1212666725, Accuracy: warehouse.AccuracyUnknown}); got != "1.13 GB processed (≈ $0.0069)" {
 		t.Errorf("unknown accuracy with bytes: %q", got)
 	}
-	if got := costText("", &bigquery.DryRun{Accuracy: bigquery.AccuracyUnknown}); got != "bytes unknown" {
+	if got := costText("", &warehouse.Check{Accuracy: warehouse.AccuracyUnknown}); got != "bytes unknown" {
 		t.Errorf("unknown accuracy without bytes: %q", got)
 	}
 }

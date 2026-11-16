@@ -293,7 +293,7 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 	deps.Open = func(file string, line int) (frontend.Opening, error) {
 		return editorOpener(client.ShowDocument, nil, ed.get(), root)(file, line)
 	}
-	p := &web.Project{Deps: deps, Close: client.Close, Editor: ed.hook(), BigQuery: lazyClient()}
+	p := &web.Project{Deps: deps, Close: client.Close, Editor: ed.hook(), Warehouse: lazyClient()}
 	if d, ok := b.(dataform.Backend); ok && d.Bin == "" {
 		// Opened without the CLI (openWebBackend): the page says how to
 		// install it, and compiles again once it is on PATH.

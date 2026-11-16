@@ -30,12 +30,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Methods.
@@ -55,7 +55,7 @@ const (
 	// methodForgetFailedDryRuns has the engine try failed dry runs again
 	// (see engine.Engine.ForgetFailedDryRuns); it takes no params.
 	methodForgetFailedDryRuns = "xf/forgetFailedDryRuns"
-	// methodTable takes tableParams and answers with a *bigquery.Table,
+	// methodTable takes tableParams and answers with a *warehouse.Table,
 	// failing as a dry run does (see dryRunError).
 	methodTable = "xf/table"
 	// methodChangedActions takes a changes.Request and answers with a
@@ -246,12 +246,12 @@ type dryRunError struct {
 }
 
 func encodeDryRunError(err error) dryRunError {
-	var api *bigquery.APIError
+	var api *warehouse.APIError
 	switch {
 	case errors.As(err, &api):
 		return dryRunError{Kind: "api", Status: api.Status, Message: api.Message}
-	case errors.Is(err, bigquery.ErrAuth):
-		return dryRunError{Kind: "auth", Message: strings.TrimPrefix(err.Error(), bigquery.ErrAuth.Error()+": ")}
+	case errors.Is(err, warehouse.ErrAuth):
+		return dryRunError{Kind: "auth", Message: strings.TrimPrefix(err.Error(), warehouse.ErrAuth.Error()+": ")}
 	case errors.Is(err, context.DeadlineExceeded):
 		return dryRunError{Kind: "timeout"}
 	case errors.Is(err, engine.ErrNoDryRun):
@@ -263,9 +263,9 @@ func encodeDryRunError(err error) dryRunError {
 func (e dryRunError) err() error {
 	switch e.Kind {
 	case "api":
-		return &bigquery.APIError{Status: e.Status, Message: e.Message}
+		return &warehouse.APIError{Status: e.Status, Message: e.Message}
 	case "auth":
-		return fmt.Errorf("%w: %s", bigquery.ErrAuth, e.Message)
+		return fmt.Errorf("%w: %s", warehouse.ErrAuth, e.Message)
 	case "timeout":
 		return fmt.Errorf("dry run: %w", context.DeadlineExceeded)
 	case "off":

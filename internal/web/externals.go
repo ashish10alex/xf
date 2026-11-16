@@ -8,10 +8,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // externalRow is a row of the declarations table (ADR 0015): a
@@ -88,8 +88,8 @@ func boolInt(b bool) int {
 	return 0
 }
 
-func tableRefOf(a *project.Action) bigquery.TableRef {
-	return bigquery.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}
+func tableRefOf(a *project.Action) warehouse.TableRef {
+	return warehouse.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}
 }
 
 // externalTableLocked is the lookup of a's table, nil until one was asked
@@ -105,19 +105,19 @@ func (p *projectState) externalTableLocked(a *project.Action) *tableEntry {
 // table in BigQuery: it has no SQL to dry run.
 func (p *projectState) externalColumnsLocked(a *project.Action) columnsView {
 	why := func(reason string, failed bool) columnsView {
-		return columnsView{Fields: []bigquery.Field{}, Reason: reason, Failed: failed}
+		return columnsView{Fields: []warehouse.Column{}, Reason: reason, Failed: failed}
 	}
 	if p.deps.Table == nil || !hasTable(a) {
 		return why("no BigQuery here, so no columns", false)
 	}
 	e := p.externalTableLocked(a)
-	var apiErr *bigquery.APIError
+	var apiErr *warehouse.APIError
 	switch {
 	case e == nil || !e.done:
 		return why("looking up the table…", false)
 	case errors.As(e.err, &apiErr) && apiErr.Status == http.StatusNotFound:
 		return why("no such table in BigQuery", false)
-	case errors.Is(e.err, bigquery.ErrAuth):
+	case errors.Is(e.err, warehouse.ErrAuth):
 		return why("no credentials to look up the table", true)
 	case apiErr != nil:
 		return why("✗ "+firstLine(apiErr.Message), true)

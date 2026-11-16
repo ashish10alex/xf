@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"net/http"
 	"net/url"
 	"slices"
@@ -21,32 +22,10 @@ import (
 	"time"
 )
 
-// DefaultPageSize is how many rows a page of results holds.
-const DefaultPageSize = 500
-
-// QueryOptions describe a query to run.
-type QueryOptions struct {
-	// Project is billed for the job; Location is where it runs ("" lets
-	// BigQuery pick it from the tables the query reads).
-	Project, Location string
-	SQL               string
-	// Labels are put on the job.
-	Labels map[string]string
-	// Params are named STRING query parameters, @name in the SQL.
-	Params map[string]string
-}
-
-// JobRef names a job.
-type JobRef struct {
-	Project  string `json:"project"`
-	Location string `json:"location,omitempty"`
-	ID       string `json:"id"`
-}
-
 // StartQuery creates a query job and returns at once, without waiting for
 // it to finish. Follow it with QueryJob.
-func (c *Client) StartQuery(ctx context.Context, o QueryOptions) (JobRef, error) {
-	ref := JobRef{Project: o.Project, Location: o.Location, ID: "xf_scratch_" + randomID()}
+func (c *Client) StartQuery(ctx context.Context, o warehouse.QueryOptions) (warehouse.JobRef, error) {
+	ref := warehouse.JobRef{Project: o.Project, Location: o.Location, ID: "xf_scratch_" + randomID()}
 	type jobRef struct {
 		ProjectID string `json:"projectId"`
 		Location  string `json:"location,omitempty"`
@@ -123,32 +102,8 @@ func randomID() string {
 	return hex.EncodeToString(b)
 }
 
-// QueryStatus is where a query job stands.
-type QueryStatus struct {
-	// State is PENDING, RUNNING or DONE.
-	State string `json:"state"`
-	// Error is why a DONE job failed; "" when it did not.
-	Error         string `json:"error,omitempty"`
-	StatementType string `json:"statementType,omitempty"`
-	CacheHit      bool   `json:"cacheHit"`
-	// BytesProcessed and BytesBilled are int64s; the page shows them as
-	// numbers, which hold them exactly up to 2^53.
-	BytesProcessed int64 `json:"bytesProcessed"`
-	BytesBilled    int64 `json:"bytesBilled"`
-	// DMLRows is the rows an INSERT, UPDATE, DELETE or MERGE changed,
-	// -1 when the statement is none of those.
-	DMLRows   int64     `json:"dmlRows"`
-	Started   time.Time `json:"started"`
-	Ended     time.Time `json:"ended"`
-	NumChild  int64     `json:"numChildJobs"`
-	Cancelled bool      `json:"cancelled,omitempty"`
-	// ResultTable is the table that holds the job's rows (BigQuery keeps
-	// one for a day for any query with a result), nil when it has none.
-	ResultTable *TableRef `json:"resultTable,omitempty"`
-}
-
 // QueryJob reads the status of a query job.
-func (c *Client) QueryJob(ctx context.Context, ref JobRef) (*QueryStatus, error) {
+func (c *Client) QueryJob(ctx context.Context, ref warehouse.JobRef) (*warehouse.QueryStatus, error) {
 	q := url.Values{"fields": {"status(state,errorResult(reason,message)),configuration(query(destinationTable)),statistics(startTime,endTime,numChildJobs,query(cacheHit,statementType,totalBytesProcessed,totalBytesBilled,numDmlAffectedRows,dmlStats))"}}
 	if ref.Location != "" {
 		q.Set("location", ref.Location)
@@ -168,7 +123,7 @@ func (c *Client) QueryJob(ctx context.Context, ref JobRef) (*QueryStatus, error)
 		} `json:"status"`
 		Configuration struct {
 			Query struct {
-				DestinationTable TableRef `json:"destinationTable"`
+				DestinationTable warehouse.TableRef `json:"destinationTable"`
 			} `json:"query"`
 		} `json:"configuration"`
 		Statistics struct {
@@ -193,7 +148,7 @@ func (c *Client) QueryJob(ctx context.Context, ref JobRef) (*QueryStatus, error)
 		return nil, fmt.Errorf("decode job: %w", err)
 	}
 	st, qs := raw.Statistics, raw.Statistics.Query
-	s := &QueryStatus{
+	s := &warehouse.QueryStatus{
 		State: raw.Status.State, StatementType: qs.StatementType, CacheHit: qs.CacheHit,
 		BytesProcessed: atoi(qs.TotalBytesProcessed), BytesBilled: atoi(qs.TotalBytesBilled),
 		DMLRows: -1, NumChild: atoi(st.NumChildJobs),
@@ -228,7 +183,7 @@ func atoi(s string) int64 {
 }
 
 // CancelQuery asks BigQuery to stop a job. The job may already be done.
-func (c *Client) CancelQuery(ctx context.Context, ref JobRef) error {
+func (c *Client) CancelQuery(ctx context.Context, ref warehouse.JobRef) error {
 	q := url.Values{"fields": {"job/status"}}
 	if ref.Location != "" {
 		q.Set("location", ref.Location)
@@ -238,26 +193,9 @@ func (c *Client) CancelQuery(ctx context.Context, ref JobRef) error {
 	return err
 }
 
-// ChildJob is one statement of a script.
-type ChildJob struct {
-	ID            string `json:"id"`
-	StatementType string `json:"statementType"`
-	State         string `json:"state"`
-	Error         string `json:"error,omitempty"`
-	BytesBilled   int64  `json:"bytesBilled"`
-	DMLRows       int64  `json:"dmlRows"`
-	// Query is the statement's SQL, cut short.
-	Query string `json:"query"`
-	// Table is the table the statement created or changed, "" when it
-	// names none.
-	Table string `json:"table,omitempty"`
-	// HasRows says the statement has a result to read: a SELECT.
-	HasRows bool `json:"hasRows"`
-}
-
 // ChildJobs lists the statements a script job ran, in the order they ran.
-func (c *Client) ChildJobs(ctx context.Context, ref JobRef) ([]ChildJob, error) {
-	var out []ChildJob
+func (c *Client) ChildJobs(ctx context.Context, ref warehouse.JobRef) ([]warehouse.ChildJob, error) {
+	var out []warehouse.ChildJob
 	token := ""
 	for page := 0; page < 10; page++ {
 		q := url.Values{
@@ -290,10 +228,10 @@ func (c *Client) ChildJobs(ctx context.Context, ref JobRef) ([]ChildJob, error) 
 				Statistics struct {
 					CreationTime string `json:"creationTime"`
 					Query        struct {
-						StatementType      string   `json:"statementType"`
-						TotalBytesBilled   string   `json:"totalBytesBilled"`
-						NumDmlAffectedRows string   `json:"numDmlAffectedRows"`
-						DDLTargetTable     TableRef `json:"ddlTargetTable"`
+						StatementType      string             `json:"statementType"`
+						TotalBytesBilled   string             `json:"totalBytesBilled"`
+						NumDmlAffectedRows string             `json:"numDmlAffectedRows"`
+						DDLTargetTable     warehouse.TableRef `json:"ddlTargetTable"`
 					} `json:"query"`
 				} `json:"statistics"`
 				Configuration struct {
@@ -308,7 +246,7 @@ func (c *Client) ChildJobs(ctx context.Context, ref JobRef) ([]ChildJob, error) 
 		}
 		for _, j := range raw.Jobs {
 			qs := j.Statistics.Query
-			cj := ChildJob{
+			cj := warehouse.ChildJob{
 				ID: j.JobReference.JobID, StatementType: qs.StatementType, State: j.Status.State,
 				BytesBilled: atoi(qs.TotalBytesBilled), DMLRows: -1,
 				Query: shorten(j.Configuration.Query.Query, 300), HasRows: qs.StatementType == "SELECT",
@@ -348,26 +286,12 @@ func shorten(s string, n int) string {
 	return s[:cut] + "…"
 }
 
-// Page is one page of a query's rows.
-type Page struct {
-	// Schema is the result's columns; nil when the statement has none.
-	Schema []Field `json:"schema"`
-	// Rows are the page's rows, each a cell per column in Cell's shapes.
-	Rows [][]any `json:"rows"`
-	// NextToken asks for the page after this one; "" when it was the last.
-	NextToken string `json:"nextToken,omitempty"`
-	// Total is how many rows the result has.
-	Total int64 `json:"total"`
-	// Complete is false while the job is still running.
-	Complete bool `json:"complete"`
-}
-
 // Rows reads a page of the rows of job ref. token is the previous page's
 // NextToken, "" for the first. Rows come back as BigQuery formats them with
 // timestamps as integer microseconds, so none loses precision.
-func (c *Client) Rows(ctx context.Context, ref JobRef, token string, size int) (*Page, error) {
+func (c *Client) Rows(ctx context.Context, ref warehouse.JobRef, token string, size int) (*warehouse.Page, error) {
 	if size <= 0 {
-		size = DefaultPageSize
+		size = warehouse.DefaultPageSize
 	}
 	q := url.Values{
 		"maxResults":                      {strconv.Itoa(size)},
@@ -387,11 +311,11 @@ func (c *Client) Rows(ctx context.Context, ref JobRef, token string, size int) (
 	return decodePage(body)
 }
 
-func decodePage(body []byte) (*Page, error) {
+func decodePage(body []byte) (*warehouse.Page, error) {
 	var raw struct {
 		JobComplete bool `json:"jobComplete"`
 		Schema      struct {
-			Fields []Field `json:"fields"`
+			Fields []warehouse.Column `json:"fields"`
 		} `json:"schema"`
 		TotalRows string            `json:"totalRows"`
 		PageToken string            `json:"pageToken"`
@@ -401,7 +325,7 @@ func decodePage(body []byte) (*Page, error) {
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode rows: %w", err)
 	}
-	p := &Page{Schema: raw.Schema.Fields, Rows: [][]any{}, NextToken: raw.PageToken, Total: atoi(raw.TotalRows), Complete: raw.JobComplete}
+	p := &warehouse.Page{Schema: raw.Schema.Fields, Rows: [][]any{}, NextToken: raw.PageToken, Total: atoi(raw.TotalRows), Complete: raw.JobComplete}
 	for _, r := range raw.Rows {
 		var row struct {
 			F []struct {
@@ -413,7 +337,7 @@ func decodePage(body []byte) (*Page, error) {
 		}
 		cells := make([]any, len(row.F))
 		for i, f := range row.F {
-			var field Field
+			var field warehouse.Column
 			if i < len(p.Schema) {
 				field = p.Schema[i]
 			}
@@ -435,11 +359,11 @@ func decodePage(body []byte) (*Page, error) {
 //   - BYTES is {"b64": "…", "len": n}, so the page can show size and hex;
 //   - everything else is the string BigQuery sent: INT64, NUMERIC and
 //     BIGNUMERIC keep every digit, FLOAT64 may be NaN, Infinity or -Infinity.
-func Cell(f Field, v json.RawMessage) any {
+func Cell(f warehouse.Column, v json.RawMessage) any {
 	if len(v) == 0 || string(v) == "null" {
 		return nil
 	}
-	if f.Mode == "REPEATED" {
+	if f.Repeated {
 		var items []struct {
 			V json.RawMessage `json:"v"`
 		}
@@ -447,7 +371,7 @@ func Cell(f Field, v json.RawMessage) any {
 			return string(v)
 		}
 		elem := f
-		elem.Mode = ""
+		elem.Repeated = false
 		out := make([]any, len(items))
 		for i, it := range items {
 			out[i] = Cell(elem, it.V)
@@ -466,7 +390,7 @@ func Cell(f Field, v json.RawMessage) any {
 		}
 		out := make([]any, len(rec.F))
 		for i, c := range rec.F {
-			var sub Field
+			var sub warehouse.Column
 			if i < len(f.Fields) {
 				sub = f.Fields[i]
 			}
@@ -482,9 +406,9 @@ func Cell(f Field, v json.RawMessage) any {
 				V json.RawMessage `json:"v"`
 			} `json:"end"`
 		}
-		elem := Field{Type: "STRING"}
-		if f.RangeElementType != nil {
-			elem = Field{Type: f.RangeElementType.Type}
+		elem := warehouse.Column{Type: "STRING"}
+		if f.RangeElement != "" {
+			elem = warehouse.Column{Type: f.RangeElement}
 		}
 		if err := json.Unmarshal(v, &r); err == nil && (r.Start.V != nil || r.End.V != nil) {
 			return []any{Cell(elem, r.Start.V), Cell(elem, r.End.V)}
@@ -523,24 +447,4 @@ func FormatTimestamp(micros string) (string, bool) {
 		layout += ".000000"
 	}
 	return t.Format(layout) + " UTC", true
-}
-
-// CellText words a cell (see Cell) as one line of text, as a CSV file or
-// the clipboard gets it: nested values as JSON, BYTES as base64.
-func CellText(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	case map[string]any:
-		if s, ok := x["b64"].(string); ok {
-			return s
-		}
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprint(v)
-	}
-	return string(b)
 }

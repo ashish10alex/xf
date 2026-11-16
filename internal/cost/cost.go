@@ -22,23 +22,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Estimate is what BigQuery estimates a query scans.
 type Estimate struct {
 	Bytes int64 `json:"bytes"`
-	// Accuracy is one of the bigquery.Accuracy constants, or "".
+	// Accuracy is one of the warehouse.Accuracy constants, or "".
 	Accuracy string `json:"accuracy,omitempty"`
 }
 
 // Bound is "≤ " for an upper bound, "≥ " for a lower bound, else "".
 func (e Estimate) Bound() string {
 	switch e.Accuracy {
-	case bigquery.AccuracyUpperBound:
+	case warehouse.AccuracyUpperBound:
 		return "≤ "
-	case bigquery.AccuracyLowerBound:
+	case warehouse.AccuracyLowerBound:
 		return "≥ "
 	}
 	return ""
@@ -102,7 +102,7 @@ type Action struct {
 	// table in BigQuery has it once a run of the branch builds it.
 	AddedColumn *AddedColumn `json:"addedColumn,omitempty"`
 
-	schema []bigquery.Field // what the dry run returned, while Run works
+	schema []warehouse.Column // what the dry run returned, while Run works
 }
 
 // AddedColumn is a column a changed action makes on this branch, which its
@@ -258,9 +258,9 @@ func sum(es []Estimate) (bytes int64, bound string) {
 	for _, e := range es {
 		bytes += e.Bytes
 		switch e.Accuracy {
-		case bigquery.AccuracyLowerBound:
+		case warehouse.AccuracyLowerBound:
 			bound = "≥ "
-		case bigquery.AccuracyUpperBound:
+		case warehouse.AccuracyUpperBound:
 			if bound == "" {
 				bound = "≤ "
 			}

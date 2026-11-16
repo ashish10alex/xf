@@ -12,10 +12,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // previewLabel is put on the jobs previews run.
@@ -24,7 +24,7 @@ const previewLabel = "xf-preview"
 // previewView is the answer to a preview: the job it started, or what
 // to ask before starting one.
 type previewView struct {
-	Job *bigquery.JobRef `json:"job,omitempty"`
+	Job *warehouse.JobRef `json:"job,omitempty"`
 	// SQL is what the job runs: the query, after the pre_operations it
 	// needs.
 	SQL string `json:"sql,omitempty"`
@@ -169,7 +169,7 @@ func (p *projectState) preview(w http.ResponseWriter, r *http.Request) {
 	v.SQL = sql
 	if proj == "" {
 		if c, err := p.bq(r.Context()); err == nil {
-			proj = c.QuotaProject()
+			proj = c.DefaultProject()
 		}
 	}
 	if proj == "" {
@@ -190,7 +190,7 @@ func (p *projectState) preview(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, confirm := p.thresholds(); d.Bytes >= confirm {
-				v.Ask = append(v.Ask, "The dry run says this scans "+bigquery.FormatBytes(d.Bytes)+" (≈ "+cost.FormatUSD(d.CostUSD())+" on demand).")
+				v.Ask = append(v.Ask, "The dry run says this scans "+warehouse.FormatBytes(d.Bytes)+" (≈ "+cost.FormatUSD(d.CostUSD())+" on demand).")
 				v.Danger = true
 			}
 		}
@@ -206,7 +206,7 @@ func (p *projectState) preview(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), scratchCallLimit)
 	defer cancel()
-	ref, err := c.StartQuery(ctx, bigquery.QueryOptions{Project: proj, Location: location, SQL: sql, Labels: map[string]string{previewLabel: "true"}})
+	ref, err := c.StartQuery(ctx, warehouse.QueryOptions{Project: proj, Location: location, SQL: sql, Labels: map[string]string{previewLabel: "true"}})
 	if err != nil {
 		writeError(w, queryError(err))
 		return

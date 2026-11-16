@@ -9,7 +9,6 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend/cmdrun"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/dataformapi"
@@ -17,6 +16,7 @@ import (
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/runhistory"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // APIGitParts is the line that says what an API run runs from checkout g,
@@ -344,7 +344,9 @@ func When(now, t time.Time) string {
 
 // FlattenFields lists a schema's columns by name, each RECORD followed by
 // its fields by their path, as the columns view does.
-func FlattenFields(fields []bigquery.Field) []bigquery.Field { return flattenFields(nil, "", fields) }
+func FlattenFields(fields []warehouse.Column) []warehouse.Column {
+	return flattenFields(nil, "", fields)
+}
 
 // LandingInfo is what xf web's settings page shows outside any project:
 // this xf, the tools on PATH and the Google accounts.

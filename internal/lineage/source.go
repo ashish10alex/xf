@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -68,20 +68,20 @@ func (m *memo[T]) get(key string, f func() (T, error), forget func(error) bool) 
 
 // Tables reads BigQuery table metadata, each table once.
 type Tables struct {
-	get   func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error)
+	get   func(ctx context.Context, project, dataset, table string) (*warehouse.Table, error)
 	sem   chan struct{}
-	cache memo[*bigquery.Table]
+	cache memo[*warehouse.Table]
 }
 
 // NewTables reads metadata with get.
-func NewTables(get func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error)) *Tables {
+func NewTables(get func(ctx context.Context, project, dataset, table string) (*warehouse.Table, error)) *Tables {
 	return &Tables{get: get, sem: make(chan struct{}, maxTableReads)}
 }
 
 // Table is the metadata of project.dataset.table, or nil (and no error)
 // when there is no such table.
-func (t *Tables) Table(ctx context.Context, table string) (*bigquery.Table, error) {
-	return t.cache.get(table, func() (*bigquery.Table, error) {
+func (t *Tables) Table(ctx context.Context, table string) (*warehouse.Table, error) {
+	return t.cache.get(table, func() (*warehouse.Table, error) {
 		parts := strings.Split(table, ".")
 		if len(parts) != 3 {
 			return nil, nil
@@ -95,7 +95,7 @@ func (t *Tables) Table(ctx context.Context, table string) (*bigquery.Table, erro
 		rctx, cancel := context.WithTimeout(ctx, tableReadTimeout)
 		defer cancel()
 		md, err := t.get(rctx, parts[0], parts[1], parts[2])
-		var api *bigquery.APIError
+		var api *warehouse.APIError
 		if errors.As(err, &api) && api.Status == http.StatusNotFound {
 			return nil, nil
 		}
@@ -111,7 +111,7 @@ func (t *Tables) Table(ctx context.Context, table string) (*bigquery.Table, erro
 }
 
 // Schema is the table's columns, or nil when there is no such table.
-func (t *Tables) Schema(ctx context.Context, table string) ([]bigquery.Field, error) {
+func (t *Tables) Schema(ctx context.Context, table string) ([]warehouse.Column, error) {
 	md, err := t.Table(ctx, table)
 	if md == nil {
 		return nil, err

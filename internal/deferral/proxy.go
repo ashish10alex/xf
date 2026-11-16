@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
-// Writer makes, repoints and removes Proxy Views; *bigquery.Client is one.
+// Writer makes, repoints and removes Proxy Views; a warehouse.ViewWriter is one.
 type Writer interface {
-	View(ctx context.Context, project, dataset, table string) (*bigquery.ViewInfo, error)
-	CreateView(ctx context.Context, v bigquery.ViewSpec) error
-	UpdateView(ctx context.Context, v bigquery.ViewSpec) error
+	View(ctx context.Context, project, dataset, table string) (*warehouse.ViewInfo, error)
+	CreateView(ctx context.Context, v warehouse.ViewSpec) error
+	UpdateView(ctx context.Context, v warehouse.ViewSpec) error
 	DeleteTable(ctx context.Context, project, dataset, table string) error
-	ListTablesLabelled(ctx context.Context, project, dataset string) ([]bigquery.LabelledTable, error)
+	ListTablesLabelled(ctx context.Context, project, dataset string) ([]warehouse.LabelledTable, error)
 }
 
 // ProxyResult says what EnsureProxies did.
@@ -65,7 +65,7 @@ func EnsureProxies(ctx context.Context, w Writer, entries []Entry) (ProxyResult,
 		if existing != nil {
 			labels, query = existing.Labels, existing.Query
 		}
-		spec := bigquery.ViewSpec{Project: e.Dev.Database, Dataset: e.Dev.Schema, Table: e.Dev.Name, Query: ProxyQuery(*e.Prod),
+		spec := warehouse.ViewSpec{Project: e.Dev.Database, Dataset: e.Dev.Schema, Table: e.Dev.Name, Query: ProxyQuery(*e.Prod),
 			Labels: map[string]string{ProxyLabel: "true"}, Description: ProxyDescription(*e.Prod)}
 		switch StepFor(labels, query, existing != nil, *e.Prod) {
 		case ProxyCreate:
@@ -96,7 +96,7 @@ func MissingDevDatasets(ctx context.Context, w Writer, entries []Entry) map[stri
 			continue
 		}
 		seen[key] = true
-		if _, err := w.ListTablesLabelled(ctx, e.Dev.Database, e.Dev.Schema); bigquery.IsNotFound(err) {
+		if _, err := w.ListTablesLabelled(ctx, e.Dev.Database, e.Dev.Schema); warehouse.IsNotFound(err) {
 			out[key] = true
 		}
 	}
@@ -117,7 +117,7 @@ func RemoveProxies(ctx context.Context, w Writer, g *project.Graph, remove bool)
 	var removed []project.Target
 	for ds := range datasets {
 		tables, err := w.ListTablesLabelled(ctx, ds[0], ds[1])
-		if bigquery.IsNotFound(err) {
+		if warehouse.IsNotFound(err) {
 			continue
 		}
 		if err != nil {

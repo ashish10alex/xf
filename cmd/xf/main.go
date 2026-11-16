@@ -20,7 +20,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -30,7 +29,6 @@ import (
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/compilecache"
 	"github.com/ashish10alex/xf/internal/config"
@@ -46,6 +44,7 @@ import (
 	"github.com/ashish10alex/xf/internal/remote"
 	"github.com/ashish10alex/xf/internal/session"
 	"github.com/ashish10alex/xf/internal/ui"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"github.com/ashish10alex/xf/nvim"
 )
 
@@ -348,7 +347,7 @@ func addDataformDeps(deps *frontend.Deps, root, bin string, settings config.Load
 		}
 		// The run's table says what its BigQuery jobs cost. Without a
 		// BigQuery client it has their states and timing only.
-		if jobs, err := bigquery.NewClient(ctx); err == nil {
+		if jobs := newJobLister(ctx); jobs != nil {
 			opts.Jobs = jobs
 		}
 		return dataformapi.Start(ctx, api, opts), nil
@@ -399,7 +398,7 @@ func workflowWatcher(root string, settings config.Loaded) watchFunc {
 			return nil, nil, err
 		}
 		opts := dataformapi.WatchOptions{Repo: ref.Resolve(base), ID: ref.ID, JobLocation: jobLocation}
-		if jobs, err := bigquery.NewClient(ctx); err == nil {
+		if jobs := newJobLister(ctx); jobs != nil {
 			opts.Jobs = jobs
 		}
 		return dataformapi.Watch(ctx, api, opts)
@@ -683,7 +682,7 @@ func runServe(args []string) error {
 	var eng *engine.Engine
 	// Impact and cost checks dry-run through the engine, once it is made,
 	// to share its cache.
-	engineDryRun := func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+	engineDryRun := func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 		if eng == nil {
 			return nil, errNoEngine
 		}
@@ -730,7 +729,7 @@ func runServe(args []string) error {
 // saved compiles and column impact, and Dataform's Changed Actions and
 // query cost. Impact and cost look tables up with bq and dry-run with
 // dryRun; cost finds the tables built in dev with defer to prod's lookups.
-func addDataformEngine(cfg *engine.Config, b dataform.Backend, root string, bq func(context.Context) (*bigquery.Client, error), logger *log.Logger, dryRun dryRunFunc, lookups *deferral.Lookups) {
+func addDataformEngine(cfg *engine.Config, b dataform.Backend, root string, bq func(context.Context) (warehouse.Warehouse, error), logger *log.Logger, dryRun dryRunFunc, lookups *deferral.Lookups) {
 	take := func(now time.Time) (compilecache.Fingerprint, error) { return compilecache.Take(root, b.Bin, now) }
 	compile, saved := savedCompiles(root, b, namesKind(b.Names), take, logger)
 	source := changesSource(root, b, b.Bin+namesKind(b.Names), logger)
@@ -968,46 +967,4 @@ func runLSP(args []string) error {
 		},
 	}
 	return lsp.Serve(context.Background(), os.Stdin, os.Stdout, cfg)
-}
-
-// lazyClient makes a BigQuery client on first use. A failed attempt (no
-// credentials yet, say) is retried on the next call, so logging in takes
-// effect without restarting; once made, the client follows later logins.
-func lazyClient() func(ctx context.Context) (*bigquery.Client, error) {
-	var mu sync.Mutex
-	var client *bigquery.Client
-	return func(ctx context.Context) (*bigquery.Client, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if client == nil {
-			c, err := bigquery.NewClient(ctx)
-			if err != nil {
-				return nil, err
-			}
-			client = c
-		}
-		return client, nil
-	}
-}
-
-// dryRunner dry-runs with the client client makes.
-func dryRunner(client func(context.Context) (*bigquery.Client, error)) func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
-	return func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
-		c, err := client(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return c.DryRun(ctx, project, location, sql)
-	}
-}
-
-// lazyTables looks up BigQuery table metadata with the client client makes.
-func lazyTables(client func(context.Context) (*bigquery.Client, error)) func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error) {
-	return func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error) {
-		c, err := client(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return c.Table(ctx, project, dataset, table)
-	}
 }

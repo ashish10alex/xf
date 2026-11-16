@@ -62,7 +62,7 @@ func standaloneScratch(sf *settingFlags, projectID, location string) (*web.Proje
 		DryRun:      dryRunner(bq),
 		Table:       lazyTables(bq),
 	}
-	p := &web.Project{Deps: deps, BigQuery: bq, ScratchDir: dir, ScratchProject: projectID, ScratchLocation: location, Standalone: true, StartScratch: true}
+	p := &web.Project{Deps: deps, Warehouse: bq, ScratchDir: dir, ScratchProject: projectID, ScratchLocation: location, Standalone: true, StartScratch: true}
 	p.ScratchWarnGB, _ = strconv.ParseFloat(settings.ScratchWarnGB, 64)
 	p.ScratchConfirmGB, _ = strconv.ParseFloat(settings.ScratchConfirmGB, 64)
 	return p, nil

@@ -18,13 +18,13 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/dataformapi"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/session"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 type paneID int
@@ -115,7 +115,7 @@ type Model struct {
 	palette       palette
 	actionsOffset int                     // first visible line of the Actions pane
 	dryRuns       map[string]*dryRunEntry // by dryRunKey
-	tables        map[bigquery.TableRef]*tableEntry
+	tables        map[warehouse.TableRef]*tableEntry
 	lineage       lineagePane
 	lineageOpen   bool // the Lineage pane is expanded (O toggles it)
 	sql           sqlPane
@@ -202,7 +202,7 @@ func New(deps Deps) Model {
 		jobsFind:    newJobsFind(),
 		search:      newSQLSearch(),
 		dryRuns:     map[string]*dryRunEntry{},
-		tables:      map[bigquery.TableRef]*tableEntry{},
+		tables:      map[warehouse.TableRef]*tableEntry{},
 		incremental: true,
 		flash:       deps.Notice,
 		following:   deps.Editor != nil,

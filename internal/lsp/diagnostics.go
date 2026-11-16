@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/diagnose"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Diagnostics come from two places: every compile's errors, for any file,
@@ -141,7 +141,7 @@ func (s *server) dryRun(round context.Context, file string) {
 	ctx, cancel := context.WithTimeout(round, dryRunTimeout)
 	defer cancel()
 	dfr := s.deferralOf(ctx, g, file)
-	run := func(ctx context.Context, a *project.Action, query string) (*bigquery.DryRun, error) {
+	run := func(ctx context.Context, a *project.Action, query string) (*warehouse.Check, error) {
 		project, location := g.DryRunTarget(a)
 		if dfr != nil {
 			query = deferral.Rewrite(query, dfr.For(a).Entries)

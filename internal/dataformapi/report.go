@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // A run's report (project.RunReport) is its actions and what the BigQuery
@@ -19,10 +19,10 @@ import (
 // workflow run table shows. It is built here, apart from any UI, so that
 // whatever starts a run can show it.
 
-// JobReader looks up what a BigQuery job did. *bigquery.Client implements
-// it; tests pass fakes.
+// JobReader looks up what a BigQuery job did. A warehouse.JobLister
+// implements it; tests pass fakes.
 type JobReader interface {
-	Job(ctx context.Context, project, location, jobID string) (*bigquery.Job, error)
+	Job(ctx context.Context, project, location, jobID string) (*warehouse.Job, error)
 }
 
 const (
@@ -152,7 +152,7 @@ func (r *runner) warnUnreadJobs(ids []string) {
 // location, and if it is not found there in the repository's location and
 // then with none: a workflow of another project may have run its jobs
 // elsewhere. The first error is the one kept.
-func (r *runner) readJob(ctx context.Context, id string, ref JobRef) (*bigquery.Job, error) {
+func (r *runner) readJob(ctx context.Context, id string, ref JobRef) (*warehouse.Job, error) {
 	j, err := r.opts.Jobs.Job(ctx, ref.Project, ref.Location, ref.ID)
 	if err == nil || ParseJobID(id, "").Location != "" {
 		return j, err

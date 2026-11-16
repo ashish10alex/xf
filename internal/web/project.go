@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/commanduse"
 	"github.com/ashish10alex/xf/internal/engine"
@@ -22,6 +21,7 @@ import (
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/session"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -76,7 +76,7 @@ type projectState struct {
 	failedAt   time.Time
 	failedTook time.Duration
 	dry        map[string]*dryEntry
-	tables     map[bigquery.TableRef]*tableEntry
+	tables     map[warehouse.TableRef]*tableEntry
 	// lastEditor is the file an editor last said is active.
 	lastEditor string
 	// focusAsked is the action the engine was last asked to compile ahead.
@@ -103,10 +103,10 @@ type projectState struct {
 	// installed @dataform/core changes; nil for none.
 	coreFix  *coreFix
 	cliFound bool
-	// bigquery runs scratch queries; nil can't. scratchWarnGB and
+	// warehouse runs scratch queries; nil can't. scratchWarnGB and
 	// scratchConfirmGB are the dry run sizes the Scratch view colours and
 	// asks at, 0 for the defaults.
-	bigquery                              func(ctx context.Context) (*bigquery.Client, error)
+	warehouse                             func(ctx context.Context) (warehouse.Warehouse, error)
 	scratchWarnGB, scratchConfirmGB       float64
 	scratchDirAbs                         string
 	scratchDefProject, scratchDefLocation string
@@ -168,7 +168,7 @@ type projectState struct {
 type dryEntry struct {
 	loading, done bool
 	at            time.Time
-	res           *bigquery.DryRun
+	res           *warehouse.Check
 	err           error
 }
 
@@ -180,7 +180,7 @@ func (e *dryEntry) stale(now time.Time) bool {
 type tableEntry struct {
 	loading, done bool
 	at            time.Time
-	tbl           *bigquery.Table
+	tbl           *warehouse.Table
 	err           error
 }
 
@@ -190,7 +190,7 @@ func newProjectState(deps frontend.Deps, h *hub, save func(session.Session)) *pr
 	}
 	p := &projectState{
 		deps: deps, hub: h, save: save, tool: cmp.Or(deps.Backend, "dataform"),
-		dry: map[string]*dryEntry{}, tables: map[bigquery.TableRef]*tableEntry{},
+		dry: map[string]*dryEntry{}, tables: map[warehouse.TableRef]*tableEntry{},
 		sess: deps.Resume, base: deps.DefaultBranch,
 	}
 	p.deferResetLocked()
@@ -535,9 +535,9 @@ func (p *projectState) boot() *projectBoot {
 			Run: d.StartRun != nil, API: d.StartAPIRun != nil, APIDefault: d.RunAPI && d.StartAPIRun != nil,
 			Changed: d.ChangedActions != nil, Impact: d.ColumnImpact != nil, Cost: d.QueryCost != nil,
 			Info: d.Info != nil, Open: d.Open != nil, Follow: d.Editor != nil, History: d.Runs != nil,
-			DryRun: d.DryRun != nil, Table: d.Table != nil, Editor: p.editor != nil, Scratch: p.bigquery != nil,
+			DryRun: d.DryRun != nil, Table: d.Table != nil, Editor: p.editor != nil, Scratch: p.warehouse != nil,
 			Branches: d.Branches != nil, Terminal: termSupported, Watch: d.WatchWorkflow != nil, Defer: p.deferCaps(),
-			Inspector: p.bigquery != nil && d.DryRun != nil && !p.standalone,
+			Inspector: p.warehouse != nil && d.DryRun != nil && !p.standalone,
 		},
 		Resume: resumeView{Selected: p.sess.Selected, Recent: append([]project.ActionID{}, p.sess.Recent...), File: lastFile,
 			Buffers: &buffersView{List: append([]buffer{}, p.bufs.List...), Next: p.bufs.Next}},
@@ -842,9 +842,9 @@ type sqlView struct {
 // columnsView is the columns the selected action's query returns, or why
 // there are none.
 type columnsView struct {
-	Fields []bigquery.Field `json:"fields"`
-	Reason string           `json:"reason,omitempty"`
-	Failed bool             `json:"failed,omitempty"`
+	Fields []warehouse.Column `json:"fields"`
+	Reason string             `json:"reason,omitempty"`
+	Failed bool               `json:"failed,omitempty"`
 }
 
 // runPreview is what r would run with the page's toggles.
@@ -977,7 +977,7 @@ func (p *projectState) action(w http.ResponseWriter, r *http.Request) {
 		v.Pane = append(v.Pane, paneAction{actionRef: ref, Details: details})
 	}
 	if auth {
-		v.Auth = "dry runs need Google credentials: " + bigquery.AuthHint + ", then c"
+		v.Auth = "dry runs need Google credentials: " + warehouse.AuthHint + ", then c"
 	}
 	for _, d := range byLineageKind(g.Dependencies(a.ID)) {
 		v.Lineage.Up = append(v.Lineage.Up, refOf(d))
@@ -1101,7 +1101,7 @@ func (p *projectState) startLookupsLocked(g *project.Graph, actions []*project.A
 			if !hasOutputTable(a) {
 				continue
 			}
-			ref := bigquery.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}
+			ref := warehouse.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}
 			e := p.tables[ref]
 			if e == nil {
 				e = &tableEntry{}
@@ -1185,12 +1185,12 @@ func (p *projectState) detailsLocked(g *project.Graph, a *project.Action, increm
 				d.Value, d.Tone = note, "dim"
 			case e == nil || !e.done:
 				d.Value, d.Tone = "running…", "dim"
-			case errors.Is(e.err, bigquery.ErrAuth):
+			case errors.Is(e.err, warehouse.ErrAuth):
 				auth = true
 				d.Value, d.Tone = "no credentials", "warn"
 			case e.err != nil:
 				msg := e.err.Error()
-				if apiErr, ok := errors.AsType[*bigquery.APIError](e.err); ok {
+				if apiErr, ok := errors.AsType[*warehouse.APIError](e.err); ok {
 					msg = apiErr.Message
 				}
 				d.Value, d.Tone = "✗ "+firstLine(msg), "error"
@@ -1224,14 +1224,14 @@ func (p *projectState) updatedLocked(a *project.Action) (detail, bool) {
 		return detail{}, false
 	}
 	d := detail{Label: "updated", Tone: "dim"}
-	e := p.tables[bigquery.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}]
-	var apiErr *bigquery.APIError
+	e := p.tables[warehouse.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}]
+	var apiErr *warehouse.APIError
 	switch {
 	case e == nil || !e.done:
 		d.Value = "checking…"
 	case errors.As(e.err, &apiErr) && apiErr.Status == http.StatusNotFound:
 		d.Value = "N/A"
-	case errors.Is(e.err, bigquery.ErrAuth):
+	case errors.Is(e.err, warehouse.ErrAuth):
 		d.Value, d.Tone = "no credentials", "warn"
 	case apiErr != nil:
 		d.Value, d.Tone = "✗ "+firstLine(apiErr.Message), "error"
@@ -1253,7 +1253,7 @@ func (p *projectState) updatedLocked(a *project.Action) (detail, bool) {
 // are none (see the TUI's columns).
 func (p *projectState) columnsLocked(g *project.Graph, a *project.Action, incremental bool) columnsView {
 	why := func(reason string, failed bool) columnsView {
-		return columnsView{Fields: []bigquery.Field{}, Reason: reason, Failed: failed}
+		return columnsView{Fields: []warehouse.Column{}, Reason: reason, Failed: failed}
 	}
 	switch {
 	case a.Kind.External():
@@ -1284,11 +1284,11 @@ func (p *projectState) columnsLocked(g *project.Graph, a *project.Action, increm
 	switch {
 	case e == nil || !e.done:
 		return why("dry run…", false)
-	case errors.Is(e.err, bigquery.ErrAuth):
+	case errors.Is(e.err, warehouse.ErrAuth):
 		return why("no credentials for the dry run — press e for details", true)
 	case e.err != nil:
 		msg := e.err.Error()
-		if apiErr, ok := errors.AsType[*bigquery.APIError](e.err); ok {
+		if apiErr, ok := errors.AsType[*warehouse.APIError](e.err); ok {
 			msg = apiErr.Message
 		}
 		return why("✗ "+firstLine(msg)+" — press e for details", true)

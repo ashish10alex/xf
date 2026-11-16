@@ -8,30 +8,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 type fakeJobs struct {
 	mu     sync.Mutex
 	asked  []string
-	active [][]bigquery.ActiveJob // one listing per call; the last repeats
+	active [][]warehouse.ActiveJob // one listing per call; the last repeats
 	calls  int
 	err    error
 	listed chan struct{}
 }
 
-func (f *fakeJobs) Job(_ context.Context, project, location, id string) (*bigquery.Job, error) {
+func (f *fakeJobs) Job(_ context.Context, project, location, id string) (*warehouse.Job, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.asked = append(f.asked, project+":"+location+"."+id)
 	if strings.HasSuffix(id, "-gone") {
 		return nil, errors.New("Not found: Job")
 	}
-	return &bigquery.Job{Location: "europe-west2", BytesBilled: 10 << 20, SlotMs: 1500, Done: true}, nil
+	return &warehouse.Job{Location: "europe-west2", BytesBilled: 10 << 20, SlotMs: 1500, Done: true}, nil
 }
 
-func (f *fakeJobs) ActiveJobs(context.Context, string, time.Time) ([]bigquery.ActiveJob, error) {
+func (f *fakeJobs) ActiveJobs(context.Context, string, time.Time) ([]warehouse.ActiveJob, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	defer func() {
@@ -151,7 +151,7 @@ func TestTrackReadsColouredLines(t *testing.T) {
 // other people's and other runs' jobs are left out.
 func TestTrackShowsRunningJobs(t *testing.T) {
 	began := time.Now().Add(-40 * time.Second)
-	fj := &fakeJobs{listed: make(chan struct{}, 1), active: [][]bigquery.ActiveJob{{
+	fj := &fakeJobs{listed: make(chan struct{}, 1), active: [][]warehouse.ActiveJob{{
 		{ID: "dataform-xf-ab12-1", Location: "EU", Started: began, Query: "-- built by dataform\ncreate or replace table `demo.analytics.orders` as select 1"},
 		{ID: "dataform-xf-ab12-9", Started: began.Add(time.Second), Query: "select * from `demo.analytics.orders`"},
 		{ID: "dataform-xf-ffff-1", Query: "create or replace table `demo.analytics.orders` as select 1"},

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/engine"
@@ -18,6 +17,7 @@ import (
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/remote"
 	"github.com/ashish10alex/xf/internal/session"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Defer to prod in xf serve (ADR 0031): the switch starts as the project
@@ -45,13 +45,13 @@ func addDefer(cfg *engine.Config, d engine.Deferrer, root string, settings confi
 }
 
 // deferLookups makes the table lookups of bq's client.
-func deferLookups(bq func(context.Context) (*bigquery.Client, error)) *deferral.Lookups {
+func deferLookups(bq func(context.Context) (warehouse.Warehouse, error)) *deferral.Lookups {
 	return deferral.NewLookups(func(ctx context.Context) (deferral.BigQuery, error) {
 		c, err := bq(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return c, nil
+		return viewWriter(c)
 	}, nil)
 }
 
@@ -79,7 +79,7 @@ type prodCompile struct {
 	missing map[project.ActionID]bool
 }
 
-func newDataformDeferrer(bin, root string, bq func(context.Context) (*bigquery.Client, error), load func() (config.Loaded, error), logger *log.Logger) *dataformDeferrer {
+func newDataformDeferrer(bin, root string, bq func(context.Context) (warehouse.Warehouse, error), load func() (config.Loaded, error), logger *log.Logger) *dataformDeferrer {
 	return &dataformDeferrer{bin: bin, root: root, lookups: deferLookups(bq), logger: logger, prod: map[string]*prodCompile{},
 		options: func() string {
 			s, err := load()
@@ -206,16 +206,10 @@ func (d *dataformDeferrer) compileProd(ctx context.Context, options string, args
 }
 
 // addDeferDeps gives a front end defer to prod through the shared engine,
-// and a BigQuery client of its own for Proxy Views.
+// and a warehouse client of its own for Proxy Views.
 func addDeferDeps(deps *frontend.Deps, client *remote.Client) {
 	deps.Deferral = client.Deferral
 	deps.SetDefer = client.SetDefer
 	deps.DeferUnreadable = client.DeferUnreadable
-	deps.DeferWriter = func(ctx context.Context) (deferral.Writer, error) {
-		c, err := bigquery.NewClient(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return c, nil
-	}
+	deps.DeferWriter = newViewWriter
 }

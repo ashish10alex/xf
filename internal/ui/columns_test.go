@@ -1,24 +1,31 @@
 package ui
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // returns is a dry run of a query with these columns, each "name TYPE" or
 // "name TYPE MODE".
-func returns(columns ...string) func() (*bigquery.DryRun, error) {
-	return func() (*bigquery.DryRun, error) {
-		d := &bigquery.DryRun{Bytes: 1024, Accuracy: bigquery.AccuracyPrecise, StatementType: "SELECT"}
+func returns(columns ...string) func() (*warehouse.Check, error) {
+	return func() (*warehouse.Check, error) {
+		d := &warehouse.Check{Bytes: 1024, Accuracy: warehouse.AccuracyPrecise, StatementType: "SELECT"}
 		for _, c := range columns {
 			f := strings.Fields(c)
-			field := bigquery.Field{Name: f[0], Type: f[1]}
+			mode := ""
 			if len(f) > 2 {
-				field.Mode = f[2]
+				mode = f[2]
+			}
+			// As BigQuery sends it, which may spell out NULLABLE.
+			var field warehouse.Column
+			if err := json.Unmarshal(fmt.Appendf(nil, `{"name":%q,"type":%q,"mode":%q}`, f[0], f[1], mode), &field); err != nil {
+				return nil, err
 			}
 			d.Schema = append(d.Schema, field)
 		}
@@ -26,7 +33,7 @@ func returns(columns ...string) func() (*bigquery.DryRun, error) {
 	}
 }
 
-func newColumnsModel(t *testing.T, replies map[string]func() (*bigquery.DryRun, error)) (Model, *[]string) {
+func newColumnsModel(t *testing.T, replies map[string]func() (*warehouse.Check, error)) (Model, *[]string) {
 	t.Helper()
 	m, _ := newDryRunModel(t, &fakeBigQuery{replies: replies}, "basic.json")
 	copied := &[]string{}
@@ -34,7 +41,7 @@ func newColumnsModel(t *testing.T, replies map[string]func() (*bigquery.DryRun, 
 	return drive(t, m, nil, editorEvent("BufEnter", "definitions/daily_orders.sqlx")), copied
 }
 
-var dailyOrders = map[string]func() (*bigquery.DryRun, error){
+var dailyOrders = map[string]func() (*warehouse.Check, error){
 	"SUM(": returns("region STRING REQUIRED", "order_date DATE NULLABLE", "Orders INTEGER", "items RECORD REPEATED", "revenue NUMERIC"),
 }
 
@@ -69,13 +76,13 @@ func TestColumnsViewListsTheDryRunSchemaByName(t *testing.T) {
 }
 
 func TestColumnsViewExpandsRecords(t *testing.T) {
-	m, copied := newColumnsModel(t, map[string]func() (*bigquery.DryRun, error){
-		"SUM(": func() (*bigquery.DryRun, error) {
-			return &bigquery.DryRun{StatementType: "SELECT", Schema: []bigquery.Field{
+	m, copied := newColumnsModel(t, map[string]func() (*warehouse.Check, error){
+		"SUM(": func() (*warehouse.Check, error) {
+			return &warehouse.Check{StatementType: "SELECT", Schema: []warehouse.Column{
 				{Name: "order_id", Type: "INTEGER"},
-				{Name: "items", Type: "RECORD", Mode: "REPEATED", Fields: []bigquery.Field{
+				{Name: "items", Type: "RECORD", Repeated: true, Fields: []warehouse.Column{
 					{Name: "sku", Type: "STRING"},
-					{Name: "price", Type: "RECORD", Fields: []bigquery.Field{{Name: "amount", Type: "NUMERIC"}}},
+					{Name: "price", Type: "RECORD", Fields: []warehouse.Column{{Name: "amount", Type: "NUMERIC"}}},
 				}},
 				{Name: "items_count", Type: "INTEGER"},
 			}}, nil
@@ -181,8 +188,8 @@ func TestColumnsViewCopiesTheColumnUnderTheCursor(t *testing.T) {
 }
 
 func TestColumnsViewSaysWhyThereAreNone(t *testing.T) {
-	m, _ := newColumnsModel(t, map[string]func() (*bigquery.DryRun, error){
-		"SUM(": fails(&bigquery.APIError{Status: 400, Message: "Unrecognized name: foo at [3:5]\nmore"}),
+	m, _ := newColumnsModel(t, map[string]func() (*warehouse.Check, error){
+		"SUM(": fails(&warehouse.APIError{Status: 400, Message: "Unrecognized name: foo at [3:5]\nmore"}),
 	})
 	m = drive(t, m, nil, press("S")...)
 	view := screen(m)
@@ -209,7 +216,7 @@ func TestColumnsViewSaysWhyThereAreNone(t *testing.T) {
 }
 
 func TestColumnsViewFollowsTheIncrementalVariant(t *testing.T) {
-	bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
+	bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
 		"MAX(event_date)":   returns("event_date DATE", "late_only INTEGER"),
 		"DATE '2000-01-01'": returns("event_date DATE", "full_only INTEGER"),
 	}}

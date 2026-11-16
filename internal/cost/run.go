@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // dryRunBatch is how many dry runs start at once.
@@ -23,11 +23,11 @@ const dryRunBatch = 6
 // Deps are what Run needs from the outside world.
 type Deps struct {
 	// DryRun plans sql without running it.
-	DryRun func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error)
+	DryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 	// Partition is how a table is partitioned: nil (and no error) when it
 	// isn't, or there is no such table. A nil Partition looks for no
 	// unfiltered reads.
-	Partition func(ctx context.Context, t bigquery.TableRef) (*bigquery.Partition, error)
+	Partition func(ctx context.Context, t warehouse.TableRef) (*warehouse.Partition, error)
 	// Base compiles the merge-base as the head was compiled, so its
 	// actions have the head's IDs; nil estimates no merge-base. It is
 	// called once, while the head is dry run.
@@ -69,7 +69,7 @@ func inBatches[T any](ctx context.Context, items []T, size int, run func(T)) {
 }
 
 func errorText(err error) string {
-	var api *bigquery.APIError
+	var api *warehouse.APIError
 	if errors.As(err, &api) {
 		return api.Message
 	}
@@ -78,11 +78,11 @@ func errorText(err error) string {
 
 // estimateOf is a dry run's estimate, or why it has none: BigQuery reports
 // 0 bytes when it cannot tell, and gives no figure for most scripts.
-func estimateOf(d *bigquery.DryRun) (*Estimate, string) {
+func estimateOf(d *warehouse.Check) (*Estimate, string) {
 	switch {
-	case d.StatementType == "SCRIPT" && d.Accuracy != bigquery.AccuracyPrecise && d.Accuracy != bigquery.AccuracyUpperBound:
+	case d.StatementType == "SCRIPT" && d.Accuracy != warehouse.AccuracyPrecise && d.Accuracy != warehouse.AccuracyUpperBound:
 		return nil, "BigQuery gives no estimate for a script"
-	case d.Accuracy == bigquery.AccuracyUnknown && d.Bytes == 0:
+	case d.Accuracy == warehouse.AccuracyUnknown && d.Bytes == 0:
 		return nil, "BigQuery gave no estimate"
 	}
 	return &Estimate{Bytes: d.Bytes, Accuracy: d.Accuracy}, ""
@@ -103,18 +103,18 @@ func counted(a *project.Action) (run, full *project.DryRunQuery) {
 
 // partitions looks tables' partitioning up once each.
 type partitions struct {
-	lookup func(ctx context.Context, t bigquery.TableRef) (*bigquery.Partition, error)
+	lookup func(ctx context.Context, t warehouse.TableRef) (*warehouse.Partition, error)
 
 	mu   sync.Mutex
-	seen map[bigquery.TableRef]*partitionLookup
+	seen map[warehouse.TableRef]*partitionLookup
 }
 
 type partitionLookup struct {
 	once sync.Once
-	p    *bigquery.Partition
+	p    *warehouse.Partition
 }
 
-func (ps *partitions) of(ctx context.Context, t bigquery.TableRef) *bigquery.Partition {
+func (ps *partitions) of(ctx context.Context, t warehouse.TableRef) *warehouse.Partition {
 	ps.mu.Lock()
 	l := ps.seen[t]
 	if l == nil {
@@ -130,7 +130,7 @@ func (ps *partitions) of(ctx context.Context, t bigquery.TableRef) *bigquery.Par
 // unfiltered are the partitioned tables sql reads by name without naming
 // their partition column. A table read through a view isn't named in sql,
 // and isn't judged: the view may filter it.
-func (ps *partitions) unfiltered(ctx context.Context, sql string, tables []bigquery.TableRef) []Unfiltered {
+func (ps *partitions) unfiltered(ctx context.Context, sql string, tables []warehouse.TableRef) []Unfiltered {
 	if ps == nil {
 		return nil
 	}
@@ -366,7 +366,7 @@ func fromDev(q *project.DryRunQuery, reads []DevRead) *project.DryRunQuery {
 // dryRun dry runs q as an action of g, returning its estimate, or why it
 // has none, and the dry run, nil when it failed. err is the dry run's own
 // failure.
-func (r *runner) dryRun(ctx context.Context, g *project.Graph, a *project.Action, q *project.DryRunQuery) (est *Estimate, d *bigquery.DryRun, reason string, err error) {
+func (r *runner) dryRun(ctx context.Context, g *project.Graph, a *project.Action, q *project.DryRunQuery) (est *Estimate, d *warehouse.Check, reason string, err error) {
 	proj, location := g.DryRunTarget(a)
 	if proj == "" {
 		return nil, nil, "no project to dry run in: set defaultProject", nil
@@ -382,8 +382,8 @@ func (r *runner) dryRun(ctx context.Context, g *project.Graph, a *project.Action
 // denied reports a dry run BigQuery refused whatever the SQL: no usable
 // credentials, or no permission.
 func denied(err error) bool {
-	var api *bigquery.APIError
-	return errors.Is(err, bigquery.ErrAuth) || errors.As(err, &api) && api.Status == http.StatusForbidden
+	var api *warehouse.APIError
+	return errors.Is(err, warehouse.ErrAuth) || errors.As(err, &api) && api.Status == http.StatusForbidden
 }
 
 // estimate is the estimate of c, whose action in head is a, and the
@@ -395,7 +395,7 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 	}
 	run, full := counted(a)
 	q := run
-	var d *bigquery.DryRun
+	var d *warehouse.Check
 	var err error
 	for {
 		sql := fromDev(q, out.FromDev)
@@ -470,7 +470,7 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 	}
 	r := &runner{deps: deps, added: map[string]addedTable{}, built: map[string]bool{}}
 	if deps.Partition != nil {
-		r.ps = &partitions{lookup: deps.Partition, seen: map[bigquery.TableRef]*partitionLookup{}}
+		r.ps = &partitions{lookup: deps.Partition, seen: map[warehouse.TableRef]*partitionLookup{}}
 	}
 	headID := func(id project.ActionID) project.ActionID {
 		if head.ID == nil {
@@ -660,7 +660,7 @@ func addedColumns(g *project.Graph, heads []*project.Action, estimated []Action)
 			}
 			if j, changed := at[id]; changed {
 				if schema := estimated[j].schema; len(schema) > 0 {
-					if slices.ContainsFunc(schema, func(f bigquery.Field) bool { return strings.EqualFold(f.Name, column) }) {
+					if slices.ContainsFunc(schema, func(f warehouse.Column) bool { return strings.EqualFold(f.Name, column) }) {
 						return j
 					}
 					continue // its output is known, and hasn't got it

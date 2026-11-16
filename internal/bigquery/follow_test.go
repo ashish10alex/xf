@@ -3,6 +3,7 @@ package bigquery
 import (
 	"context"
 	"errors"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 // A client made while signed in follows the credentials: once they are
 // gone (gcloud auth application-default revoke), its calls fail with
-// ErrAuth, which says to log in again.
+// warehouse.ErrAuth, which says to log in again.
 func TestClientFollowsTheCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "adc.json")
 	t.Setenv(gcpauth.EnvFile, path)
@@ -30,7 +31,7 @@ func TestClientFollowsTheCredentials(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.DryRun(context.Background(), "p", "", "select 1"); !errors.Is(err, ErrAuth) {
-		t.Fatalf("with the credentials gone: %v, want ErrAuth", err)
+	if _, err := c.Check(context.Background(), "p", "", "select 1"); !errors.Is(err, warehouse.ErrAuth) {
+		t.Fatalf("with the credentials gone: %v, want warehouse.ErrAuth", err)
 	}
 }

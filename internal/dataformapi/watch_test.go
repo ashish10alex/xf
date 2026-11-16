@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const watchedID = "1700000000-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -78,7 +78,7 @@ func TestWatchReportsWhatJobsCost(t *testing.T) {
 	a := act("a", "SUCCEEDED")
 	a.BigQuery.JobID = "job_a"
 	api := &fakeAPI{polls: []poll{{state: StateSucceeded, actions: []Action{a}}}}
-	jobs := &fakeJobs{jobs: map[string]bigquery.Job{"job_a": {BytesBilled: 10 << 20, Done: true}}}
+	jobs := &fakeJobs{jobs: map[string]warehouse.Job{"job_a": {BytesBilled: 10 << 20, Done: true}}}
 	opts := watchOpts()
 	opts.Jobs = jobs
 	r, inv, err := Watch(context.Background(), api, opts)
@@ -215,7 +215,7 @@ func TestWatchLooksJobsUpWhereTheyRan(t *testing.T) {
 	a, b := act("a", "SUCCEEDED"), act("b", "SUCCEEDED")
 	a.BigQuery.JobID, b.BigQuery.JobID = "job_a", "job_b"
 	api := &fakeAPI{polls: []poll{{state: StateSucceeded, actions: []Action{a, b}}}}
-	jobs := &fakeJobs{jobs: map[string]bigquery.Job{"job_a": {BytesBilled: 1 << 40, SlotMs: 1000, Done: true}}}
+	jobs := &fakeJobs{jobs: map[string]warehouse.Job{"job_a": {BytesBilled: 1 << 40, SlotMs: 1000, Done: true}}}
 	opts := watchOpts()
 	opts.Jobs, opts.JobLocation = jobs, "EU"
 	r := mustWatch(t, api, opts)
@@ -251,7 +251,7 @@ func TestWatchFindsJobsOfAnotherRepository(t *testing.T) {
 	a := act("a", "SUCCEEDED")
 	a.BigQuery.JobID = "job_a"
 	api := &fakeAPI{polls: []poll{{state: StateSucceeded, actions: []Action{a}}}}
-	jobs := &fakeJobs{jobs: map[string]bigquery.Job{"job_a": {BytesBilled: 1 << 30, SlotMs: 1000, Done: true}}, onlyIn: "europe-west2"}
+	jobs := &fakeJobs{jobs: map[string]warehouse.Job{"job_a": {BytesBilled: 1 << 30, SlotMs: 1000, Done: true}}, onlyIn: "europe-west2"}
 	opts := watchOpts()
 	opts.Jobs, opts.JobLocation = jobs, "EU"
 	r := mustWatch(t, api, opts)
@@ -269,10 +269,10 @@ func TestWatchFindsJobsOfAnotherRepository(t *testing.T) {
 // blockedJobs holds every lookup until release is closed.
 type blockedJobs struct{ release chan struct{} }
 
-func (b blockedJobs) Job(ctx context.Context, _, _, _ string) (*bigquery.Job, error) {
+func (b blockedJobs) Job(ctx context.Context, _, _, _ string) (*warehouse.Job, error) {
 	select {
 	case <-b.release:
-		return &bigquery.Job{BytesBilled: 1 << 30, Done: true}, nil
+		return &warehouse.Job{BytesBilled: 1 << 30, Done: true}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

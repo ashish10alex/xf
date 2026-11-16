@@ -13,13 +13,13 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // DryRunFunc asks BigQuery to plan one of a's queries without running it.
-type DryRunFunc func(ctx context.Context, a *project.Action, query string) (*bigquery.DryRun, error)
+type DryRunFunc func(ctx context.Context, a *project.Action, query string) (*warehouse.Check, error)
 
 // maxParallelDryRuns bounds the dry runs one file has in flight.
 const maxParallelDryRuns = 4
@@ -160,7 +160,7 @@ func DryRunFile(ctx context.Context, p navigate.Project, file string, src []byte
 }
 
 type dryRunResult struct {
-	dryRun *bigquery.DryRun
+	dryRun *warehouse.Check
 	err    error
 }
 
@@ -296,12 +296,12 @@ func assertionsKey(src []byte, r navigate.SQLXRegions) int {
 
 // isQueryError reports whether BigQuery rejected the query itself.
 func isQueryError(err error) bool {
-	var api *bigquery.APIError
+	var api *warehouse.APIError
 	return errors.As(err, &api) && (api.Status == http.StatusBadRequest || api.Status == http.StatusNotFound)
 }
 
 func queryErrorDiagnostic(file string, src []byte, s *script, err error) Diagnostic {
-	var api *bigquery.APIError
+	var api *warehouse.APIError
 	errors.As(err, &api)
 	msg := api.Message
 	d := Diagnostic{File: file, Severity: Error, Source: SourceDryRun}
@@ -397,18 +397,18 @@ func reason(err error) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timed out"
-	case errors.Is(err, bigquery.ErrAuth):
-		return err.Error() + "; " + bigquery.AuthHint
+	case errors.Is(err, warehouse.ErrAuth):
+		return err.Error() + "; " + warehouse.AuthHint
 	}
 	return err.Error()
 }
 
 // costText describes a dry run's bytes and on-demand cost.
-func costText(label string, d *bigquery.DryRun) string {
+func costText(label string, d *warehouse.Check) string {
 	// BigQuery says UNKNOWN both when it has no estimate (and reports 0) and
 	// alongside a real figure; only the first means there is nothing to show.
 	text := "bytes unknown"
-	if d.Accuracy != bigquery.AccuracyUnknown || d.Bytes > 0 {
+	if d.Accuracy != warehouse.AccuracyUnknown || d.Bytes > 0 {
 		text = fmt.Sprintf("%s processed (≈ %s)", formatBytes(d.Bytes), formatUSD(d.CostUSD()))
 	}
 	switch label {

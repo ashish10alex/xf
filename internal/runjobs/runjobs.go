@@ -20,21 +20,21 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/dataformapi"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
-// JobReader looks up what a BigQuery job did. *bigquery.Client implements
-// it; tests pass fakes.
+// JobReader looks up what a BigQuery job did. A warehouse.JobLister
+// implements it; tests pass fakes.
 type JobReader interface {
-	Job(ctx context.Context, project, location, jobID string) (*bigquery.Job, error)
+	Job(ctx context.Context, project, location, jobID string) (*warehouse.Job, error)
 }
 
-// JobLister lists the caller's jobs that have not ended. *bigquery.Client
-// implements it; tests pass fakes.
+// JobLister lists the caller's jobs that have not ended. A
+// warehouse.JobLister implements it; tests pass fakes.
 type JobLister interface {
-	ActiveJobs(ctx context.Context, project string, since time.Time) ([]bigquery.ActiveJob, error)
+	ActiveJobs(ctx context.Context, project string, since time.Time) ([]warehouse.ActiveJob, error)
 }
 
 // Options say where a run's jobs are and how to follow them.
@@ -241,7 +241,7 @@ func (t *tracker) lookUp(ctx context.Context, id string) {
 }
 
 // Stats is what a looked-up job did, as a report has it.
-func Stats(j *bigquery.Job) *project.JobStats {
+func Stats(j *warehouse.Job) *project.JobStats {
 	return &project.JobStats{
 		Location:       j.Location,
 		BytesBilled:    j.BytesBilled,
@@ -287,7 +287,7 @@ func (t *tracker) poll(ctx context.Context) {
 
 // setRunning takes the caller's running jobs, of which the run's are those
 // with its prefix that the CLI has not named yet.
-func (t *tracker) setRunning(jobs []bigquery.ActiveJob) {
+func (t *tracker) setRunning(jobs []warehouse.ActiveJob) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var rows []project.RunAction

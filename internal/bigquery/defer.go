@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,17 +16,10 @@ import (
 // holds and which of them are Proxy Views, whether a prod table exists, and
 // making, repointing and removing Proxy Views.
 
-// LabelledTable is a table in a dataset's listing, with its labels.
-type LabelledTable struct {
-	ID     string
-	Type   string
-	Labels map[string]string
-}
-
 // ListTablesLabelled lists the tables and views of a dataset with their
 // labels. A dataset that doesn't exist fails with a 404 APIError.
-func (c *Client) ListTablesLabelled(ctx context.Context, project, dataset string) ([]LabelledTable, error) {
-	var out []LabelledTable
+func (c *Client) ListTablesLabelled(ctx context.Context, project, dataset string) ([]warehouse.LabelledTable, error) {
+	var out []warehouse.LabelledTable
 	token := ""
 	for range listPages {
 		q := url.Values{"maxResults": {fmt.Sprint(listPageSize)}, "fields": {"nextPageToken,tables(tableReference/tableId,type,labels)"}}
@@ -50,7 +44,7 @@ func (c *Client) ListTablesLabelled(ctx context.Context, project, dataset string
 			return nil, fmt.Errorf("decode tables: %w", err)
 		}
 		for _, t := range raw.Tables {
-			out = append(out, LabelledTable{ID: t.TableReference.TableID, Type: t.Type, Labels: t.Labels})
+			out = append(out, warehouse.LabelledTable{ID: t.TableReference.TableID, Type: t.Type, Labels: t.Labels})
 		}
 		if raw.NextPageToken == "" {
 			break
@@ -107,40 +101,19 @@ func (c *Client) Exists(ctx context.Context, project, dataset, name string, rout
 	u := fmt.Sprintf("%s/bigquery/v2/projects/%s/datasets/%s/%s/%s?fields=%s", c.baseURL,
 		url.PathEscape(project), url.PathEscape(dataset), kind, url.PathEscape(name), fields)
 	_, err := c.do(ctx, http.MethodGet, u, nil)
-	if IsNotFound(err) {
+	if warehouse.IsNotFound(err) {
 		return false, nil
 	}
 	return err == nil, err
 }
 
-// IsNotFound says err is BigQuery's 404.
-func IsNotFound(err error) bool {
-	var api *APIError
-	return errors.As(err, &api) && api.Status == http.StatusNotFound
-}
-
-// IsForbidden says err is BigQuery's 403.
-func IsForbidden(err error) bool {
-	var api *APIError
-	return errors.As(err, &api) && api.Status == http.StatusForbidden
-}
-
-// ViewInfo is what defer to prod reads of a table at a Dev Target: whether
-// it is a Proxy View, what it reads, and how old it is.
-type ViewInfo struct {
-	Type         string
-	Labels       map[string]string
-	Query        string
-	LastModified time.Time
-}
-
 // View reads a table's labels, view query and age; nil when it doesn't
 // exist.
-func (c *Client) View(ctx context.Context, project, dataset, table string) (*ViewInfo, error) {
+func (c *Client) View(ctx context.Context, project, dataset, table string) (*warehouse.ViewInfo, error) {
 	u := fmt.Sprintf("%s/bigquery/v2/projects/%s/datasets/%s/tables/%s?fields=%s", c.baseURL,
 		url.PathEscape(project), url.PathEscape(dataset), url.PathEscape(table), url.QueryEscape("type,labels,lastModifiedTime,view(query)"))
 	body, err := c.do(ctx, http.MethodGet, u, nil)
-	if IsNotFound(err) {
+	if warehouse.IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -157,7 +130,7 @@ func (c *Client) View(ctx context.Context, project, dataset, table string) (*Vie
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode table metadata: %w", err)
 	}
-	v := &ViewInfo{Type: raw.Type, Labels: raw.Labels}
+	v := &warehouse.ViewInfo{Type: raw.Type, Labels: raw.Labels}
 	if raw.View != nil {
 		v.Query = raw.View.Query
 	}
@@ -167,16 +140,7 @@ func (c *Client) View(ctx context.Context, project, dataset, table string) (*Vie
 	return v, nil
 }
 
-// ViewSpec is a view to make or repoint.
-type ViewSpec struct {
-	Project, Dataset, Table string
-	// Query is standard SQL.
-	Query       string
-	Labels      map[string]string
-	Description string
-}
-
-func (v ViewSpec) body() ([]byte, error) {
+func viewBody(v warehouse.ViewSpec) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"tableReference": map[string]string{"projectId": v.Project, "datasetId": v.Dataset, "tableId": v.Table},
 		"view":           map[string]any{"query": v.Query, "useLegacySql": false},
@@ -186,8 +150,8 @@ func (v ViewSpec) body() ([]byte, error) {
 }
 
 // CreateView makes a view.
-func (c *Client) CreateView(ctx context.Context, v ViewSpec) error {
-	body, err := v.body()
+func (c *Client) CreateView(ctx context.Context, v warehouse.ViewSpec) error {
+	body, err := viewBody(v)
 	if err != nil {
 		return err
 	}
@@ -198,8 +162,8 @@ func (c *Client) CreateView(ctx context.Context, v ViewSpec) error {
 
 // UpdateView points an existing view at v's query, labels and
 // description.
-func (c *Client) UpdateView(ctx context.Context, v ViewSpec) error {
-	body, err := v.body()
+func (c *Client) UpdateView(ctx context.Context, v warehouse.ViewSpec) error {
+	body, err := viewBody(v)
 	if err != nil {
 		return err
 	}
@@ -212,8 +176,8 @@ func (c *Client) UpdateView(ctx context.Context, v ViewSpec) error {
 func (c *Client) DeleteTable(ctx context.Context, project, dataset, table string) error {
 	u := fmt.Sprintf("%s/bigquery/v2/projects/%s/datasets/%s/tables/%s", c.baseURL, url.PathEscape(project), url.PathEscape(dataset), url.PathEscape(table))
 	_, err := c.do(ctx, http.MethodDelete, u, nil)
-	var api *APIError
-	if err == nil || IsNotFound(err) || errors.As(err, &api) && api.Status == http.StatusNoContent {
+	var api *warehouse.APIError
+	if err == nil || warehouse.IsNotFound(err) || errors.As(err, &api) && api.Status == http.StatusNoContent {
 		return nil
 	}
 	return err

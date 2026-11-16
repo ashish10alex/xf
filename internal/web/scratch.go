@@ -23,10 +23,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -387,7 +387,7 @@ func (p *projectState) scratchCreate(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), tableTimeout)
 		defer cancel()
 		tbl, err := p.deps.Table(ctx, a.Target.Database, a.Target.Schema, a.Target.Name)
-		var apiErr *bigquery.APIError
+		var apiErr *warehouse.APIError
 		switch {
 		case errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound:
 			writeError(w, fmt.Errorf("%s.%s.%s does not exist yet: build it, or start from the compiled SQL", a.Target.Database, a.Target.Schema, a.Target.Name))
@@ -460,7 +460,7 @@ func quoteIdent(s string) string {
 
 // selectColumns is a SELECT of the table's columns, comma-separated and
 // one to a line.
-func selectColumns(proj, dataset, table string, schema []bigquery.Field) string {
+func selectColumns(proj, dataset, table string, schema []warehouse.Column) string {
 	var b strings.Builder
 	b.WriteString("SELECT\n")
 	for i, f := range schema {
@@ -490,9 +490,9 @@ type scratchDryView struct {
 	Cost string `json:"cost,omitempty"`
 	// Writes says the statement changes data or a schema, which the page
 	// asks about before it runs.
-	Writes bool             `json:"writes"`
-	Tables []string         `json:"tables,omitempty"`
-	Schema []bigquery.Field `json:"schema,omitempty"`
+	Writes bool               `json:"writes"`
+	Tables []string           `json:"tables,omitempty"`
+	Schema []warehouse.Column `json:"schema,omitempty"`
 	// WarnBytes and ConfirmBytes are the sizes the page colours and asks at.
 	WarnBytes    int64 `json:"warnBytes"`
 	ConfirmBytes int64 `json:"confirmBytes"`
@@ -554,9 +554,9 @@ func (p *projectState) scratchDryRun(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	d, err := p.deps.DryRun(ctx, proj, f.Location, req.SQL)
 	if err != nil {
-		v.Auth = errors.Is(err, bigquery.ErrAuth)
+		v.Auth = errors.Is(err, warehouse.ErrAuth)
 		v.Error = err.Error()
-		if apiErr, ok := errors.AsType[*bigquery.APIError](err); ok {
+		if apiErr, ok := errors.AsType[*warehouse.APIError](err); ok {
 			v.Error = apiErr.Message
 		}
 		writeJSON(w, v)
@@ -569,8 +569,8 @@ func (p *projectState) scratchDryRun(w http.ResponseWriter, r *http.Request) {
 	for _, t := range d.Tables {
 		v.Tables = append(v.Tables, t.Project+"."+t.Dataset+"."+t.Table)
 	}
-	v.Text = bigquery.FormatBytes(d.Bytes)
-	if d.Accuracy == bigquery.AccuracyUnknown {
+	v.Text = warehouse.FormatBytes(d.Bytes)
+	if d.Accuracy == warehouse.AccuracyUnknown {
 		v.Text = "unknown"
 	} else {
 		v.Cost = cost.FormatUSD(d.CostUSD())
@@ -584,8 +584,8 @@ func (p *projectState) scratchProject(ctx context.Context, header string) (strin
 	if header != "" {
 		return header, true
 	}
-	if c, err := p.bq(ctx); err == nil && c.QuotaProject() != "" {
-		return c.QuotaProject(), true
+	if c, err := p.bq(ctx); err == nil && c.DefaultProject() != "" {
+		return c.DefaultProject(), true
 	}
 	return "", false
 }
@@ -597,11 +597,11 @@ type jobRequest struct {
 	SQL string `json:"sql"`
 }
 
-func (p *projectState) bq(ctx context.Context) (*bigquery.Client, error) {
-	if p.bigquery == nil {
+func (p *projectState) bq(ctx context.Context) (warehouse.Warehouse, error) {
+	if p.warehouse == nil {
 		return nil, errors.New("no BigQuery access here")
 	}
-	return p.bigquery(ctx)
+	return p.warehouse(ctx)
 }
 
 func (p *projectState) scratchRun(w http.ResponseWriter, r *http.Request) {
@@ -630,7 +630,7 @@ func (p *projectState) scratchRun(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), scratchCallLimit)
 	defer cancel()
-	ref, err := c.StartQuery(ctx, bigquery.QueryOptions{Project: proj, Location: f.Location, SQL: req.SQL, Labels: map[string]string{scratchLabel: "true"}})
+	ref, err := c.StartQuery(ctx, warehouse.QueryOptions{Project: proj, Location: f.Location, SQL: req.SQL, Labels: map[string]string{scratchLabel: "true"}})
 	if err != nil {
 		writeError(w, queryError(err))
 		return
@@ -641,7 +641,7 @@ func (p *projectState) scratchRun(w http.ResponseWriter, r *http.Request) {
 // queryError words a BigQuery error as its message, which carries the
 // line and column of a mistake in the SQL.
 func queryError(err error) error {
-	if apiErr, ok := errors.AsType[*bigquery.APIError](err); ok {
+	if apiErr, ok := errors.AsType[*warehouse.APIError](err); ok {
 		return errors.New(apiErr.Message)
 	}
 	return err
@@ -651,23 +651,23 @@ func queryError(err error) error {
 // keeps a query's result for about a day, and a recent run opened again
 // may be older.
 func rowsError(err error) error {
-	if apiErr, ok := errors.AsType[*bigquery.APIError](err); ok && apiErr.Status == http.StatusNotFound {
+	if apiErr, ok := errors.AsType[*warehouse.APIError](err); ok && apiErr.Status == http.StatusNotFound {
 		return errors.New("BigQuery no longer has this result (it keeps one for about 24 hours): run the query again")
 	}
 	return queryError(err)
 }
 
-func jobRefOf(r *http.Request) (bigquery.JobRef, bool) {
+func jobRefOf(r *http.Request) (warehouse.JobRef, bool) {
 	q := r.URL.Query()
-	ref := bigquery.JobRef{Project: q.Get("project"), Location: q.Get("location"), ID: q.Get("id")}
+	ref := warehouse.JobRef{Project: q.Get("project"), Location: q.Get("location"), ID: q.Get("id")}
 	return ref, ref.Project != "" && ref.ID != ""
 }
 
 // jobView is where a job stands: its status, and for a script its
 // statements.
 type jobView struct {
-	*bigquery.QueryStatus
-	Children []bigquery.ChildJob `json:"children,omitempty"`
+	*warehouse.QueryStatus
+	Children []warehouse.ChildJob `json:"children,omitempty"`
 	// Cost is what the billed bytes cost on demand, once the job is done.
 	Cost string `json:"cost,omitempty"`
 }
@@ -691,14 +691,14 @@ func (p *projectState) scratchJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := jobView{QueryStatus: st}
-	if st.State == "DONE" {
-		v.Cost = cost.FormatUSD(bigquery.CostUSD(st.BytesBilled))
+	if co, ok := c.(warehouse.Coster); ok && st.State == "DONE" {
+		v.Cost = cost.FormatUSD(co.CostUSD(st.BytesBilled))
 	}
 	if st.State == "DONE" && clearsMeta(st.StatementType) {
 		p.meta.clear() // a table or column may have come or gone
 	}
-	if st.State == "DONE" && st.Error == "" && st.StatementType == "SCRIPT" {
-		if v.Children, err = c.ChildJobs(ctx, ref); err != nil {
+	if jobs, ok := c.(warehouse.JobLister); ok && st.State == "DONE" && st.Error == "" && st.StatementType == "SCRIPT" {
+		if v.Children, err = jobs.ChildJobs(ctx, ref); err != nil {
 			writeError(w, queryError(err))
 			return
 		}
@@ -729,7 +729,7 @@ func (p *projectState) scratchRows(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *projectState) scratchCancel(w http.ResponseWriter, r *http.Request) {
-	var ref bigquery.JobRef
+	var ref warehouse.JobRef
 	if !readJSON(w, r, &ref) {
 		return
 	}
@@ -793,7 +793,7 @@ func (p *projectState) scratchCSV(w http.ResponseWriter, r *http.Request) {
 		for _, row := range page.Rows {
 			rec := make([]string, len(row))
 			for i, cell := range row {
-				rec[i] = bigquery.CellText(cell)
+				rec[i] = warehouse.CellText(cell)
 			}
 			if err := cw.Write(rec); err != nil {
 				return
@@ -818,7 +818,7 @@ func (p *projectState) scratchCSV(w http.ResponseWriter, r *http.Request) {
 
 // setScratch gives the project what scratch queries run with.
 func (p *projectState) setScratch(o *Project) {
-	p.bigquery, p.scratchWarnGB, p.scratchConfirmGB = o.BigQuery, o.ScratchWarnGB, o.ScratchConfirmGB
+	p.warehouse, p.scratchWarnGB, p.scratchConfirmGB = o.Warehouse, o.ScratchWarnGB, o.ScratchConfirmGB
 	p.scratchDirAbs, p.scratchDefProject, p.scratchDefLocation = o.ScratchDir, o.ScratchProject, o.ScratchLocation
 	p.standalone, p.startScratch, p.startCheck = o.Standalone, o.StartScratch, o.StartCheck
 	p.sourceAutosaveMs = o.SourceAutosaveMs

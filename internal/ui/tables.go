@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -27,18 +27,18 @@ type tableEntry struct {
 	// answer, shown while the next is on its way.
 	done bool
 	at   time.Time // when the answer came; zero to look it up again
-	tbl  *bigquery.Table
+	tbl  *warehouse.Table
 	err  error
 }
 
 type tableMsg struct {
-	ref bigquery.TableRef
-	tbl *bigquery.Table
+	ref warehouse.TableRef
+	tbl *warehouse.Table
 	err error
 }
 
-func tableRef(a *project.Action) bigquery.TableRef {
-	return bigquery.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}
+func tableRef(a *project.Action) warehouse.TableRef {
+	return warehouse.TableRef{Project: a.Target.Database, Dataset: a.Target.Schema, Table: a.Target.Name}
 }
 
 // startTableLookups looks up the table of each action in the Actions pane
@@ -68,7 +68,7 @@ func (m *Model) startTableLookups() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func tableCmd(lookup func(ctx context.Context, project, dataset, table string) (*bigquery.Table, error), ref bigquery.TableRef) tea.Cmd {
+func tableCmd(lookup func(ctx context.Context, project, dataset, table string) (*warehouse.Table, error), ref warehouse.TableRef) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), tableTimeout)
 		defer cancel()
@@ -104,13 +104,13 @@ func (m Model) updatedDetail(a *project.Action) (d detail, ok bool) {
 	s := m.styles
 	d = detail{label: "updated", style: s.dim}
 	e := m.tables[tableRef(a)]
-	var apiErr *bigquery.APIError
+	var apiErr *warehouse.APIError
 	switch {
 	case e == nil || !e.done:
 		d.value = "checking…"
 	case errors.As(e.err, &apiErr) && apiErr.Status == http.StatusNotFound:
 		d.value = "N/A"
-	case errors.Is(e.err, bigquery.ErrAuth):
+	case errors.Is(e.err, warehouse.ErrAuth):
 		d.value, d.style = "no credentials", s.warnText
 	case apiErr != nil:
 		d.value, d.style = "✗ "+firstLine(apiErr.Message), s.errorText

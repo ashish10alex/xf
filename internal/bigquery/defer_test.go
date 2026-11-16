@@ -3,6 +3,7 @@ package bigquery
 import (
 	"context"
 	"encoding/json"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +45,7 @@ func TestDeferCalls(t *testing.T) {
 	if ok, err := c.Exists(ctx, "p", "d", "gone", false); ok || err != nil {
 		t.Errorf("gone: %v %v", ok, err)
 	}
-	if _, err := c.Exists(ctx, "p", "d", "denied", false); !IsForbidden(err) {
+	if _, err := c.Exists(ctx, "p", "d", "denied", false); !warehouse.IsForbidden(err) {
 		t.Errorf("denied: %v", err)
 	}
 	v, err := c.View(ctx, "p", "d", "there")
@@ -58,7 +59,7 @@ func TestDeferCalls(t *testing.T) {
 	if err != nil || len(ts) != 1 || ts[0].Labels["k"] != "v" {
 		t.Errorf("tables %+v %v", ts, err)
 	}
-	if err := c.CreateView(ctx, ViewSpec{Project: "p", Dataset: "d", Table: "t", Query: "SELECT 2", Labels: map[string]string{"l": "true"}}); err != nil {
+	if err := c.CreateView(ctx, warehouse.ViewSpec{Project: "p", Dataset: "d", Table: "t", Query: "SELECT 2", Labels: map[string]string{"l": "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	if body["view"].(map[string]any)["useLegacySql"] != false || body["tableReference"].(map[string]any)["tableId"] != "t" {

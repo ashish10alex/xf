@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/navigate"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // fixtureTable is testdata/bigquery/table.json as the client decodes it.
-func fixtureTable(t *testing.T) *bigquery.Table {
+func fixtureTable(t *testing.T) *warehouse.Table {
 	t.Helper()
 	data, err := os.ReadFile(testdata(t, "bigquery", "table.json"))
 	if err != nil {
@@ -24,12 +24,12 @@ func fixtureTable(t *testing.T) *bigquery.Table {
 	}
 	var raw struct {
 		Type, Description, Location string
-		Schema                      struct{ Fields []bigquery.Field }
+		Schema                      struct{ Fields []warehouse.Column }
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	return &bigquery.Table{
+	return &warehouse.Table{
 		Type: raw.Type, Description: raw.Description, Location: raw.Location,
 		LastModified: time.Date(2026, 9, 30, 8, 54, 57, 0, time.UTC), Schema: raw.Schema.Fields,
 	}
@@ -80,7 +80,7 @@ func TestCardWithoutBigQuery(t *testing.T) {
 		err  error
 		tail string
 	}{
-		{"auth", fmt.Errorf("%w: invalid_rapt", bigquery.ErrAuth), "⚠ **BigQuery metadata unavailable:** no valid Google credentials: invalid_rapt; run `gcloud auth application-default login`"},
+		{"auth", fmt.Errorf("%w: invalid_rapt", warehouse.ErrAuth), "⚠ **BigQuery metadata unavailable:** no valid Google credentials: invalid_rapt; run `gcloud auth application-default login`"},
 		{"timeout", context.DeadlineExceeded, "⚠ **BigQuery metadata unavailable:** timed out after 5s"},
 		{"not found", errors.New("Not found: Table demo-project:analytics.dev_report (HTTP 404)"), "⚠ **BigQuery metadata unavailable:** Not found: Table demo-project:analytics.dev_report (HTTP 404)"},
 	}
@@ -119,7 +119,7 @@ func TestCardRawAndSelf(t *testing.T) {
 	if got, want := card(raw, nil, errors.New("Access Denied (HTTP 403)"), time.Second), title+"\n\n---\n\n⚠ **BigQuery metadata unavailable:** Access Denied (HTTP 403)"; got != want {
 		t.Errorf("raw id without metadata:\ngot  %q\nwant %q", got, want)
 	}
-	got := card(raw, &bigquery.Table{Type: "VIEW", Schema: []bigquery.Field{{Name: "a", Type: "INT64"}}}, nil, time.Second)
+	got := card(raw, &warehouse.Table{Type: "VIEW", Schema: []warehouse.Column{{Name: "a", Type: "INT64"}}}, nil, time.Second)
 	if !strings.Contains(got, "**Type:** view") || !strings.Contains(got, "| a    | INT64 |             |") {
 		t.Errorf("raw id with metadata:\n%s", got)
 	}
@@ -139,7 +139,7 @@ func TestCardNoSchema(t *testing.T) {
 	tests := []struct {
 		name string
 		ref  navigate.TableRef
-		tbl  *bigquery.Table
+		tbl  *warehouse.Table
 		note string
 	}{
 		{"operation", navigate.TableRef{Target: target, Action: action(project.KindOperation, false)}, nil,
@@ -150,9 +150,9 @@ func TestCardNoSchema(t *testing.T) {
 			"**Type:** ephemeral\n\n_no schema: an ephemeral model has no table of its own (it is inlined where it is used)_"},
 		{"test", navigate.TableRef{Target: target, Action: action(project.KindTest, false)}, nil,
 			"_no schema: a test has no table of its own_"},
-		{"no columns", navigate.TableRef{Target: target, Action: action(project.KindOperation, true)}, &bigquery.Table{Type: "TABLE"},
+		{"no columns", navigate.TableRef{Target: target, Action: action(project.KindOperation, true)}, &warehouse.Table{Type: "TABLE"},
 			"**Type:** operation\n\n_no schema: BigQuery has no columns for the table_"},
-		{"raw id without columns", navigate.TableRef{Source: navigate.SourceRaw, Target: target}, &bigquery.Table{Type: "VIEW"},
+		{"raw id without columns", navigate.TableRef{Source: navigate.SourceRaw, Target: target}, &warehouse.Table{Type: "VIEW"},
 			title + "\n\n---\n\n**Type:** view\n\n_no schema: BigQuery has no columns for the table_"},
 		{"no BigQuery", navigate.TableRef{Target: target, Action: action(project.KindTable, false)}, nil,
 			"_no schema: no BigQuery access here, and the config documents no columns_"},
@@ -171,12 +171,12 @@ func TestCardNoSchema(t *testing.T) {
 }
 
 func TestSchemaTableLimits(t *testing.T) {
-	var fields []bigquery.Field
+	var fields []warehouse.Column
 	for i := range maxSchemaRows + 3 {
-		fields = append(fields, bigquery.Field{Name: fmt.Sprintf("c%03d", i), Type: "STRING"})
+		fields = append(fields, warehouse.Column{Name: fmt.Sprintf("c%03d", i), Type: "STRING"})
 	}
 	fields[0].Description = strings.Repeat("x", 100)
-	fields[0].Fields = []bigquery.Field{{Name: "mid", Type: "RECORD", Fields: []bigquery.Field{{Name: "leaf", Type: "INT64"}}}}
+	fields[0].Fields = []warehouse.Column{{Name: "mid", Type: "RECORD", Fields: []warehouse.Column{{Name: "leaf", Type: "INT64"}}}}
 	got := schemaTable(schemaRows(fields, nil))
 	lines := strings.Split(got, "\n")
 	tableLines := 0

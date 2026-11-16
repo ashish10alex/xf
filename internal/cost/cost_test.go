@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -42,14 +42,14 @@ func TestParseSize(t *testing.T) {
 // fakeBQ answers dry runs by SQL and partition lookups by table.
 type fakeBQ struct {
 	mu         sync.Mutex
-	dryRuns    map[string]*bigquery.DryRun
+	dryRuns    map[string]*warehouse.Check
 	failures   map[string]error
-	partitions map[string]*bigquery.Partition
+	partitions map[string]*warehouse.Partition
 	asked      []string // SQL dry run, in order
 	lookups    map[string]int
 }
 
-func (f *fakeBQ) dryRun(_ context.Context, proj, _ string, sql string) (*bigquery.DryRun, error) {
+func (f *fakeBQ) dryRun(_ context.Context, proj, _ string, sql string) (*warehouse.Check, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.asked = append(f.asked, proj+": "+sql)
@@ -62,7 +62,7 @@ func (f *fakeBQ) dryRun(_ context.Context, proj, _ string, sql string) (*bigquer
 	return nil, errors.New("unexpected dry run of " + sql)
 }
 
-func (f *fakeBQ) partition(_ context.Context, t bigquery.TableRef) (*bigquery.Partition, error) {
+func (f *fakeBQ) partition(_ context.Context, t warehouse.TableRef) (*warehouse.Partition, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.lookups == nil {
@@ -72,10 +72,10 @@ func (f *fakeBQ) partition(_ context.Context, t bigquery.TableRef) (*bigquery.Pa
 	return f.partitions[t.Table], nil
 }
 
-func precise(bytes int64, tables ...string) *bigquery.DryRun {
-	d := &bigquery.DryRun{Bytes: bytes, Accuracy: bigquery.AccuracyPrecise, StatementType: "SELECT"}
+func precise(bytes int64, tables ...string) *warehouse.Check {
+	d := &warehouse.Check{Bytes: bytes, Accuracy: warehouse.AccuracyPrecise, StatementType: "SELECT"}
 	for _, t := range tables {
-		d.Tables = append(d.Tables, bigquery.TableRef{Project: "acme", Dataset: "raw", Table: t})
+		d.Tables = append(d.Tables, warehouse.TableRef{Project: "acme", Dataset: "raw", Table: t})
 	}
 	return d
 }
@@ -127,15 +127,15 @@ func TestRunEstimatesEveryChangedActionAndItsMergeBase(t *testing.T) {
 
 	scriptSQL := script.DryRunQueries()[0].SQL
 	bq := &fakeBQ{
-		dryRuns: map[string]*bigquery.DryRun{
+		dryRuns: map[string]*warehouse.Check{
 			stg.Query:                precise(400 << 20),
 			stgBase.Query:            precise(2 * gib),
 			fct.Query:                precise(4 * tib),
-			fct.IncrementalQuery:     {Bytes: 3 * gib, Accuracy: bigquery.AccuracyUpperBound, StatementType: "SELECT"},
+			fct.IncrementalQuery:     {Bytes: 3 * gib, Accuracy: warehouse.AccuracyUpperBound, StatementType: "SELECT"},
 			fctBase.IncrementalQuery: precise(5 * gib),
-			check.Query:              {Bytes: 10 << 20, Accuracy: bigquery.AccuracyLowerBound, StatementType: "SELECT"},
+			check.Query:              {Bytes: 10 << 20, Accuracy: warehouse.AccuracyLowerBound, StatementType: "SELECT"},
 			added.Query:              precise(0),
-			scriptSQL:                {StatementType: "SCRIPT", Accuracy: bigquery.AccuracyUnknown},
+			scriptSQL:                {StatementType: "SCRIPT", Accuracy: warehouse.AccuracyUnknown},
 		},
 	}
 	res := changed(changes.ReasonSQL, stg, fct, check, script)
@@ -173,7 +173,7 @@ func TestRunEstimatesEveryChangedActionAndItsMergeBase(t *testing.T) {
 	// An incremental table counts its incremental run, with its full
 	// rebuild beside it, and is compared with the merge-base's.
 	f := find(t, r, "fct_order_items")
-	if f.Estimate == nil || f.Estimate.Bytes != 3*gib || f.Estimate.Accuracy != bigquery.AccuracyUpperBound || f.Full == nil || f.Full.Bytes != 4*tib {
+	if f.Estimate == nil || f.Estimate.Bytes != 3*gib || f.Estimate.Accuracy != warehouse.AccuracyUpperBound || f.Full == nil || f.Full.Bytes != 4*tib {
 		t.Errorf("incremental %+v full %+v", f.Estimate, f.Full)
 	}
 	if d, ok := f.Delta(); !ok || d != -2*gib {
@@ -227,7 +227,7 @@ func TestRunMarksReadsOfPartitionedTablesThatNeverNameTheColumn(t *testing.T) {
 	throughView := action("through_view", project.KindTable, "select id from raw.recent_events")
 	plain := action("plain", project.KindTable, "select id from raw.customers")
 	bq := &fakeBQ{
-		dryRuns: map[string]*bigquery.DryRun{
+		dryRuns: map[string]*warehouse.Check{
 			unfiltered.Query:  precise(tib, "events"),
 			filtered.Query:    precise(gib, "events"),
 			ingestion.Query:   precise(gib, "logs"),
@@ -235,7 +235,7 @@ func TestRunMarksReadsOfPartitionedTablesThatNeverNameTheColumn(t *testing.T) {
 			throughView.Query: precise(gib, "events"), // the view's table, which the SQL doesn't name
 			plain.Query:       precise(gib, "customers"),
 		},
-		partitions: map[string]*bigquery.Partition{"events": {Column: "event_date"}, "logs": {}},
+		partitions: map[string]*warehouse.Partition{"events": {Column: "event_date"}, "logs": {}},
 	}
 	actions := []*project.Action{unfiltered, filtered, ingestion, pruned, throughView, plain}
 	r, err := Run(context.Background(), changed(changes.ReasonNew, actions...), Head{Graph: graph(actions...)},
@@ -263,8 +263,8 @@ func TestRunWithoutAMergeBase(t *testing.T) {
 	a := action("orders", project.KindTable, "select 1")
 	broken := action("broken", project.KindTable, "select nope")
 	bq := &fakeBQ{
-		dryRuns:  map[string]*bigquery.DryRun{a.Query: precise(gib)},
-		failures: map[string]error{broken.Query: &bigquery.APIError{Status: 400, Message: "Unrecognized name: nope at [1:8]"}},
+		dryRuns:  map[string]*warehouse.Check{a.Query: precise(gib)},
+		failures: map[string]error{broken.Query: &warehouse.APIError{Status: 400, Message: "Unrecognized name: nope at [1:8]"}},
 	}
 	res := changed(changes.ReasonSQL, a, broken)
 	r, err := Run(context.Background(), res, Head{Graph: graph(a, broken)}, Deps{
@@ -290,8 +290,8 @@ func TestRunWithoutAMergeBase(t *testing.T) {
 
 func TestRunFailsWhenBigQueryRefusesEveryDryRun(t *testing.T) {
 	a, b := action("a", project.KindTable, "select 1"), action("b", project.KindTable, "select 2")
-	forbidden := &bigquery.APIError{Status: 403, Message: "Access Denied: User does not have bigquery.jobs.create permission"}
-	bq := &fakeBQ{failures: map[string]error{a.Query: forbidden, b.Query: errors.Join(bigquery.ErrAuth, errors.New("token expired"))}}
+	forbidden := &warehouse.APIError{Status: 403, Message: "Access Denied: User does not have bigquery.jobs.create permission"}
+	bq := &fakeBQ{failures: map[string]error{a.Query: forbidden, b.Query: errors.Join(warehouse.ErrAuth, errors.New("token expired"))}}
 	res := changed(changes.ReasonSQL, a, b)
 	_, err := Run(context.Background(), res, Head{Graph: graph(a, b)}, Deps{DryRun: bq.dryRun}, nil)
 	if err == nil || !strings.Contains(err.Error(), "BigQuery refused every dry run: Access Denied") {
@@ -299,7 +299,7 @@ func TestRunFailsWhenBigQueryRefusesEveryDryRun(t *testing.T) {
 	}
 	// One that got through makes it a report: the refused action is listed.
 	bq.failures = map[string]error{a.Query: forbidden}
-	bq.dryRuns = map[string]*bigquery.DryRun{b.Query: precise(gib)}
+	bq.dryRuns = map[string]*warehouse.Check{b.Query: precise(gib)}
 	r, err := Run(context.Background(), res, Head{Graph: graph(a, b)}, Deps{DryRun: bq.dryRun}, nil)
 	if err != nil || r.Unestimated() != 1 {
 		t.Fatalf("got %+v, %v", r, err)
@@ -314,7 +314,7 @@ func TestRunDryRunsAnotherCompileOfTheProject(t *testing.T) {
 	prodGraph := project.NewGraph([]*project.Action{prod})
 	prodGraph.DefaultDatabase, prodGraph.DefaultLocation = "acme-prod", "EU"
 	prodBase := &project.Action{ID: prodTarget.ID(), Target: prodTarget, Kind: project.KindTable, Query: "select id from prod.raw"}
-	bq := &fakeBQ{dryRuns: map[string]*bigquery.DryRun{prod.Query: precise(8 * gib), prodBase.Query: precise(gib)}}
+	bq := &fakeBQ{dryRuns: map[string]*warehouse.Check{prod.Query: precise(8 * gib), prodBase.Query: precise(gib)}}
 	head := Head{Graph: prodGraph, Compiled: "prodCompilerOptions", ID: func(id project.ActionID) project.ActionID {
 		if id == a.ID {
 			return prod.ID
@@ -368,7 +368,7 @@ func testReport() *Report {
 	r := &Report{
 		Actions: []Action{
 			{Name: "acme.marts.fct_order_items", FileName: "definitions/fct_order_items.sqlx", Type: "incremental",
-				Estimate: &Estimate{Bytes: 4*tib + tib/5, Accuracy: bigquery.AccuracyUpperBound}, Full: &Estimate{Bytes: 9 * tib},
+				Estimate: &Estimate{Bytes: 4*tib + tib/5, Accuracy: warehouse.AccuracyUpperBound}, Full: &Estimate{Bytes: 9 * tib},
 				Base: &Estimate{Bytes: 3 * gib}, Unfiltered: []Unfiltered{{Table: "acme.raw.events", Column: "event_date"}}},
 			{Name: "acme.marts.dim_customers", FileName: "definitions/dim_customers.sqlx", Type: "table", Estimate: &Estimate{Bytes: gib + gib*4/5}, New: true},
 			{Name: "acme.marts.stg_pageviews", FileName: "definitions/stg_pageviews.sqlx", Type: "view", Estimate: &Estimate{Bytes: 420 << 20}, Base: &Estimate{Bytes: 420 << 20}},
@@ -615,7 +615,7 @@ func TestJSONTotals(t *testing.T) {
 	// A first build counts in full; each later run counts its incremental
 	// run instead.
 	r = testReport()
-	r.Actions[0].FirstBuild, r.Actions[0].Full, r.Actions[0].Incremental = true, nil, &Estimate{Bytes: 2 * gib, Accuracy: bigquery.AccuracyLowerBound}
+	r.Actions[0].FirstBuild, r.Actions[0].Full, r.Actions[0].Incremental = true, nil, &Estimate{Bytes: 2 * gib, Accuracy: warehouse.AccuracyLowerBound}
 	d = read(r)
 	if later := 2*gib + gib + gib*4/5 + 420<<20; d.LaterBytes == nil || *d.LaterBytes != later || d.LaterBound != "lower" || d.LaterUsd == nil {
 		t.Errorf("later runs %v %q %v, want %d lower", d.LaterBytes, d.LaterBound, d.LaterUsd, later)
@@ -660,14 +660,14 @@ func TestRuns(t *testing.T) {
 }
 
 func notFound(table string) error {
-	return &bigquery.APIError{Status: 404, Message: "Not found: Table " + strings.Replace(table, ".", ":", 1) + " was not found in location EU"}
+	return &warehouse.APIError{Status: 404, Message: "Not found: Table " + strings.Replace(table, ".", ":", 1) + " was not found in location EU"}
 }
 
 func TestRunPricesAnUnbuiltIncrementalAsItsFullBuild(t *testing.T) {
 	snap := action("snapshot", project.KindIncremental, "select * from raw.orders")
 	snap.IncrementalQuery = "select * from raw.orders where ts > (select max(ts) from `acme.marts.snapshot`)"
 	bq := &fakeBQ{
-		dryRuns:  map[string]*bigquery.DryRun{snap.Query: precise(2 * gib)},
+		dryRuns:  map[string]*warehouse.Check{snap.Query: precise(2 * gib)},
 		failures: map[string]error{snap.IncrementalQuery: notFound("acme.marts.snapshot")},
 	}
 	r, err := Run(context.Background(), changed(changes.ReasonNew, snap), Head{Graph: graph(snap)}, Deps{DryRun: bq.dryRun}, nil)
@@ -722,7 +722,7 @@ func TestRunReadsATableTheBranchAddsFromDev(t *testing.T) {
 	partly := "select * from `acme_dev.marts.agg` join `acme.marts.agg2` using (id)"
 	devSQL := "select * from `acme_dev.marts.agg` join `acme_dev.marts.agg2` using (id)"
 	bq := &fakeBQ{
-		dryRuns: map[string]*bigquery.DryRun{added.Query: precise(gib), added2.Query: precise(1), devSQL: precise(3 << 20)},
+		dryRuns: map[string]*warehouse.Check{added.Query: precise(gib), added2.Query: precise(1), devSQL: precise(3 << 20)},
 		failures: map[string]error{
 			report.Query: notFound("acme.marts.agg"),
 			partly:       notFound("acme.marts.agg2"),
@@ -765,7 +765,7 @@ func TestRunReadsATableTheBranchAddsFromDev(t *testing.T) {
 	inNew.Target.Schema, inNew.ID = "newds", "acme.newds.fresh"
 	reader := action("reader", project.KindTable, "select * from `acme.newds.fresh`")
 	bq.dryRuns[inNew.Query] = precise(1)
-	bq.failures[reader.Query] = &bigquery.APIError{Status: 404, Message: "Not found: Dataset acme:newds was not found in location EU"}
+	bq.failures[reader.Query] = &warehouse.APIError{Status: 404, Message: "Not found: Dataset acme:newds was not found in location EU"}
 	bq.dryRuns["select * from `acme_dev.newds.fresh`"] = precise(5)
 	res = changed(changes.ReasonNew, inNew)
 	res.Changed = append(res.Changed, changed(changes.ReasonSQL, reader).Changed...)
@@ -798,7 +798,7 @@ func TestRunListsEveryNewTableADryRunWaitsOn(t *testing.T) {
 	c := action("c_new", project.KindTable, "select 3")
 	out := action("out", project.KindTable, "select * from `acme.marts.b_new` join `acme.marts.a_new` using (id) join `acme.marts.c_new` using (id)")
 	bq := &fakeBQ{
-		dryRuns: map[string]*bigquery.DryRun{a.Query: precise(1), b.Query: precise(1), c.Query: precise(1),
+		dryRuns: map[string]*warehouse.Check{a.Query: precise(1), b.Query: precise(1), c.Query: precise(1),
 			"SELECT 1 FROM `acme.marts.c_new` WHERE FALSE": precise(0)},
 		failures: map[string]error{
 			out.Query: notFound("acme.marts.b_new"),
@@ -912,12 +912,12 @@ func TestRunTellsADryRunWaitingOnAColumnTheBranchAdds(t *testing.T) {
 	}
 	final.DependencyTargets = []project.Target{dates.Target}
 	withSchema := precise(gib)
-	withSchema.Schema = []bigquery.Field{{Name: "id", Type: "INT64"}, {Name: "WEEK2", Type: "DATE"}, {Name: "date2", Type: "DATE"}}
+	withSchema.Schema = []warehouse.Column{{Name: "id", Type: "INT64"}, {Name: "WEEK2", Type: "DATE"}, {Name: "date2", Type: "DATE"}}
 	unrecognized := func(name string) error {
-		return &bigquery.APIError{Status: 400, Message: "Unrecognized name: " + name + "; Did you mean " + name[:len(name)-1] + "1? at [1:12]"}
+		return &warehouse.APIError{Status: 400, Message: "Unrecognized name: " + name + "; Did you mean " + name[:len(name)-1] + "1? at [1:12]"}
 	}
 	bq := &fakeBQ{
-		dryRuns:  map[string]*bigquery.DryRun{combined.Query: withSchema},
+		dryRuns:  map[string]*warehouse.Check{combined.Query: withSchema},
 		failures: map[string]error{dates.Query: unrecognized("week2"), final.Query: unrecognized("date2"), typo.Query: unrecognized("wek2")},
 	}
 	r, err := Run(context.Background(), changed(changes.ReasonSQL, combined, dates, final, typo), Head{Graph: graph(combined, dates, final, typo)}, Deps{DryRun: bq.dryRun}, nil)

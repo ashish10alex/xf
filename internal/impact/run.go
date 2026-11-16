@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -60,13 +60,13 @@ type Candidate struct {
 	// FromOld is set on a renamed action whose own table isn't in BigQuery
 	// yet: Prod, and Target, are those of the table it was renamed from.
 	FromOld bool
-	Prod    []bigquery.Field
+	Prod    []warehouse.Column
 	// Dev is the dry run's schema; unused for a deleted table.
-	Dev []bigquery.Field
+	Dev []warehouse.Column
 	// Base is the schema of a dry run of the action as it is at the
 	// merge-base, when Dev drops or retypes a column of Prod and it could
 	// be dry run: a change it makes too is the base branch's.
-	Base []bigquery.Field
+	Base []warehouse.Column
 	// BaseOwnRun and BaseUniqueKey are OwnRun and UniqueKey of the action
 	// at the merge-base, read with Base.
 	BaseOwnRun    bool
@@ -239,9 +239,9 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 type Deps struct {
 	// Schema is a table's columns in BigQuery, or nil (and no error) when
 	// there is no such table.
-	Schema func(ctx context.Context, table string) ([]bigquery.Field, error)
+	Schema func(ctx context.Context, table string) ([]warehouse.Column, error)
 	// DryRun plans sql without running it, returning its schema.
-	DryRun func(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error)
+	DryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 	// Readers finds who reads what the branch changes.
 	Readers Readers
 	// ToProd is the table of the action a reader is a run of, when it is
@@ -315,7 +315,7 @@ func ComparisonOf(res *changes.Result) *Comparison {
 }
 
 func errorText(err error) string {
-	var api *bigquery.APIError
+	var api *warehouse.APIError
 	if errors.As(err, &api) {
 		return api.Message
 	}
@@ -629,7 +629,7 @@ func check(ctx context.Context, c changes.Changed, a *project.Action, g *project
 		cand.UncheckedReason = "dry run failed: " + errorText(err)
 		return cand
 	}
-	var dev []bigquery.Field
+	var dev []warehouse.Column
 	for _, f := range dr.Schema {
 		if f.Name != "" {
 			dev = append(dev, f)
@@ -662,7 +662,7 @@ func incrementalRun(a *project.Action) (bool, []string) {
 // baseSchema is the schema of a dry run of action id as it is at the
 // merge-base, with its incrementalRun; nil when there is no telling: no base, an
 // action it doesn't have or can't dry run, or a dry run that fails.
-func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]bigquery.Field, bool, []string) {
+func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]warehouse.Column, bool, []string) {
 	if deps.Base == nil {
 		return nil, false, nil
 	}
@@ -683,7 +683,7 @@ func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]bigquery
 	if err != nil {
 		return nil, false, nil
 	}
-	var base []bigquery.Field
+	var base []warehouse.Column
 	for _, f := range dr.Schema {
 		if f.Name != "" {
 			base = append(base, f)

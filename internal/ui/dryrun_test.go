@@ -13,21 +13,21 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/ashish10alex/xf/internal/backend/dbt"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/gcpauth"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // fakeBigQuery answers dry runs from canned replies, picked by a substring
 // of the SQL; anything else scans 1 KiB.
 type fakeBigQuery struct {
 	mu      sync.Mutex
-	replies map[string]func() (*bigquery.DryRun, error)
+	replies map[string]func() (*warehouse.Check, error)
 	calls   []string // "project location sql"
 }
 
-func (f *fakeBigQuery) dryRun(_ context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+func (f *fakeBigQuery) dryRun(_ context.Context, project, location, sql string) (*warehouse.Check, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, project+" "+location+" "+sql)
@@ -36,7 +36,7 @@ func (f *fakeBigQuery) dryRun(_ context.Context, project, location, sql string) 
 			return reply()
 		}
 	}
-	return &bigquery.DryRun{Bytes: 1024, Accuracy: bigquery.AccuracyPrecise, StatementType: "SELECT"}, nil
+	return &warehouse.Check{Bytes: 1024, Accuracy: warehouse.AccuracyPrecise, StatementType: "SELECT"}, nil
 }
 
 func (f *fakeBigQuery) callCount() int {
@@ -45,14 +45,14 @@ func (f *fakeBigQuery) callCount() int {
 	return len(f.calls)
 }
 
-func scans(bytes int64, accuracy string) func() (*bigquery.DryRun, error) {
-	return func() (*bigquery.DryRun, error) {
-		return &bigquery.DryRun{Bytes: bytes, Accuracy: accuracy, StatementType: "SELECT"}, nil
+func scans(bytes int64, accuracy string) func() (*warehouse.Check, error) {
+	return func() (*warehouse.Check, error) {
+		return &warehouse.Check{Bytes: bytes, Accuracy: accuracy, StatementType: "SELECT"}, nil
 	}
 }
 
-func fails(err error) func() (*bigquery.DryRun, error) {
-	return func() (*bigquery.DryRun, error) { return nil, err }
+func fails(err error) func() (*warehouse.Check, error) {
+	return func() (*warehouse.Check, error) { return nil, err }
 }
 
 func newDryRunModel(t *testing.T, bq *fakeBigQuery, fixtures ...string) (Model, *fakeCompiler) {
@@ -64,10 +64,10 @@ func newDryRunModel(t *testing.T, bq *fakeBigQuery, fixtures ...string) (Model, 
 }
 
 func TestDryRunStatsForEachFileAction(t *testing.T) {
-	bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
-		"GROUP BY order_date, region\n  ) AS data": scans(0, bigquery.AccuracyUnknown), // uniqueKey
-		"SUM(":      scans(1288490189, bigquery.AccuracyPrecise), // the table
-		"WHERE NOT": fails(&bigquery.APIError{Status: 400, Message: "Unrecognized name: foo at [3:5]"}),
+	bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
+		"GROUP BY order_date, region\n  ) AS data": scans(0, warehouse.AccuracyUnknown), // uniqueKey
+		"SUM(":      scans(1288490189, warehouse.AccuracyPrecise), // the table
+		"WHERE NOT": fails(&warehouse.APIError{Status: 400, Message: "Unrecognized name: foo at [3:5]"}),
 	}}
 	m, _ := newDryRunModel(t, bq, "basic.json")
 	m = drive(t, m, nil, editorEvent("BufEnter", "definitions/daily_orders.sqlx"))
@@ -107,9 +107,9 @@ func TestDryRunStatsForEachFileAction(t *testing.T) {
 }
 
 func TestDryRunIncrementalShowsBothVariants(t *testing.T) {
-	bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
-		"MAX(event_date)":   scans(30<<20, bigquery.AccuracyUpperBound),
-		"DATE '2000-01-01'": scans(2<<30, bigquery.AccuracyPrecise),
+	bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
+		"MAX(event_date)":   scans(30<<20, warehouse.AccuracyUpperBound),
+		"DATE '2000-01-01'": scans(2<<30, warehouse.AccuracyPrecise),
 	}}
 	m, _ := newDryRunModel(t, bq, "incremental.json")
 	m = startOn(t, m, "demo-project.reporting.daily_events")
@@ -125,8 +125,8 @@ func TestDryRunIncrementalShowsBothVariants(t *testing.T) {
 }
 
 func TestDryRunWithoutCredentials(t *testing.T) {
-	bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
-		"": fails(fmt.Errorf("%w: could not find default credentials", bigquery.ErrAuth)),
+	bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
+		"": fails(fmt.Errorf("%w: could not find default credentials", warehouse.ErrAuth)),
 	}}
 	m, _ := newDryRunModel(t, bq, "basic.json")
 	m = drive(t, m, nil, editorEvent("BufEnter", "definitions/daily_orders.sqlx"))
@@ -149,8 +149,8 @@ func TestDryRunErrorsPointAtTheAccount(t *testing.T) {
 	info := &ProjectInfo{ADC: func(context.Context) gcpauth.ADC { return gcpauth.ADC{} }}
 
 	// No credentials: in the Actions pane and among the errors.
-	bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
-		"": fails(fmt.Errorf("%w: could not find default credentials", bigquery.ErrAuth)),
+	bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
+		"": fails(fmt.Errorf("%w: could not find default credentials", warehouse.ErrAuth)),
 	}}
 	m, _ := newDryRunModel(t, bq, "basic.json")
 	m.deps.Info = info
@@ -161,8 +161,8 @@ func TestDryRunErrorsPointAtTheAccount(t *testing.T) {
 
 	// Access denied, which another account may explain; other errors don't.
 	for status, want := range map[int]bool{403: true, 400: false} {
-		bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
-			"": fails(&bigquery.APIError{Status: status, Message: "refused"}),
+		bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
+			"": fails(&warehouse.APIError{Status: status, Message: "refused"}),
 		}}
 		m, _ := newDryRunModel(t, bq, "basic.json")
 		m.deps.Info = info
@@ -216,8 +216,8 @@ func TestActionRowNames(t *testing.T) {
 
 func TestDryRunErrorWraps(t *testing.T) {
 	msg := "Unrecognized name: foo; Did you mean food? at [3:5] in the WHERE clause of the rowConditions assertion"
-	bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
-		"": fails(&bigquery.APIError{Status: 400, Message: msg}),
+	bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
+		"": fails(&warehouse.APIError{Status: 400, Message: msg}),
 	}}
 	m, _ := newDryRunModel(t, bq, "basic.json")
 	m = startOn(t, m, "demo-project.analytics.weekly_revenue")
@@ -230,18 +230,18 @@ func TestDryRunErrorWraps(t *testing.T) {
 
 func TestFormatDryRun(t *testing.T) {
 	tests := []struct {
-		d    bigquery.DryRun
+		d    warehouse.Check
 		want string
 		warn bool
 	}{
-		{bigquery.DryRun{Bytes: 0, Accuracy: "PRECISE"}, "0 B $0.000", false},
-		{bigquery.DryRun{Bytes: 512, Accuracy: "PRECISE"}, "512 B $0.000", false},
-		{bigquery.DryRun{Bytes: 1288490189, Accuracy: "PRECISE"}, "1.20 GiB $0.007", false},
-		{bigquery.DryRun{Bytes: 3 << 40, Accuracy: "UPPER_BOUND"}, "≤ 3.00 TiB $18.750", false},
-		{bigquery.DryRun{Bytes: 5 << 20, Accuracy: "LOWER_BOUND"}, "≥ 5.00 MiB $0.000", false},
-		{bigquery.DryRun{Bytes: 0, Accuracy: "UNKNOWN"}, "⚠ bytes unknown", true},
-		{bigquery.DryRun{Bytes: 0, Accuracy: "LOWER_BOUND", StatementType: "SCRIPT"}, "⚠ no estimate for script", true},
-		{bigquery.DryRun{Bytes: 1 << 30, Accuracy: "PRECISE", StatementType: "SCRIPT"}, "1.00 GiB $0.006", false},
+		{warehouse.Check{Bytes: 0, Accuracy: "PRECISE"}, "0 B $0.000", false},
+		{warehouse.Check{Bytes: 512, Accuracy: "PRECISE"}, "512 B $0.000", false},
+		{warehouse.Check{Bytes: 1288490189, Accuracy: "PRECISE"}, "1.20 GiB $0.007", false},
+		{warehouse.Check{Bytes: 3 << 40, Accuracy: "UPPER_BOUND"}, "≤ 3.00 TiB $18.750", false},
+		{warehouse.Check{Bytes: 5 << 20, Accuracy: "LOWER_BOUND"}, "≥ 5.00 MiB $0.000", false},
+		{warehouse.Check{Bytes: 0, Accuracy: "UNKNOWN"}, "⚠ bytes unknown", true},
+		{warehouse.Check{Bytes: 0, Accuracy: "LOWER_BOUND", StatementType: "SCRIPT"}, "⚠ no estimate for script", true},
+		{warehouse.Check{Bytes: 1 << 30, Accuracy: "PRECISE", StatementType: "SCRIPT"}, "1.00 GiB $0.006", false},
 	}
 	for _, tt := range tests {
 		got, warn := formatDryRun(&tt.d)
@@ -351,8 +351,8 @@ func TestDbtDryRunsNotCompiled(t *testing.T) {
 }
 
 func TestDryRunErrorsShowInTheErrorsBox(t *testing.T) {
-	bq := &fakeBigQuery{replies: map[string]func() (*bigquery.DryRun, error){
-		"WHERE NOT": fails(&bigquery.APIError{Status: 400, Message: "Unrecognized name: foo at [3:5]\nDid you mean food?"}),
+	bq := &fakeBigQuery{replies: map[string]func() (*warehouse.Check, error){
+		"WHERE NOT": fails(&warehouse.APIError{Status: 400, Message: "Unrecognized name: foo at [3:5]\nDid you mean food?"}),
 	}}
 	fc := &fakeCompiler{t: t, fixtures: []string{"basic.json"}}
 	var copied string

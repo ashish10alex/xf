@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func loadGraph(t *testing.T, fixture string) *project.Graph {
@@ -215,7 +215,7 @@ type fakeBigQuery struct {
 	err     error
 }
 
-func (f *fakeBigQuery) dryRun(context.Context, string, string, string) (*bigquery.DryRun, error) {
+func (f *fakeBigQuery) dryRun(context.Context, string, string, string) (*warehouse.Check, error) {
 	f.mu.Lock()
 	f.calls++
 	release, err := f.release, f.err
@@ -226,7 +226,7 @@ func (f *fakeBigQuery) dryRun(context.Context, string, string, string) (*bigquer
 	if err != nil {
 		return nil, err
 	}
-	return &bigquery.DryRun{Bytes: 1 << 20, Accuracy: bigquery.AccuracyPrecise}, nil
+	return &warehouse.Check{Bytes: 1 << 20, Accuracy: warehouse.AccuracyPrecise}, nil
 }
 
 func (f *fakeBigQuery) callCount() int {
@@ -276,7 +276,7 @@ func TestDryRunCache(t *testing.T) {
 
 func TestDryRunFailuresRetriedAfterCompile(t *testing.T) {
 	g := loadGraph(t, "basic.json")
-	bq := &fakeBigQuery{err: bigquery.ErrAuth}
+	bq := &fakeBigQuery{err: warehouse.ErrAuth}
 	e := New(Config{
 		Compile: func(context.Context) (*project.Graph, error) { return g, nil },
 		DryRun:  bq.dryRun,
@@ -289,7 +289,7 @@ func TestDryRunFailuresRetriedAfterCompile(t *testing.T) {
 	next(t, ch, compiled(1))
 
 	for range 2 {
-		if _, err := e.DryRun(ctx, "p", "EU", "SELECT 1"); !errors.Is(err, bigquery.ErrAuth) {
+		if _, err := e.DryRun(ctx, "p", "EU", "SELECT 1"); !errors.Is(err, warehouse.ErrAuth) {
 			t.Fatalf("got %v", err)
 		}
 	}

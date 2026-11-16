@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"net/http"
 	"net/url"
 	"time"
@@ -54,16 +55,9 @@ func (c *Client) ListDatasets(ctx context.Context, project string) ([]string, er
 	return out, nil
 }
 
-// TableListing is a table in a dataset's listing.
-type TableListing struct {
-	ID string `json:"id"`
-	// Type is TABLE, VIEW, EXTERNAL, MATERIALIZED_VIEW or SNAPSHOT.
-	Type string `json:"type"`
-}
-
 // ListTables lists the tables and views of a dataset.
-func (c *Client) ListTables(ctx context.Context, project, dataset string) ([]TableListing, error) {
-	var out []TableListing
+func (c *Client) ListTables(ctx context.Context, project, dataset string) ([]warehouse.TableListing, error) {
+	var out []warehouse.TableListing
 	token := ""
 	for range listPages {
 		q := url.Values{"maxResults": {fmt.Sprint(listPageSize)}, "fields": {"nextPageToken,tables(tableReference/tableId,type)"}}
@@ -87,7 +81,7 @@ func (c *Client) ListTables(ctx context.Context, project, dataset string) ([]Tab
 			return nil, fmt.Errorf("decode tables: %w", err)
 		}
 		for _, t := range raw.Tables {
-			out = append(out, TableListing{ID: t.TableReference.TableID, Type: t.Type})
+			out = append(out, warehouse.TableListing{ID: t.TableReference.TableID, Type: t.Type})
 		}
 		if raw.NextPageToken == "" {
 			break
@@ -97,29 +91,10 @@ func (c *Client) ListTables(ctx context.Context, project, dataset string) ([]Tab
 	return out, nil
 }
 
-// TableDetail is a table as its hover card shows it.
-type TableDetail struct {
-	Type        string  `json:"type"`
-	Description string  `json:"description,omitempty"`
-	Location    string  `json:"location,omitempty"`
-	Schema      []Field `json:"schema"`
-	// PartitionField is the column the table is partitioned by, "" for
-	// ingestion time; PartitionType is DAY, HOUR, MONTH, YEAR or RANGE,
-	// "" when it isn't partitioned.
-	PartitionField string   `json:"partitionField,omitempty"`
-	PartitionType  string   `json:"partitionType,omitempty"`
-	ClusterFields  []string `json:"clusterFields,omitempty"`
-	// NumRows and NumBytes are -1 for a view, which has neither.
-	NumRows  int64     `json:"numRows"`
-	NumBytes int64     `json:"numBytes"`
-	Created  time.Time `json:"created"`
-	Modified time.Time `json:"modified"`
-}
-
 const detailFields = "type,description,location,schema,numRows,numBytes,creationTime,lastModifiedTime,timePartitioning(field,type),rangePartitioning(field),clustering(fields)"
 
 // Describe fetches the metadata of project.dataset.table in full.
-func (c *Client) Describe(ctx context.Context, project, dataset, table string) (*TableDetail, error) {
+func (c *Client) Describe(ctx context.Context, project, dataset, table string) (*warehouse.TableDetail, error) {
 	u := fmt.Sprintf("%s/bigquery/v2/projects/%s/datasets/%s/tables/%s?fields=%s",
 		c.baseURL, url.PathEscape(project), url.PathEscape(dataset), url.PathEscape(table), url.QueryEscape(detailFields))
 	body, err := c.do(ctx, http.MethodGet, u, nil)
@@ -135,7 +110,7 @@ func (c *Client) Describe(ctx context.Context, project, dataset, table string) (
 		CreationTime     string `json:"creationTime"`
 		LastModifiedTime string `json:"lastModifiedTime"`
 		Schema           struct {
-			Fields []Field `json:"fields"`
+			Fields []warehouse.Column `json:"fields"`
 		} `json:"schema"`
 		TimePartitioning *struct {
 			Field string `json:"field"`
@@ -151,7 +126,7 @@ func (c *Client) Describe(ctx context.Context, project, dataset, table string) (
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode table: %w", err)
 	}
-	d := &TableDetail{Type: raw.Type, Description: raw.Description, Location: raw.Location, Schema: raw.Schema.Fields,
+	d := &warehouse.TableDetail{Type: raw.Type, Description: raw.Description, Location: raw.Location, Schema: raw.Schema.Fields,
 		NumRows: -1, NumBytes: -1}
 	if raw.NumRows != "" {
 		d.NumRows = atoi(raw.NumRows)

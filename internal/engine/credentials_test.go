@@ -6,18 +6,18 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // A new login (Config.Credentials moving on) has the failed dry runs
 // asked again, with no compile.
 func TestDryRunFailuresRetriedAfterLogin(t *testing.T) {
-	bq := &fakeBigQuery{err: bigquery.ErrAuth}
+	bq := &fakeBigQuery{err: warehouse.ErrAuth}
 	var gen atomic.Uint64
 	e := New(Config{DryRun: bq.dryRun, Credentials: gen.Load})
 	ctx := context.Background()
 	for range 2 {
-		if _, err := e.DryRun(ctx, "p", "EU", "SELECT 1"); !errors.Is(err, bigquery.ErrAuth) {
+		if _, err := e.DryRun(ctx, "p", "EU", "SELECT 1"); !errors.Is(err, warehouse.ErrAuth) {
 			t.Fatalf("got %v", err)
 		}
 	}

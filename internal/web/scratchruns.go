@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 const (
@@ -32,8 +32,8 @@ var scratchRunsMu sync.Mutex
 // scratchRun is one run whose result can be opened again.
 type scratchRun struct {
 	// Scratch is the scratch it ran from.
-	Scratch string          `json:"scratch"`
-	Job     bigquery.JobRef `json:"job"`
+	Scratch string           `json:"scratch"`
+	Job     warehouse.JobRef `json:"job"`
 	// SQL is what ran: the selection or the whole file, as it was then.
 	SQL           string    `json:"sql"`
 	Started       time.Time `json:"started"`

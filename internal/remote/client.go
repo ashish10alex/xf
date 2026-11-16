@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/jsonrpc"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // Client is one process's view of the shared engine. It has the methods of
@@ -449,7 +449,7 @@ func (c *Client) ShowDocument(ctx context.Context, file string, line int) error 
 
 // DryRun asks the server to dry-run sql (see engine.Engine.DryRun). If the
 // server goes before answering, the next one is asked.
-func (c *Client) DryRun(ctx context.Context, project, location, sql string) (*bigquery.DryRun, error) {
+func (c *Client) DryRun(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 	m, err := c.call(ctx, methodDryRun, dryRunParams{Project: project, Location: location, SQL: sql})
 	if err != nil {
 		return nil, err
@@ -496,8 +496,8 @@ func (c *Client) DeferUnreadable(ctx context.Context, ts []project.Target) (bool
 }
 
 // Table asks the server for the BigQuery metadata of project.dataset.table.
-// A table that doesn't exist is a *bigquery.APIError with Status 404.
-func (c *Client) Table(ctx context.Context, project, dataset, table string) (*bigquery.Table, error) {
+// A table that doesn't exist is a *warehouse.APIError with Status 404.
+func (c *Client) Table(ctx context.Context, project, dataset, table string) (*warehouse.Table, error) {
 	m, err := c.call(ctx, methodTable, tableParams{Project: project, Dataset: dataset, Table: table})
 	if err != nil {
 		return nil, err
@@ -505,7 +505,7 @@ func (c *Client) Table(ctx context.Context, project, dataset, table string) (*bi
 	if m.Error != nil {
 		return nil, decodeDryRunError(m.Error)
 	}
-	var res bigquery.Table
+	var res warehouse.Table
 	if err := json.Unmarshal(m.Result, &res); err != nil {
 		return nil, fmt.Errorf("table result: %w", err)
 	}
@@ -660,11 +660,11 @@ func decodeDryRunError(e *jsonrpc.Error) error {
 	return d.err()
 }
 
-func decodeDryRun(m *jsonrpc.Message) (*bigquery.DryRun, error) {
+func decodeDryRun(m *jsonrpc.Message) (*warehouse.Check, error) {
 	if m.Error != nil {
 		return nil, decodeDryRunError(m.Error)
 	}
-	var res bigquery.DryRun
+	var res warehouse.Check
 	if err := json.Unmarshal(m.Result, &res); err != nil {
 		return nil, fmt.Errorf("dry run result: %w", err)
 	}

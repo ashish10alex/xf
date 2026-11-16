@@ -6,10 +6,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 func dbtModel(db, schema, name, fqn string, kind project.ActionKind) *project.Action {
@@ -88,17 +88,17 @@ func TestRunOnAProdTargetCompile(t *testing.T) {
 	var dryRunIn []string
 	var mu sync.Mutex
 	deps := Deps{
-		Schema: func(_ context.Context, table string) ([]bigquery.Field, error) {
+		Schema: func(_ context.Context, table string) ([]warehouse.Column, error) {
 			if table == "prod.xf.dim_customers" {
-				return []bigquery.Field{f("customer_id", "INT64"), f("email", "STRING")}, nil
+				return []warehouse.Column{f("customer_id", "INT64"), f("email", "STRING")}, nil
 			}
 			return nil, nil
 		},
-		DryRun: func(_ context.Context, project, _, _ string) (*bigquery.DryRun, error) {
+		DryRun: func(_ context.Context, project, _, _ string) (*warehouse.Check, error) {
 			mu.Lock()
 			dryRunIn = append(dryRunIn, project)
 			mu.Unlock()
-			return &bigquery.DryRun{Schema: []bigquery.Field{f("customer_id", "INTEGER")}}, nil
+			return &warehouse.Check{Schema: []warehouse.Column{f("customer_id", "INTEGER")}}, nil
 		},
 		Readers: &fakeSource{columnLinks: map[string][]lineage.ColumnLink{"prod.xf.dim_customers#email": {
 			{Table: "prod.ext.customer_emails", Column: "email", DependencyType: lineage.ExactCopy},

@@ -11,11 +11,11 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // fakeRunEngine defers p.s.raw always, and p.s.stg (changed on the
@@ -43,7 +43,7 @@ func (f *fakeRunEngine) Deferral(_ context.Context, req engine.DeferralRequest) 
 	return &engine.DeferralResult{Deferral: d, StaleKnown: true}, nil
 }
 
-func (f *fakeRunEngine) DryRun(_ context.Context, _, _, sql string) (*bigquery.DryRun, error) {
+func (f *fakeRunEngine) DryRun(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
 	f.mu.Lock()
 	f.sqls = append(f.sqls, sql)
 	f.mu.Unlock()
@@ -52,7 +52,7 @@ func (f *fakeRunEngine) DryRun(_ context.Context, _, _, sql string) (*bigquery.D
 			return nil, errors.New("Not found: Table p:s." + unbuilt + " was not found in location EU")
 		}
 	}
-	return &bigquery.DryRun{Bytes: 100, Accuracy: bigquery.AccuracyPrecise}, nil
+	return &warehouse.Check{Bytes: 100, Accuracy: warehouse.AccuracyPrecise}, nil
 }
 
 func (f *fakeRunEngine) ChangedActions(context.Context, changes.Request) (*changes.Result, error) {

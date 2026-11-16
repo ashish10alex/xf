@@ -41,7 +41,7 @@ func TestDescribe(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A view has neither rows nor bytes, which are not zero rows.
-	if d.NumRows != -1 || d.NumBytes != -1 || d.PartitionType != "RANGE" || d.PartitionField != "x" || d.Schema[0].RangeElementType.Type != "DATE" {
+	if d.NumRows != -1 || d.NumBytes != -1 || d.PartitionType != "RANGE" || d.PartitionField != "x" || d.Schema[0].RangeElement != "DATE" {
 		t.Errorf("detail = %+v", d)
 	}
 }

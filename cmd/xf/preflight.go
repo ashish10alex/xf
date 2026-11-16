@@ -11,7 +11,6 @@ import (
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dataform"
-	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/check"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/forge"
@@ -52,11 +51,11 @@ func preflightProbes(name, root, base string, settings config.Loaded, comment bo
 		p.Location = dataform.ReadWorkflowSetting(root, "defaultLocation")
 	}
 	p.DryRun = func(ctx context.Context, project, location string) error {
-		c, err := bigquery.NewClient(ctx)
+		c, err := newWarehouse(ctx)
 		if err != nil {
 			return err
 		}
-		_, err = c.DryRun(ctx, project, location, "SELECT 1")
+		_, err = c.Check(ctx, project, location, "SELECT 1")
 		return err
 	}
 	p.Lineage = func(ctx context.Context, project, location string) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/ashish10alex/xf/internal/warehouse"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,7 +55,7 @@ func TestTable(t *testing.T) {
 	if want := time.Date(2026, 9, 30, 8, 54, 57, 0, time.UTC); !tbl.LastModified.Equal(want) {
 		t.Errorf("last modified %v, want %v", tbl.LastModified, want)
 	}
-	if len(tbl.Schema) != 3 || tbl.Schema[0].Mode != "REQUIRED" || len(tbl.Schema[2].Fields) != 2 || tbl.Schema[2].Fields[1].Mode != "REPEATED" {
+	if len(tbl.Schema) != 3 || tbl.Schema[0].Mode() != "REQUIRED" || len(tbl.Schema[2].Fields) != 2 || tbl.Schema[2].Fields[1].Mode() != "REPEATED" {
 		t.Errorf("schema %+v", tbl.Schema)
 	}
 }
@@ -94,7 +95,7 @@ func TestTableErrors(t *testing.T) {
 			}))
 			defer srv.Close()
 			_, err := newClient(srv.Client(), srv.URL, "").Table(context.Background(), "p", "d", "t")
-			if err == nil || !strings.Contains(err.Error(), tt.wantMsg) || errors.Is(err, ErrAuth) != tt.wantAuth {
+			if err == nil || !strings.Contains(err.Error(), tt.wantMsg) || errors.Is(err, warehouse.ErrAuth) != tt.wantAuth {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -114,7 +115,7 @@ func TestTableTokenRefreshFails(t *testing.T) {
 	defer srv.Close()
 	httpClient := oauth2.NewClient(context.Background(), failingTokens{})
 	_, err := newClient(httpClient, srv.URL, "").Table(context.Background(), "p", "d", "t")
-	if !errors.Is(err, ErrAuth) || !strings.Contains(err.Error(), "invalid_rapt") {
+	if !errors.Is(err, warehouse.ErrAuth) || !strings.Contains(err.Error(), "invalid_rapt") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -134,7 +135,7 @@ func TestTableCancelled(t *testing.T) {
 
 func TestNewClientWithoutCredentials(t *testing.T) {
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "missing.json"))
-	if _, err := NewClient(context.Background()); !errors.Is(err, ErrAuth) {
+	if _, err := NewClient(context.Background()); !errors.Is(err, warehouse.ErrAuth) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -151,7 +152,7 @@ func TestDryRun(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d, err := newClient(srv.Client(), srv.URL, "").DryRun(context.Background(), "demo-project", "EU", "select 1")
+	d, err := newClient(srv.Client(), srv.URL, "").Check(context.Background(), "demo-project", "EU", "select 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,10 +165,10 @@ func TestDryRun(t *testing.T) {
 	if cfg["dryRun"] != true || q["query"] != "select 1" || q["useLegacySql"] != false || ref["projectId"] != "demo-project" || ref["location"] != "EU" {
 		t.Errorf("request body %v", gotBody)
 	}
-	if d.Bytes != 1288490189 || d.Accuracy != AccuracyUpperBound || d.StatementType != "SELECT" {
+	if d.Bytes != 1288490189 || d.Accuracy != warehouse.AccuracyUpperBound || d.StatementType != "SELECT" {
 		t.Errorf("dry run %+v", d)
 	}
-	if len(d.Schema) != 2 || d.Schema[0].Name != "id" || d.Schema[0].Type != "INTEGER" || d.Schema[1].Mode != "REPEATED" {
+	if len(d.Schema) != 2 || d.Schema[0].Name != "id" || d.Schema[0].Type != "INTEGER" || d.Schema[1].Mode() != "REPEATED" {
 		t.Errorf("schema %+v", d.Schema)
 	}
 	if got := d.CostUSD(); got < 0.00732 || got > 0.00733 { // 1.2 GiB at $6.25/TiB
@@ -181,8 +182,8 @@ func TestDryRunQueryError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"Unrecognized name: foo at [3:5]"}}`))
 	}))
 	defer srv.Close()
-	_, err := newClient(srv.Client(), srv.URL, "").DryRun(context.Background(), "p", "", "select foo")
-	var apiErr *APIError
+	_, err := newClient(srv.Client(), srv.URL, "").Check(context.Background(), "p", "", "select foo")
+	var apiErr *warehouse.APIError
 	if !errors.As(err, &apiErr) || apiErr.Message != "Unrecognized name: foo at [3:5]" || apiErr.Status != 400 {
 		t.Fatalf("got %v", err)
 	}
@@ -193,8 +194,8 @@ func TestDryRunWithoutStatistics(t *testing.T) {
 		_, _ = w.Write([]byte(`{"statistics":{"query":{"totalBytesProcessedAccuracy":"UNKNOWN","statementType":"SCRIPT"}}}`))
 	}))
 	defer srv.Close()
-	d, err := newClient(srv.Client(), srv.URL, "").DryRun(context.Background(), "p", "", "declare x int64; select 1")
-	if err != nil || d.Bytes != 0 || d.Accuracy != AccuracyUnknown {
+	d, err := newClient(srv.Client(), srv.URL, "").Check(context.Background(), "p", "", "declare x int64; select 1")
+	if err != nil || d.Bytes != 0 || d.Accuracy != warehouse.AccuracyUnknown {
 		t.Fatalf("got %+v, %v", d, err)
 	}
 }
@@ -219,7 +220,7 @@ func TestJob(t *testing.T) {
 		t.Errorf("asked %s %v", gotPath, gotQuery)
 	}
 	start := time.UnixMilli(1791194400000).UTC()
-	want := Job{Location: "europe-west2", BytesBilled: 3222274048, BytesProcessed: 3 << 30, SlotMs: 64000, Started: start, Ended: start.Add(3200 * time.Millisecond)}
+	want := warehouse.Job{Location: "europe-west2", BytesBilled: 3222274048, BytesProcessed: 3 << 30, SlotMs: 64000, Started: start, Ended: start.Add(3200 * time.Millisecond)}
 	if *j != want {
 		t.Errorf("job %+v, want %+v", *j, want)
 	}
@@ -250,7 +251,7 @@ func TestJobWithoutStatistics(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	for body, want := range map[string]*Partition{
+	for body, want := range map[string]*warehouse.Partition{
 		`{"type":"TABLE"}`: nil,
 		`{"type":"TABLE","timePartitioning":{"type":"DAY","field":"event_date"}}`: {Column: "event_date"},
 		`{"type":"TABLE","timePartitioning":{"type":"DAY"}}`:                      {}, // by ingestion time
@@ -276,22 +277,22 @@ func TestDryRunListsTheTablesItReads(t *testing.T) {
 			"referencedTables":[{"projectId":"acme","datasetId":"raw","tableId":"events"}]}}}`))
 	}))
 	defer srv.Close()
-	d, err := newClient(srv.Client(), srv.URL, "").DryRun(context.Background(), "acme", "", "select 1 from raw.events")
+	d, err := newClient(srv.Client(), srv.URL, "").Check(context.Background(), "acme", "", "select 1 from raw.events")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(gotQuery, "referencedTables") {
 		t.Errorf("fields %s", gotQuery)
 	}
-	if len(d.Tables) != 1 || d.Tables[0] != (TableRef{Project: "acme", Dataset: "raw", Table: "events"}) {
+	if len(d.Tables) != 1 || d.Tables[0] != (warehouse.TableRef{Project: "acme", Dataset: "raw", Table: "events"}) {
 		t.Errorf("tables %+v", d.Tables)
 	}
 }
 
 func TestFormatBytes(t *testing.T) {
 	for n, want := range map[int64]string{0: "0 B", 512: "512 B", 1024: "1.00 KiB", 1288490189: "1.20 GiB", 1 << 40: "1.00 TiB", 1 << 60: "1024.00 PiB"} {
-		if got := FormatBytes(n); got != want {
-			t.Errorf("FormatBytes(%d) = %q, want %q", n, got, want)
+		if got := warehouse.FormatBytes(n); got != want {
+			t.Errorf("warehouse.FormatBytes(%d) = %q, want %q", n, got, want)
 		}
 	}
 }
@@ -316,7 +317,7 @@ func TestActiveJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []ActiveJob{
+	want := []warehouse.ActiveJob{
 		{ID: "dataform-xf-ab12-1", Location: "EU", Query: "create or replace table x as select 1", Started: time.UnixMilli(1791194401000).UTC()},
 		{ID: "load_1", Started: time.UnixMilli(1791194400000).UTC()},
 	}
