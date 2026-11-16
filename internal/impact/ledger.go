@@ -347,16 +347,27 @@ func columnChanges(t Table, base string) []string {
 	return parts
 }
 
-// ownRun is, as "Who is affected" entries still to fix, how the columns t
-// drops break its own incremental run (see BreaksRun).
-func ownRun(t Table) []string {
-	var key, table []string
+// ownRun is, as "Who is affected" entries, how the columns t drops break
+// its own incremental run (see BreaksRun): this branch's breaks, in bold as
+// still to fix; then, not to fix, those it inherits from base with a change
+// the base branch already made, and those of base's it fixes.
+func ownRun(t Table, base string) []string {
+	var key, table, baseKey, baseTable, fixed []string
+	stillFails := false
 	for _, c := range t.Columns {
+		ch := c.Change
 		switch {
-		case c.Change.OnBase:
-		case c.Change.BreaksRun == BreaksRunUniqueKey:
+		case ch.OnBase && !ch.keyedHere() && ch.BaseBreaksRun == BreaksRunUniqueKey && ch.BreaksRun != BreaksRunUniqueKey:
+			fixed = append(fixed, c.Column)
+			stillFails = stillFails || ch.BreaksRun == BreaksRunTable
+		case ch.OnBase && !ch.keyedHere() && ch.BreaksRun == BreaksRunUniqueKey:
+			baseKey = append(baseKey, c.Column)
+		case ch.OnBase && !ch.keyedHere() && ch.BreaksRun == BreaksRunTable:
+			baseTable = append(baseTable, c.Column)
+		case ch.OnBase && !ch.keyedHere():
+		case ch.BreaksRun == BreaksRunUniqueKey:
 			key = append(key, c.Column)
-		case c.Change.BreaksRun == BreaksRunTable:
+		case ch.BreaksRun == BreaksRunTable:
 			table = append(table, c.Column)
 		}
 	}
@@ -366,6 +377,19 @@ func ownRun(t Table) []string {
 	}
 	if len(table) > 0 {
 		out = append(out, "**its own incremental run · fails: Dataform's MERGE or INSERT names "+codeList(table)+", which its table still has · until a full refresh rebuilds it**")
+	}
+	if len(fixed) > 0 {
+		line := "its own incremental run · fixed here: `" + base + "`'s `uniqueKey` names " + codeList(fixed) + ", which its query no longer returns, and this branch's doesn't"
+		if stillFails {
+			line += " · the next run still fails until a full refresh rebuilds it"
+		}
+		out = append(out, line)
+	}
+	if len(baseKey) > 0 {
+		out = append(out, "its own incremental run · fails every time, as on `"+base+"`: `uniqueKey` still names "+codeList(baseKey)+", which its query no longer returns")
+	}
+	if len(baseTable) > 0 {
+		out = append(out, "its own incremental run · fails, as on `"+base+"`: Dataform's MERGE or INSERT names "+codeList(baseTable)+", which its table still has · until a full refresh rebuilds it")
 	}
 	return out
 }
@@ -402,7 +426,7 @@ func BuildLedger(r *Report) Ledger {
 		cells := capped(full)
 		var own []string
 		for _, t := range tables {
-			own = append(own, ownRun(t)...)
+			own = append(own, ownRun(t, base)...)
 		}
 		cells, full = append(own, cells...), append(slices.Clone(own), full...)
 		for _, t := range tables {

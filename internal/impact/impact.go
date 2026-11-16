@@ -63,6 +63,15 @@ type ColumnChange struct {
 	// BreaksRun says the dropped column fails the table's own incremental
 	// run, whoever else reads it: BreaksRunTable or BreaksRunUniqueKey.
 	BreaksRun string `json:"breaksRun,omitempty"`
+	// BaseBreaksRun is BreaksRun of the action at the merge-base, on an
+	// OnBase drop: how the base branch's own version breaks the run.
+	BaseBreaksRun string `json:"baseBreaksRun,omitempty"`
+}
+
+// keyedHere says the change is the base branch's but the run break isn't:
+// this branch's uniqueKey names the dropped column and the base's doesn't.
+func (c ColumnChange) keyedHere() bool {
+	return c.OnBase && c.BreaksRun == BreaksRunUniqueKey && c.BaseBreaksRun != BreaksRunUniqueKey
 }
 
 // Why a dropped column breaks a Dataform incremental table's own run.
@@ -518,14 +527,15 @@ const (
 var deletedChange = ColumnChange{Kind: "deleted"}
 
 // ImpactSeverity is low for a change the base branch already made, which
-// this branch can do nothing about; else critical for a drop that breaks
+// this branch can do nothing about, unless its uniqueKey alone names the
+// dropped column (keyedHere); else critical for a drop that breaks
 // the table's own incremental run (BreaksRun); else unknown when the readers couldn't
 // be looked up, low when nothing still reads it (no readers, or only ones
 // this branch probably updated), else critical for a drop or deletion and a
 // warning for a retype.
 func ImpactSeverity(change ColumnChange, readers []Reader, readersError string) Severity {
 	switch {
-	case change.OnBase:
+	case change.OnBase && !change.keyedHere():
 		return SeverityLow
 	case change.BreaksRun != "":
 		return SeverityCritical

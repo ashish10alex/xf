@@ -67,6 +67,10 @@ type Candidate struct {
 	// merge-base, when Dev drops or retypes a column of Prod and it could
 	// be dry run: a change it makes too is the base branch's.
 	Base []bigquery.Field
+	// BaseOwnRun and BaseUniqueKey are OwnRun and UniqueKey of the action
+	// at the merge-base, read with Base.
+	BaseOwnRun    bool
+	BaseUniqueKey []string
 	// UncheckedReason says why the table couldn't be compared, e.g. its
 	// dry run failed.
 	UncheckedReason string
@@ -170,6 +174,9 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 			d.Change.OnBase = slices.Contains(onBase, d)
 			// A renamed table compared with its old one is built anew.
 			d.Change.BreaksRun = breaksRun(d.Change, d.Column, c.OwnRun && !c.FromOld, c.UniqueKey)
+			if d.Change.OnBase {
+				d.Change.BaseBreaksRun = breaksRun(d.Change, d.Column, c.BaseOwnRun && !c.FromOld, c.BaseUniqueKey)
+			}
 			entry.Columns = append(entry.Columns, Column{Column: d.Column, Change: d.Change, Readers: []Reader{}})
 		}
 		switch {
@@ -572,9 +579,7 @@ func toProdTables(r *Report, prodTarget func(string) string) {
 // with no table has nothing to compare, and isn't dry run.
 func check(ctx context.Context, c changes.Changed, a *project.Action, g *project.Graph, deps Deps) Candidate {
 	cand := Candidate{Table: string(c.ID), FileName: c.FileName, Type: c.Type, New: c.IsNew(), RenamedFrom: string(c.RenamedFrom)}
-	if a != nil && a.Kind == project.KindIncremental && a.DbtName == nil {
-		cand.OwnRun, cand.UniqueKey = true, a.UniqueKey
-	}
+	cand.OwnRun, cand.UniqueKey = incrementalRun(a)
 	if !deps.prodTarget(&cand) {
 		return cand
 	}
@@ -638,36 +643,45 @@ func check(ctx context.Context, c changes.Changed, a *project.Action, g *project
 	switch {
 	case len(DiffSchemas(dev, prod)) == 0:
 	case cand.FromOld:
-		cand.Base = baseSchema(ctx, c.RenamedFrom, deps)
+		cand.Base, cand.BaseOwnRun, cand.BaseUniqueKey = baseSchema(ctx, c.RenamedFrom, deps)
 	case !cand.New:
-		cand.Base = baseSchema(ctx, c.ID, deps)
+		cand.Base, cand.BaseOwnRun, cand.BaseUniqueKey = baseSchema(ctx, c.ID, deps)
 	}
 	return cand
 }
 
+// incrementalRun says a is a Dataform incremental table, whose incremental run
+// names every column its table has, and gives its uniqueKey.
+func incrementalRun(a *project.Action) (bool, []string) {
+	if a != nil && a.Kind == project.KindIncremental && a.DbtName == nil {
+		return true, a.UniqueKey
+	}
+	return false, nil
+}
+
 // baseSchema is the schema of a dry run of action id as it is at the
-// merge-base; nil when there is no telling: no base, an action it doesn't
-// have or can't dry run, or a dry run that fails.
-func baseSchema(ctx context.Context, id project.ActionID, deps Deps) []bigquery.Field {
+// merge-base, with its incrementalRun; nil when there is no telling: no base, an
+// action it doesn't have or can't dry run, or a dry run that fails.
+func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]bigquery.Field, bool, []string) {
 	if deps.Base == nil {
-		return nil
+		return nil, false, nil
 	}
 	g, err := deps.Base(ctx)
 	if err != nil || g == nil {
-		return nil
+		return nil, false, nil
 	}
 	a := g.Actions[id]
 	if a == nil || a.Kind == project.KindOperation {
-		return nil
+		return nil, false, nil
 	}
 	queries := a.DryRunQueries()
 	project, location := g.DryRunTarget(a)
 	if len(queries) == 0 || project == "" {
-		return nil
+		return nil, false, nil
 	}
 	dr, err := deps.DryRun(ctx, project, location, queries[0].SQL)
 	if err != nil {
-		return nil
+		return nil, false, nil
 	}
 	var base []bigquery.Field
 	for _, f := range dr.Schema {
@@ -675,5 +689,6 @@ func baseSchema(ctx context.Context, id project.ActionID, deps Deps) []bigquery.
 			base = append(base, f)
 		}
 	}
-	return base
+	own, key := incrementalRun(a)
+	return base, own, key
 }

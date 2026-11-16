@@ -32,6 +32,9 @@ A change your base branch already made isn't held against your branch.
 When the table compared with is behind the base branch, say a column was dropped on `main` in a commit that isn't released yet, every later branch that touches the model would show that drop as its own.
 So when a table drops or retypes a column, xf also dry runs the action as it is at the merge-base, which is already compiled: a change it makes too is listed as "already changed on `origin/main`", counts as low whoever reads the column, and never fails `--fail-on`.
 The readers are still listed, since the next release breaks them all the same.
+So is a drop that breaks a Dataform incremental table's own run: "fails, as on `origin/main`" when the merge-base's version breaks it the same way.
+When your branch takes the column out of a `uniqueKey` that names it on the base branch, the row says "fixed here", and whether the next run still fails until a full refresh.
+When only your branch's `uniqueKey` names it, every run failing is your branch's to fix.
 When the merge-base's version can't be dry run, the change stays your branch's.
 
 The report started as the extension's "Column Impact of Branch Changes" and now goes its own way in layout; which readers it finds, and how it ranks them, still match the extension.

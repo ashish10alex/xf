@@ -1157,10 +1157,65 @@ func TestRunFlagsADropThatBreaksAnIncrementalTablesOwnRun(t *testing.T) {
 	if txt := Text(report, false, false); !strings.Contains(txt, "↳ its own incremental run · fails every time") {
 		t.Errorf("Text:\n%s", txt)
 	}
+}
 
-	// The base branch made the same drop: not this branch's to fix.
-	onBase := Table{Columns: []Column{{Column: "row_num", Change: ColumnChange{Kind: Dropped, OnBase: true, BreaksRun: BreaksRunUniqueKey}}}}
-	if TableSeverity(onBase) != SeverityLow || len(ownRun(onBase)) != 0 {
-		t.Errorf("on base: %v %v", TableSeverity(onBase), ownRun(onBase))
+// A drop the base branch made too breaks the run as the base's own version
+// does: not this branch's to fix, but said, as is a uniqueKey this branch
+// fixes. A uniqueKey that names the column here alone is this branch's.
+func TestRunTellsARunBreakTheBaseBranchMadeFromOneThisBranchMakes(t *testing.T) {
+	compile := func(key string) *project.Graph {
+		g, err := dataform.ParseCompileJSON([]byte(`{"tables":[
+			{"type":"incremental","target":{"database":"p","schema":"marts","name":"inventory"},"fileName":"definitions/inventory.sqlx",
+			 "query":"SELECT sku, amount FROM src","incrementalQuery":"SELECT sku, amount FROM src WHERE t > 1","uniqueKey":` + key + `}
+		],"projectConfig":{"defaultDatabase":"p"}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return g
+	}
+	res := &changes.Result{BaseRef: "origin/develop", MergeBase: "abcdef123456", HeadRef: "fix", Diff: changes.Diff{Changed: []changes.Changed{
+		{ID: "p.marts.inventory", FileName: "definitions/inventory.sqlx", Type: "incremental", Reasons: []changes.Reason{changes.ReasonSQL}},
+	}}}
+	prod := []bigquery.Field{f("sku", "STRING"), f("amount", "FLOAT64"), f("rwn", "INT64")}
+	withKey, without := `["sku","RWN"]`, `["sku"]`
+	for _, tc := range []struct {
+		name, base, head string
+		sev              Severity
+		says             string
+	}{
+		{"fixed here", withKey, without, SeverityLow,
+			"its own incremental run · fixed here: `origin/develop`'s `uniqueKey` names `rwn`, which its query no longer returns, and this branch's doesn't · the next run still fails until a full refresh rebuilds it"},
+		{"still keyed", withKey, withKey, SeverityLow,
+			"its own incremental run · fails every time, as on `origin/develop`: `uniqueKey` still names `rwn`, which its query no longer returns"},
+		{"keyed here", without, withKey, SeverityCritical,
+			"**its own incremental run · fails every time: `uniqueKey` still names `rwn`, which its query no longer returns**"},
+		{"never keyed", without, without, SeverityLow,
+			"its own incremental run · fails, as on `origin/develop`: Dataform's MERGE or INSERT names `rwn`, which its table still has · until a full refresh rebuilds it"},
+	} {
+		base := compile(tc.base)
+		deps := Deps{
+			Schema: func(context.Context, string) ([]bigquery.Field, error) { return prod, nil },
+			DryRun: func(context.Context, string, string, string) (*bigquery.DryRun, error) {
+				return &bigquery.DryRun{Schema: []bigquery.Field{f("sku", "STRING"), f("amount", "FLOAT64")}}, nil
+			},
+			Readers: &fakeSource{},
+			Base:    func(context.Context) (*project.Graph, error) { return base, nil },
+		}
+		report, err := Run(context.Background(), res, compile(tc.head), deps, func(Progress) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.AtRisk) != 1 || !HasOnBase(report) {
+			t.Fatalf("%s: %+v", tc.name, report.AtRisk)
+		}
+		if sev := TableSeverity(report.AtRisk[0]); sev != tc.sev {
+			t.Errorf("%s: severity %v, want %v", tc.name, sev, tc.sev)
+		}
+		if md := Markdown(report); !strings.Contains(md, "| "+tc.says+" |") {
+			t.Errorf("%s: no %q in\n%s", tc.name, tc.says, md)
+		}
+		if strings.Contains(Text(report, false, false), "nobody") {
+			t.Errorf("%s: says nobody, though the run breaks", tc.name)
+		}
 	}
 }
