@@ -27,19 +27,50 @@ const (
 	nestIndent = "   "
 )
 
+// tableSource is where a card's metadata comes from: BigQuery, or a
+// Config's TablesFor (ADR 0042).
+type tableSource struct {
+	// name words it in a card; authHint says how to sign in to it.
+	name, authHint string
+	// required is how a column that is never NULL is marked.
+	required string
+	// url is a table's page; "" for none.
+	url func(project.Target) string
+}
+
+var bigQuery = tableSource{name: "BigQuery", authHint: warehouse.AuthHint, required: warehouse.ModeRequired, url: project.Target.ConsoleURL}
+
+// sourceOf is the tableSource of a Config's TableSource.
+func sourceOf(ts *TableSource) tableSource {
+	src := tableSource{name: ts.Name, authHint: ts.AuthHint, required: "NOT NULL", url: ts.URL}
+	if src.url == nil {
+		src.url = func(project.Target) string { return "" }
+	}
+	return src
+}
+
 // card renders the hover for one table reference. tbl is BigQuery's metadata,
 // or nil with bqErr saying why (bqErr is also nil when BigQuery wasn't asked).
 func card(ref navigate.TableRef, tbl *warehouse.Table, bqErr error, timeout time.Duration) string {
+	return cardFrom(bigQuery, ref, tbl, bqErr, timeout)
+}
+
+// cardFrom is card with the metadata from src.
+func cardFrom(src tableSource, ref navigate.TableRef, tbl *warehouse.Table, bqErr error, timeout time.Duration) string {
 	var b strings.Builder
 	t := ref.Target
-	fmt.Fprintf(&b, "#### [%s](%s)", string(t.ID()), t.ConsoleURL())
+	if u := src.url(t); u != "" {
+		fmt.Fprintf(&b, "#### [%s](%s)", string(t.ID()), u)
+	} else {
+		fmt.Fprintf(&b, "#### %s", string(t.ID()))
+	}
 	if ref.Source == navigate.SourceSelf {
 		return b.String()
 	}
 	if ref.Action == nil && tbl == nil {
 		// A raw id nobody could look up: all we know is its name.
 		if bqErr != nil {
-			b.WriteString("\n\n---\n\n" + unavailable(bqErr, timeout))
+			b.WriteString("\n\n---\n\n" + unavailable(src, bqErr, timeout))
 		}
 		return b.String()
 	}
@@ -76,7 +107,7 @@ func card(ref navigate.TableRef, tbl *warehouse.Table, bqErr error, timeout time
 
 	var rows []schemaRow
 	if tbl != nil {
-		rows = schemaRows(tbl.Schema, a.Columns)
+		rows = schemaRowsMarked(tbl.Schema, a.Columns, src.required)
 	} else {
 		rows = configRows(a.Columns)
 	}
@@ -84,12 +115,12 @@ func card(ref navigate.TableRef, tbl *warehouse.Table, bqErr error, timeout time
 		b.WriteString("\n\n---\n\n")
 		b.WriteString(schemaTable(rows))
 	} else if bqErr == nil {
-		// A BigQuery error says why there is no schema; otherwise say it
-		// here, so the card never looks like the lookup did nothing.
-		b.WriteString("\n\n_" + noSchema(ref.Action, tbl) + "_")
+		// An error says why there is no schema; otherwise say it here, so
+		// the card never looks like the lookup did nothing.
+		b.WriteString("\n\n_" + noSchema(src, ref.Action, tbl) + "_")
 	}
 	if bqErr != nil {
-		b.WriteString("\n\n" + unavailable(bqErr, timeout))
+		b.WriteString("\n\n" + unavailable(src, bqErr, timeout))
 	}
 	return b.String()
 }
@@ -100,9 +131,9 @@ func hasOutputTable(a *project.Action) bool {
 	return a.Kind.HasTable() || a.Kind == project.KindOperation && a.HasOutput && a.Target.Database != ""
 }
 
-// noSchema says why a card with no BigQuery error has no schema to show.
+// noSchema says why a card with no lookup error has no schema to show.
 // a is nil for a table outside the project.
-func noSchema(a *project.Action, tbl *warehouse.Table) string {
+func noSchema(src tableSource, a *project.Action, tbl *warehouse.Table) string {
 	switch {
 	case a != nil && a.Kind == project.KindOperation && a.HasOutput && !hasOutputTable(a):
 		return "no schema: this operation's target names no project to look it up in"
@@ -118,20 +149,20 @@ func noSchema(a *project.Action, tbl *warehouse.Table) string {
 		}
 		return "no schema: " + article + kind + " has no table of its own"
 	case tbl != nil:
-		return "no schema: BigQuery has no columns for the table"
+		return "no schema: " + src.name + " has no columns for the table"
 	}
-	return "no schema: no BigQuery access here, and the config documents no columns"
+	return "no schema: no " + src.name + " access here, and the config documents no columns"
 }
 
-func unavailable(err error, timeout time.Duration) string {
+func unavailable(src tableSource, err error, timeout time.Duration) string {
 	reason := err.Error()
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		reason = fmt.Sprintf("timed out after %s", timeout)
-	case errors.Is(err, warehouse.ErrAuth):
-		reason += "; " + warehouse.AuthHint
+	case errors.Is(err, warehouse.ErrAuth) && src.authHint != "":
+		reason += "; " + src.authHint
 	}
-	return "⚠ **BigQuery metadata unavailable:** " + reason
+	return "⚠ **" + src.name + " metadata unavailable:** " + reason
 }
 
 type schemaRow struct {
@@ -143,6 +174,12 @@ type schemaRow struct {
 // action's config (matched by its full path) takes that description: config
 // descriptions reach BigQuery only when the table is next built.
 func schemaRows(fields []warehouse.Column, columns []project.ColumnDescription) []schemaRow {
+	return schemaRowsMarked(fields, columns, warehouse.ModeRequired)
+}
+
+// schemaRowsMarked is schemaRows with a column that is never NULL marked
+// required, as its warehouse words it (BigQuery's REQUIRED, NOT NULL).
+func schemaRowsMarked(fields []warehouse.Column, columns []project.ColumnDescription, required string) []schemaRow {
 	var rows []schemaRow
 	var walk func(fields []warehouse.Column, path []string)
 	walk = func(fields []warehouse.Column, path []string) {
@@ -155,8 +192,11 @@ func schemaRows(fields []warehouse.Column, columns []project.ColumnDescription) 
 				}
 			}
 			typ := f.Type
-			if f.Mode() != "" && f.Mode() != "NULLABLE" {
-				typ += " " + f.Mode()
+			switch m := f.Mode(); {
+			case m == warehouse.ModeRequired:
+				typ += " " + required
+			case m != "" && m != warehouse.ModeNullable:
+				typ += " " + m
 			}
 			rows = append(rows, schemaRow{name: f.Name, typ: typ, description: desc, depth: len(path)})
 			walk(f.Fields, p)

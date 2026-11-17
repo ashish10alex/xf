@@ -19,9 +19,9 @@ function stateWord(w) {
 }
 
 function WarehousePicker() {
-  return html`<${Modal} title="SQL warehouse for checks" onClose=${() => { closePicker(); redraw(); }}>
+  return html`<${Modal} title="SQL warehouse" onClose=${() => { closePicker(); redraw(); }}>
     <div class="editor-pick" tabindex="-1" ref=${grab}>
-      <p>A check runs <code>DESCRIBE QUERY</code> on a SQL warehouse, which bills while it runs; a stopped one starts. Pick the warehouse checks use:</p>
+      <p>Checks and queries run on a SQL warehouse, which bills while it runs; a stopped one starts. Pick the warehouse they use:</p>
       <p class="dim small">Saved to the project's config file as databricksWarehouse.</p>
       ${W.loading ? html`<p class="dim">listing the workspace's SQL warehouses…</p>` : html`
         <div class="ed-list">

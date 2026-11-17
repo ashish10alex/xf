@@ -35,7 +35,7 @@ func TestScratchHeader(t *testing.T) {
 }
 
 func TestSelectColumns(t *testing.T) {
-	got := selectColumns("p", "d", "t", []warehouse.Column{{Name: "id"}, {Name: "order"}, {Name: "my col"}, {Name: "amount"}})
+	got := selectColumns(dialect{}, "p", "d", "t", []warehouse.Column{{Name: "id"}, {Name: "order"}, {Name: "my col"}, {Name: "amount"}})
 	want := "SELECT\n  id,\n  `order`,\n  `my col`,\n  amount\nFROM `p.d.t`\n"
 	if got != want {
 		t.Errorf("select =\n%s\nwant\n%s", got, want)

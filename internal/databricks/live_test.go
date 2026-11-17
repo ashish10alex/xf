@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // The live tests run against a real workspace, such as a Free Edition one,
@@ -56,4 +58,47 @@ func TestLiveCheck(t *testing.T) {
 	} else {
 		t.Logf("error, as expected: %v", err)
 	}
+}
+
+func TestLiveQuery(t *testing.T) {
+	c := liveClient(t)
+	if c.Warehouse() == "" {
+		t.Skip("$DATABRICKS_WAREHOUSE names no SQL warehouse to query on")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	ref, err := c.StartQuery(ctx, warehouse.QueryOptions{Project: "samples",
+		SQL:    "select trip_distance, fare_amount from nyctaxi.trips where pickup_zip = :zip limit 1200",
+		Params: map[string]string{"zip": "10001"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		st, err := c.QueryJob(ctx, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.State == "DONE" {
+			if st.Error != "" {
+				t.Fatal(st.Error)
+			}
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	var rows int
+	for token := ""; ; {
+		page, err := c.Rows(ctx, ref, token, 500)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows += len(page.Rows)
+		if token = page.NextToken; token == "" {
+			if int64(rows) != page.Total {
+				t.Errorf("read %d rows of %d", rows, page.Total)
+			}
+			break
+		}
+	}
+	t.Logf("%d rows", rows)
 }

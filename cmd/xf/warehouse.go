@@ -14,6 +14,7 @@ import (
 	"github.com/ashish10alex/xf/internal/databricks"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/frontend"
+	"github.com/ashish10alex/xf/internal/lsp"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/warehouse"
 	"github.com/ashish10alex/xf/internal/web"
@@ -245,6 +246,31 @@ func (w *projectWarehouse) webDatabricks() *web.Databricks {
 
 // host is the Databricks workspace's URL, for links.
 func (w *projectWarehouse) host() string { return w.databricks().Host() }
+
+// catalogTables is the language server's TablesFor: a Databricks project's
+// hover cards read Unity Catalog, which wakes no SQL warehouse, and link to
+// Catalog Explorer. open makes the project's warehouse once per root (nil
+// when the project can't be opened); any other project's cards read
+// BigQuery.
+func catalogTables(open func(root string) *projectWarehouse) func(root string, g *project.Graph) *lsp.TableSource {
+	var mu sync.Mutex
+	byRoot := map[string]*projectWarehouse{}
+	return func(root string, g *project.Graph) *lsp.TableSource {
+		mu.Lock()
+		w, seen := byRoot[root]
+		if !seen {
+			w = open(root)
+			byRoot[root] = w
+		}
+		mu.Unlock()
+		if w == nil || g.WarehouseOr(w.dbtTarget().Type) != project.Databricks {
+			return nil
+		}
+		c := w.databricks()
+		return &lsp.TableSource{Name: "Unity Catalog", Tables: c.Table, AuthHint: databricks.AuthHint,
+			URL: func(t project.Target) string { return databricks.CatalogURL(c.Host(), t.Database, t.Schema, t.Name) }}
+	}
+}
 
 // databricksTUINote is the TUI's line for a Databricks project.
 const databricksTUINote = "Databricks project: dry runs, columns and cost are off here; xf web checks models on demand"

@@ -93,17 +93,39 @@ type statement struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	} `json:"status"`
-	Manifest struct {
-		Schema struct {
-			Columns []struct {
-				Name     string `json:"name"`
-				TypeText string `json:"type_text"`
-			} `json:"columns"`
-		} `json:"schema"`
-	} `json:"manifest"`
-	Result struct {
-		Rows [][]*string `json:"data_array"`
-	} `json:"result"`
+	Manifest *manifest `json:"manifest"`
+	// Result is the result's first chunk.
+	Result chunk `json:"result"`
+}
+
+// manifest describes a statement's result: its columns and how many rows
+// and chunks it has.
+type manifest struct {
+	Schema struct {
+		Columns []struct {
+			Name     string `json:"name"`
+			TypeText string `json:"type_text"`
+		} `json:"columns"`
+	} `json:"schema"`
+	TotalChunks int   `json:"total_chunk_count"`
+	TotalRows   int64 `json:"total_row_count"`
+	// Truncated says the result was cut at a row or byte limit.
+	Truncated bool `json:"truncated"`
+}
+
+// chunk is a part of a statement's result: its rows inline (INLINE), or
+// links to the files that hold them (EXTERNAL_LINKS).
+type chunk struct {
+	Index int          `json:"chunk_index"`
+	Rows  [][]*string  `json:"data_array"`
+	Links []resultLink `json:"external_links"`
+}
+
+// resultLink is a presigned URL to rows of a chunk. It takes no token: the
+// workspace's must never be sent to it.
+type resultLink struct {
+	URL     string            `json:"external_link"`
+	Headers map[string]string `json:"http_headers"`
 }
 
 // StatementError is a statement the warehouse ran and failed: its SQL is

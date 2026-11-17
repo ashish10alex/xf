@@ -61,6 +61,15 @@ func millis(ms int64) time.Time {
 // FullName is catalog.schema.table as Unity Catalog names a table.
 func FullName(catalog, schema, table string) string { return catalog + "." + schema + "." + table }
 
+// CatalogURL is a table's page in the workspace at host's Catalog
+// Explorer; "" without a host or a table.
+func CatalogURL(host, catalog, schema, table string) string {
+	if host == "" || table == "" {
+		return ""
+	}
+	return host + "/explore/data/" + url.PathEscape(catalog) + "/" + url.PathEscape(schema) + "/" + url.PathEscape(table)
+}
+
 func (c *Client) ucTable(ctx context.Context, catalog, schema, table string) (*ucTable, error) {
 	body, err := c.do(ctx, http.MethodGet, "/api/2.1/unity-catalog/tables/"+url.PathEscape(FullName(catalog, schema, table)), nil)
 	if err != nil {

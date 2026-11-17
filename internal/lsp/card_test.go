@@ -113,6 +113,27 @@ func TestCardWithoutBigQuery(t *testing.T) {
 	}
 }
 
+// A Databricks project's card reads Unity Catalog: it links to Catalog
+// Explorer, marks a column that is never NULL as Databricks does, and
+// names Unity Catalog when the lookup fails.
+func TestCardFromUnityCatalog(t *testing.T) {
+	uc := sourceOf(&TableSource{Name: "Unity Catalog", AuthHint: "set DATABRICKS_TOKEN",
+		URL: func(t project.Target) string { return "https://dbc-1.cloud.databricks.com/explore/data/" + t.Database + "/" + t.Schema + "/" + t.Name }})
+	ref := navigate.TableRef{Source: navigate.SourceRaw, Target: project.Target{Database: "main", Schema: "shop", Name: "orders"}}
+	got := cardFrom(uc, ref, &warehouse.Table{Type: "MANAGED", Schema: []warehouse.Column{{Name: "id", Type: "bigint", Required: true}}}, nil, time.Second)
+	if !strings.HasPrefix(got, "#### [main.shop.orders](https://dbc-1.cloud.databricks.com/explore/data/main/shop/orders)") || !strings.Contains(got, "bigint NOT NULL") {
+		t.Errorf("card:\n%s", got)
+	}
+	got = cardFrom(uc, ref, nil, warehouse.ErrAuth, time.Second)
+	if !strings.HasSuffix(got, "⚠ **Unity Catalog metadata unavailable:** "+warehouse.ErrAuth.Error()+"; set DATABRICKS_TOKEN") {
+		t.Errorf("no credentials:\n%s", got)
+	}
+	noLink := sourceOf(&TableSource{Name: "Unity Catalog"})
+	if got := cardFrom(noLink, ref, nil, nil, time.Second); got != "#### main.shop.orders" {
+		t.Errorf("no workspace to link to: %q", got)
+	}
+}
+
 func TestCardRawAndSelf(t *testing.T) {
 	raw := navigate.TableRef{Source: navigate.SourceRaw, Target: project.Target{Database: "p", Schema: "d", Name: "t"}}
 	title := "#### [p.d.t](https://console.cloud.google.com/bigquery?project=p&ws=!1m5!1m4!4m3!1sp!2sd!3st)"

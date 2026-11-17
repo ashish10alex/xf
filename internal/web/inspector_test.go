@@ -13,10 +13,10 @@ import (
 )
 
 func TestInspectorSQL(t *testing.T) {
-	if got := inspectorSQL("p.d.t", "  "); got != "SELECT * FROM `p.d.t`" {
+	if got := inspectorSQL(dialect{}, "p.d.t", "  "); got != "SELECT * FROM `p.d.t`" {
 		t.Errorf("no filter: %q", got)
 	}
-	if got := inspectorSQL("p.d.t", "id = 1"); got != "SELECT * FROM `p.d.t` WHERE id = 1" {
+	if got := inspectorSQL(dialect{}, "p.d.t", "id = 1"); got != "SELECT * FROM `p.d.t` WHERE id = 1" {
 		t.Errorf("filter: %q", got)
 	}
 }

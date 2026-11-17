@@ -402,7 +402,7 @@ func (p *projectState) scratchCreate(w http.ResponseWriter, r *http.Request) {
 		if location == "" {
 			location = tbl.Location
 		}
-		sql = selectColumns(a.Target.Database, a.Target.Schema, a.Target.Name, tbl.Schema)
+		sql = selectColumns(p.dialect(), a.Target.Database, a.Target.Schema, a.Target.Name, tbl.Schema)
 	case "preview":
 		// The declarations table's preview: left for the user to run, with
 		// no lookup first, which a table they can't see would fail.
@@ -410,7 +410,7 @@ func (p *projectState) scratchCreate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, fmt.Errorf("%s has no table to preview", a.Kind))
 			return
 		}
-		sql = "SELECT *\nFROM `" + a.Target.Database + "." + a.Target.Schema + "." + a.Target.Name + "`\nLIMIT 100\n"
+		sql = "SELECT *\nFROM " + p.dialect().table(a.Target.Database, a.Target.Schema, a.Target.Name) + "\nLIMIT 100\n"
 	default:
 		writeError(w, errors.New(`form must be "compiled", "columns" or "preview"`))
 		return
@@ -451,26 +451,62 @@ func init() {
 	}
 }
 
-func quoteIdent(s string) string {
+// dialect is how the SQL xf web writes names things: in GoogleSQL, or in
+// Databricks SQL when databricks is set.
+type dialect struct{ databricks bool }
+
+// dialectLocked is the project's warehouse's.
+func (p *projectState) dialectLocked() dialect { return dialect{databricks: p.databricksLocked()} }
+
+func (p *projectState) dialect() dialect {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.dialectLocked()
+}
+
+// ident is a column's name, in backticks when it needs them: GoogleSQL
+// escapes a backtick in one with a backslash, Databricks by doubling it.
+func (d dialect) ident(s string) string {
 	if plainIdent.MatchString(s) && !reserved[strings.ToUpper(s)] {
 		return s
+	}
+	if d.databricks {
+		return "`" + strings.ReplaceAll(s, "`", "``") + "`"
 	}
 	return "`" + strings.ReplaceAll(s, "`", "\\`") + "`"
 }
 
+// table names project.dataset.table: in one pair of backticks for
+// BigQuery, part by part for Databricks, where `a.b.c` is one name.
+func (d dialect) table(proj, dataset, table string) string {
+	if d.databricks {
+		return d.ident(proj) + "." + d.ident(dataset) + "." + d.ident(table)
+	}
+	return "`" + proj + "." + dataset + "." + table + "`"
+}
+
+// tableID is d.table of a table's ID, project.dataset.table.
+func (d dialect) tableID(id string) string {
+	parts := strings.SplitN(id, ".", 3)
+	if len(parts) != 3 {
+		return "`" + id + "`"
+	}
+	return d.table(parts[0], parts[1], parts[2])
+}
+
 // selectColumns is a SELECT of the table's columns, comma-separated and
 // one to a line.
-func selectColumns(proj, dataset, table string, schema []warehouse.Column) string {
+func selectColumns(d dialect, proj, dataset, table string, schema []warehouse.Column) string {
 	var b strings.Builder
 	b.WriteString("SELECT\n")
 	for i, f := range schema {
-		b.WriteString("  " + quoteIdent(f.Name))
+		b.WriteString("  " + d.ident(f.Name))
 		if i < len(schema)-1 {
 			b.WriteByte(',')
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString("FROM `" + proj + "." + dataset + "." + table + "`\n")
+	b.WriteString("FROM " + d.table(proj, dataset, table) + "\n")
 	return b.String()
 }
 
@@ -496,6 +532,21 @@ type scratchDryView struct {
 	// WarnBytes and ConfirmBytes are the sizes the page colours and asks at.
 	WarnBytes    int64 `json:"warnBytes"`
 	ConfirmBytes int64 `json:"confirmBytes"`
+	// NoDryRun says the warehouse has none (Databricks, ADR 0042): Bytes
+	// is unknown, and StatementType and Writes come from the SQL's first
+	// words, with no call to the warehouse.
+	NoDryRun bool `json:"noDryRun,omitempty"`
+}
+
+// noDryRun is v for sql on a warehouse with no dry run: whether it writes,
+// from its first words, so the page still asks before a statement that
+// changes data. Nothing wakes the SQL warehouse.
+func noDryRun(v scratchDryView, sql string) scratchDryView {
+	v.OK, v.NoDryRun, v.Accuracy = true, true, warehouse.AccuracyUnknown
+	v.StatementType = warehouse.StatementType(sql)
+	v.Writes = !readOnlyStatements[v.StatementType]
+	v.Text = "no dry run"
+	return v
 }
 
 // readOnlyStatements are the statement types that change nothing.
@@ -534,13 +585,19 @@ func (p *projectState) scratchDryRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if p.deps.DryRun == nil {
-		v.Error = "no dry runs here"
+	if strings.TrimSpace(req.SQL) == "" {
+		v.Error = "nothing to run"
 		writeJSON(w, v)
 		return
 	}
-	if strings.TrimSpace(req.SQL) == "" {
-		v.Error = "nothing to run"
+	if p.dialect().databricks {
+		// The page dry runs as the SQL is typed; Databricks' stand-ins for
+		// a dry run would keep the SQL warehouse up, billing.
+		writeJSON(w, noDryRun(v, req.SQL))
+		return
+	}
+	if p.deps.DryRun == nil {
+		v.Error = "no dry runs here"
 		writeJSON(w, v)
 		return
 	}
@@ -597,11 +654,24 @@ type jobRequest struct {
 	SQL string `json:"sql"`
 }
 
+// bq is the project's warehouse client: Databricks' for a project that
+// builds there (ADR 0042), else BigQuery's.
 func (p *projectState) bq(ctx context.Context) (warehouse.Warehouse, error) {
+	if p.onDbx.Load() && p.dbx.Client != nil {
+		return p.dbx.Client(ctx)
+	}
 	if p.warehouse == nil {
 		return nil, errors.New("no BigQuery access here")
 	}
 	return p.warehouse(ctx)
+}
+
+// hasWarehouseLocked says whether bq has a client to give.
+func (p *projectState) hasWarehouseLocked() bool {
+	if p.databricksLocked() {
+		return p.dbx.Client != nil
+	}
+	return p.warehouse != nil
 }
 
 func (p *projectState) scratchRun(w http.ResponseWriter, r *http.Request) {
@@ -644,14 +714,20 @@ func queryError(err error) error {
 	if apiErr, ok := errors.AsType[*warehouse.APIError](err); ok {
 		return errors.New(apiErr.Message)
 	}
+	if errors.Is(err, warehouse.ErrNoWarehouse) {
+		return errors.New("no SQL warehouse chosen: pick one with the palette's “Databricks: choose the SQL warehouse”")
+	}
 	return err
 }
 
 // rowsError is queryError, saying so when a result is gone: BigQuery
 // keeps a query's result for about a day, and a recent run opened again
-// may be older.
-func rowsError(err error) error {
+// may be older; Databricks keeps one for a shorter while.
+func (p *projectState) rowsError(err error) error {
 	if apiErr, ok := errors.AsType[*warehouse.APIError](err); ok && apiErr.Status == http.StatusNotFound {
+		if p.onDbx.Load() {
+			return errors.New("Databricks no longer has this result: run the query again")
+		}
 		return errors.New("BigQuery no longer has this result (it keeps one for about 24 hours): run the query again")
 	}
 	return queryError(err)
@@ -670,6 +746,20 @@ type jobView struct {
 	Children []warehouse.ChildJob `json:"children,omitempty"`
 	// Cost is what the billed bytes cost on demand, once the job is done.
 	Cost string `json:"cost,omitempty"`
+	// Starting says a pending query waits for its SQL warehouse to start
+	// (Databricks), which bills from then on.
+	Starting bool `json:"starting,omitempty"`
+}
+
+// starting says whether c is a warehouse that starts on demand and is not
+// up yet, which a pending query waits for.
+func starting(ctx context.Context, c warehouse.Warehouse) bool {
+	wk, ok := c.(warehouse.Waker)
+	if !ok {
+		return false
+	}
+	up, err := wk.Running(ctx)
+	return err == nil && !up
 }
 
 func (p *projectState) scratchJob(w http.ResponseWriter, r *http.Request) {
@@ -691,6 +781,9 @@ func (p *projectState) scratchJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := jobView{QueryStatus: st}
+	if st.State == "PENDING" {
+		v.Starting = starting(ctx, c)
+	}
 	if co, ok := c.(warehouse.Coster); ok && st.State == "DONE" {
 		v.Cost = cost.FormatUSD(co.CostUSD(st.BytesBilled))
 	}
@@ -722,7 +815,7 @@ func (p *projectState) scratchRows(w http.ResponseWriter, r *http.Request) {
 	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
 	page, err := c.Rows(ctx, ref, r.URL.Query().Get("token"), min(size, 5000))
 	if err != nil {
-		writeError(w, rowsError(err))
+		writeError(w, p.rowsError(err))
 		return
 	}
 	writeJSON(w, page)

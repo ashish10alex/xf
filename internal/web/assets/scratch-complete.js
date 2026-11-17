@@ -11,7 +11,7 @@
 
 import * as cm from './vendor/codemirror.mjs';
 import { get, copy, openLink } from './state.js';
-import { SC, fmtBytes, onClearMeta } from './scratch.js';
+import { SC, fmtBytes, onClearMeta, onDbx, site } from './scratch.js';
 import { functionOptions, clauseOptions, inPivotAggregate, valueOptions, isFunctionName, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 
 const TTL = 5 * 60 * 1000;
@@ -171,8 +171,12 @@ export function words(sql, from, to) {
 // ---- completion ----
 
 const PLAIN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-export const quoteIdent = (s) => (PLAIN.test(s) ? s : '`' + s.replace(/`/g, '\\`') + '`');
-const refText = (r) => '`' + r.project + '.' + r.dataset + '.' + r.table + '`';
+// quoteIdent backticks a name that needs it: GoogleSQL escapes a backtick
+// in one with a backslash, Databricks by doubling it.
+export const quoteIdent = (s) => (PLAIN.test(s) ? s : '`' + s.replace(/`/g, onDbx() ? '``' : '\\`') + '`');
+// refText names a table as a FROM takes it: in one pair of backticks for
+// BigQuery, part by part for Databricks, where `a.b.c` is one name.
+const refText = (r) => onDbx() ? [r.project, r.dataset, r.table].map(quoteIdent).join('.') : '`' + r.project + '.' + r.dataset + '.' + r.table + '`';
 
 // field walks path down the fields of a table's schema.
 function walk(fields, path) {
@@ -531,8 +535,8 @@ async function columnOptions(tok, tokStart, sql, pos) {
     }
   }
   // BigQuery's functions, below the columns, unless a backticked name is
-  // being typed.
-  if (!qual.length && !tok.startsWith('`')) options.push(...await functionOptions(1));
+  // being typed; none on Databricks, whose functions xf doesn't list yet.
+  if (!qual.length && !tok.startsWith('`') && !onDbx()) options.push(...await functionOptions(1));
   // Every other word in the editor: a CTE's columns and aliases, names in
   // another statement, whatever has been typed.
   for (const w of words(sql, from, pos)) {
@@ -601,8 +605,9 @@ function el(tag, cls, text) {
   return e;
 }
 
-// consoleURL is the table's page in the BigQuery console, as u opens it.
-const consoleURL = (c) => 'https://console.cloud.google.com/bigquery?project=' + encodeURIComponent(c.project) +
+// consoleURL is the table's page, as u opens it: the server's (Catalog
+// Explorer for Databricks), else the BigQuery console's.
+const consoleURL = (c) => c.url || 'https://console.cloud.google.com/bigquery?project=' + encodeURIComponent(c.project) +
   `&ws=!1m5!1m4!4m3!1s${encodeURIComponent(c.project)}!2s${encodeURIComponent(c.dataset)}!3s${encodeURIComponent(c.table)}`;
 
 // flash shows a button's done text for a moment.
@@ -629,10 +634,13 @@ export function cardDOM(card) {
   const kind = (mdl && mdl.kind) || (d && d.type && d.type.toLowerCase().replace('_', ' ')) || '';
   if (kind) bar.append(el('span', 'sc-card-kind', kind));
   const actions = el('div', 'sc-card-actions');
+  const where = onDbx() ? 'Catalog Explorer' : 'BigQuery';
+  const ref = refText(card);
   const openBtn = el('button', 'sc-card-link sc-card-open', '↗\u00a0bigquery');
   const nameBtn = el('button', 'sc-card-link sc-card-copyname', '⧉\u00a0name');
-  openBtn.title = 'Open in BigQuery (u, on a card K showed or you clicked in)';
-  nameBtn.title = 'Copy `' + full + '` (y, on a card K showed or you clicked in)';
+  if (onDbx()) openBtn.textContent = '↗\u00a0catalog';
+  openBtn.title = 'Open in ' + where + ' (u, on a card K showed or you clicked in)';
+  nameBtn.title = 'Copy ' + ref + ' (y, on a card K showed or you clicked in)';
   actions.append(openBtn, el('span', 'sc-card-sep', ' · '), nameBtn);
   const search = el('button', 'sc-card-link', '⌕\u00a0filter');
   search.title = 'Filter the columns (f, on a card K showed or you clicked in)';
@@ -646,18 +654,18 @@ export function cardDOM(card) {
   name.href = consoleURL(card);
   name.target = '_blank';
   name.rel = 'noopener';
-  name.title = full + ': open in BigQuery';
+  name.title = full + ': open in ' + where;
   name.append(el('span', 'sc-card-qual', `${card.project}.${card.dataset}.`), el('span', 'sc-card-name', card.table));
   root.append(name);
   openBtn.addEventListener('click', () => openLink(name.href));
-  // Back-quoted, as y copies it, so it pastes into a FROM.
+  // Quoted, as y copies it, so it pastes into a FROM.
   nameBtn.addEventListener('click', () => {
-    copy('`' + full + '`', 'copied `' + full + '`');
+    copy(ref, 'copied ' + ref);
     flash(nameBtn, '✓\u00a0copied');
   });
 
   // No columns says so, so the card never looks like it failed to load.
-  if (!cols.length) root.append(el('div', 'sc-card-warn', 'no schema: ' + (card.error || 'BigQuery lists no columns for it')));
+  if (!cols.length) root.append(el('div', 'sc-card-warn', 'no schema: ' + (card.error || site() + ' lists no columns for it')));
   else if (card.error) root.append(el('div', 'sc-card-warn', card.error));
 
   const desc = (d && d.description) || (mdl && mdl.description) || '';

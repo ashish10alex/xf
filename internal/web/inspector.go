@@ -69,8 +69,12 @@ type inspectorNode struct {
 	Label string `json:"label,omitempty"`
 	Tone  string `json:"tone,omitempty"`
 	Hover string `json:"hover,omitempty"`
-	// URL opens the table read in the BigQuery console.
+	// URL opens the table read in the BigQuery console, or Catalog
+	// Explorer for Databricks.
 	URL string `json:"url,omitempty"`
+	// From is Read as the warehouse's SQL names it, as the row's query
+	// reads it.
+	From string `json:"from"`
 }
 
 type inspectorView struct {
@@ -96,8 +100,9 @@ type inspectorView struct {
 }
 
 // inspectorSQL is the query of a row: every column of table, filtered.
-func inspectorSQL(table, filter string) string {
-	sql := "SELECT * FROM `" + table + "`"
+// inspector.js's sqlOf writes the same text, from the node's From.
+func inspectorSQL(d dialect, table, filter string) string {
+	sql := "SELECT * FROM " + d.tableID(table)
 	if f := strings.TrimSpace(filter); f != "" {
 		sql += " WHERE " + f
 	}
@@ -172,7 +177,7 @@ func (p *projectState) inspectorViewOf(model project.ActionID, depth int) (inspe
 		dev := string(n.ID)
 		in := inspectorNode{UpstreamNode: n, Dev: dev, Read: dev}
 		if dep := g.Actions[n.ID]; dep != nil {
-			in.URL = dep.Target.ConsoleURL()
+			in.URL = p.tableURL(dep.Target)
 		}
 		if h, ok := reads[n.ID]; ok {
 			in.Label, in.Tone, in.Hover = h.Label, h.Tone, h.Hover
@@ -184,6 +189,7 @@ func (p *projectState) inspectorViewOf(model project.ActionID, depth int) (inspe
 				in.URL = h.URL
 			}
 		}
+		in.From = p.dialectLocked().tableID(in.Read)
 		v.Nodes = append(v.Nodes, in)
 	}
 	maps.Copy(v.Runs, p.insp.byModel[v.Key])
@@ -336,13 +342,18 @@ func (p *projectState) inspectorDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	v := scratchDryView{}
 	v.WarnBytes, v.ConfirmBytes = p.thresholds()
+	if req.Table == "" {
+		http.Error(w, "bad request: table", http.StatusBadRequest)
+		return
+	}
+	d := p.dialect()
+	if d.databricks {
+		writeJSON(w, noDryRun(v, inspectorSQL(d, req.Table, req.Filter)))
+		return
+	}
 	if p.deps.DryRun == nil {
 		v.Error = "no dry runs here"
 		writeJSON(w, v)
-		return
-	}
-	if req.Table == "" {
-		http.Error(w, "bad request: table", http.StatusBadRequest)
 		return
 	}
 	def := p.scratchDefaults(r.Context())
@@ -353,19 +364,19 @@ func (p *projectState) inspectorDryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), scratchDryTimeout)
 	defer cancel()
-	d, err := p.deps.DryRun(ctx, def.Project, def.Location, inspectorSQL(req.Table, req.Filter))
+	dry, err := p.deps.DryRun(ctx, def.Project, def.Location, inspectorSQL(d, req.Table, req.Filter))
 	if err != nil {
 		v.Auth = errors.Is(err, warehouse.ErrAuth)
 		v.Error = queryError(err).Error()
 		writeJSON(w, v)
 		return
 	}
-	v.OK, v.Bytes, v.Accuracy, v.StatementType = true, d.Bytes, d.Accuracy, d.StatementType
-	v.Text = warehouse.FormatBytes(d.Bytes)
-	if d.Accuracy == warehouse.AccuracyUnknown {
+	v.OK, v.Bytes, v.Accuracy, v.StatementType = true, dry.Bytes, dry.Accuracy, dry.StatementType
+	v.Text = warehouse.FormatBytes(dry.Bytes)
+	if dry.Accuracy == warehouse.AccuracyUnknown {
 		v.Text = "unknown"
 	} else {
-		v.Cost = cost.FormatUSD(d.CostUSD())
+		v.Cost = cost.FormatUSD(dry.CostUSD())
 	}
 	writeJSON(w, v)
 }
@@ -396,12 +407,18 @@ func (p *projectState) inspectorRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if p.onDbx.Load() && p.dbx.Chosen != nil && !p.dbx.Chosen() {
+		// Each row would fail alone; the page asks for one and runs them.
+		writeError(w, queryError(warehouse.ErrNoWarehouse))
+		return
+	}
 	def := p.scratchDefaults(r.Context())
 	if def.Project == "" {
 		writeError(w, errors.New("no project to run in: set a quota project with gcloud"))
 		return
 	}
 	p.mu.Lock()
+	d := p.dialectLocked()
 	if p.insp.byModel == nil {
 		p.insp.byModel = map[string]map[string]*inspectorRun{}
 		p.insp.slots = make(chan struct{}, maxInspectorRuns)
@@ -420,7 +437,7 @@ func (p *projectState) inspectorRun(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), inspectorRunLimit)
-		run := &inspectorRun{Phase: "queued", SQL: inspectorSQL(row.Table, row.Filter), cancel: cancel}
+		run := &inspectorRun{Phase: "queued", SQL: inspectorSQL(d, row.Table, row.Filter), cancel: cancel}
 		runs[row.Key] = run
 		model, key := req.Key, row.Key
 		start = append(start, func() { p.runInspected(ctx, def, model, key, run) })
@@ -510,7 +527,7 @@ func (p *projectState) runInspected(ctx context.Context, def scratchDefaultsView
 		}
 		page, err := c.Rows(ctx, ref, "", 1)
 		if err != nil {
-			end("failed", rowsError(err).Error())
+			end("failed", p.rowsError(err).Error())
 			return
 		}
 		changed(func() {

@@ -9,7 +9,7 @@
 // the presets; this module keeps what the page shows. state.js doesn't
 // import it: the palette, or a workspace that kept the page, loads it.
 
-import { S, get, post, redraw, hooks, say, copy, openLink, selectAction } from './state.js';
+import { S, get, post, redraw, hooks, say, copy, openLink, selectAction, openWarehousePicker } from './state.js';
 import * as sc from './scratch.js';
 
 export const IN = {
@@ -230,7 +230,9 @@ export const sqlOf = (key) => {
   const n = nodeOf(key);
   if (!n) return '';
   const f = filterOf(key).trim();
-  return 'SELECT * FROM `' + n.read + '`' + (f ? ' WHERE ' + f : '');
+  // from is the table as the warehouse's SQL names it (the server's, so
+  // the two queries are the same text).
+  return 'SELECT * FROM ' + (n.from || '`' + n.read + '`') + (f ? ' WHERE ' + f : '');
 };
 
 // tidyFilter makes a filter easier to read: outside quotes, each run of
@@ -485,7 +487,11 @@ async function start(keys) {
   try {
     const runs = await post('/api/inspector/run', { key: IN.v.key, rows });
     Object.assign(IN.v.runs, runs);
-  } catch (e) { say(e.message); }
+  } catch (e) {
+    // A Databricks project with no SQL warehouse yet: pick one, then run.
+    if (sc.onDbx() && /^no SQL warehouse chosen/.test(e.message)) openWarehousePicker(() => start(keys));
+    else say(e.message);
+  }
   redraw();
 }
 

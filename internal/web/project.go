@@ -546,9 +546,13 @@ func (p *projectState) capsLocked() capabilities {
 		Inspector: p.warehouse != nil && d.DryRun != nil && !p.standalone, Warehouse: project.BigQuery,
 	}
 	if p.databricksLocked() {
+		// Scratch queries and the inspector run on the SQL warehouse when
+		// asked; nothing dry runs (ADR 0042).
 		c.Warehouse, c.Check, c.DryRun = project.Databricks, true, false
 		c.Cost = c.Cost && p.dbxCoster
-		c.Impact, c.Defer, c.Scratch, c.Inspector = false, false, false, false
+		c.Impact, c.Defer = false, false
+		c.Scratch = p.hasWarehouseLocked()
+		c.Inspector = c.Scratch && !p.standalone
 	}
 	return c
 }

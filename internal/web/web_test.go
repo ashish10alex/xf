@@ -169,7 +169,8 @@ func postJSON(t *testing.T, c *http.Client, u string, body, v any) {
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("POST %s: %s", u, res.Status)
+		msg, _ := io.ReadAll(io.LimitReader(res.Body, 500))
+		t.Fatalf("POST %s: %s: %s", u, res.Status, strings.TrimSpace(string(msg)))
 	}
 	if v != nil {
 		if err := json.NewDecoder(res.Body).Decode(v); err != nil {

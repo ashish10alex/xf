@@ -6,12 +6,15 @@
 
 import { S, redraw, hooks, get, post, say, checkModel } from './state.js';
 
-// W is the picker's state while it is open.
-export const W = { loading: false, list: [], cursor: 0, error: '', saving: false };
+// W is the picker's state while it is open; then is what runs once a pick
+// is saved.
+export const W = { loading: false, list: [], cursor: 0, error: '', saving: false, then: null };
 
-export async function openWarehousePicker() {
+// openWarehousePicker lists the SQL warehouses; then, if given, runs once
+// one is chosen (a scratch query asking again), else the model is checked.
+export async function openWarehousePicker(then) {
   await import('./databricks-view.js');
-  Object.assign(W, { loading: true, list: [], cursor: 0, error: '', saving: false });
+  Object.assign(W, { loading: true, list: [], cursor: 0, error: '', saving: false, then: then || null });
   S.overlay = 'dbxWarehouse';
   redraw();
   try {
@@ -32,7 +35,8 @@ export function closePicker() {
   if (S.overlay === 'dbxWarehouse') S.overlay = null;
 }
 
-// choose saves the warehouse under the cursor and checks the model again.
+// choose saves the warehouse under the cursor, then does what the picker
+// was opened for: by default, checks the model again.
 export async function choose(i) {
   const w = W.list[i ?? W.cursor];
   if (!w || W.saving) return;
@@ -43,7 +47,9 @@ export async function choose(i) {
   if (!r.ok) { W.error = r.message || 'not saved'; redraw(); return; }
   closePicker();
   say(r.message);
-  if (S.view) checkModel();
+  if (W.then) W.then();
+  else if (S.view) checkModel();
+  redraw();
 }
 
 export function pickerKey(k) {

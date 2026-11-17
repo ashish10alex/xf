@@ -21,6 +21,8 @@ type fakeDatabricks struct {
 	mu      sync.Mutex
 	running bool
 	checked []string
+	queries []string
+	polls   int
 }
 
 func (f *fakeDatabricks) Running(context.Context) (bool, error) {
@@ -36,6 +38,35 @@ func (f *fakeDatabricks) Check(_ context.Context, _, _, sql string) (*warehouse.
 	f.checked = append(f.checked, sql)
 	return &warehouse.Check{Schema: []warehouse.Column{{Name: "order_id", Type: "bigint"}, {Name: "total", Type: "decimal(10,2)"}}}, nil
 }
+
+// StartQuery keeps the query; it stays pending, its warehouse starting,
+// until QueryJob has been asked twice.
+func (f *fakeDatabricks) StartQuery(_ context.Context, o warehouse.QueryOptions) (warehouse.JobRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queries = append(f.queries, o.SQL)
+	return warehouse.JobRef{Project: "workspace", ID: "st-1"}, nil
+}
+
+func (f *fakeDatabricks) QueryJob(context.Context, warehouse.JobRef) (*warehouse.QueryStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.polls++; f.polls < 2 {
+		return &warehouse.QueryStatus{State: "PENDING", DMLRows: -1}, nil
+	}
+	f.running = true
+	return &warehouse.QueryStatus{State: "DONE", StatementType: "SELECT", DMLRows: -1}, nil
+}
+
+func (f *fakeDatabricks) Rows(context.Context, warehouse.JobRef, string, int) (*warehouse.Page, error) {
+	return &warehouse.Page{Schema: []warehouse.Column{{Name: "order_id", Type: "BIGINT"}}, Rows: [][]any{{"1"}, {"2"}}, Total: 2, Complete: true}, nil
+}
+
+func (f *fakeDatabricks) Describe(_ context.Context, catalog, schema, table string) (*warehouse.TableDetail, error) {
+	return &warehouse.TableDetail{Type: "MANAGED", Schema: []warehouse.Column{{Name: "order_id", Type: "bigint"}}, NumRows: -1, NumBytes: -1}, nil
+}
+
+func (f *fakeDatabricks) DefaultProject() string { return "workspace" }
 
 func databricksGraph() *project.Graph {
 	orders := project.Target{Database: "workspace", Schema: "shop", Name: "orders"}
@@ -56,6 +87,7 @@ type databricksTest struct {
 	dryRuns int
 	get     func(id string) actionView
 	post    func(path string, body, v any)
+	getJSON func(path string, v any)
 	caps    func() capabilities
 }
 
@@ -65,7 +97,7 @@ type databricksTest struct {
 func newDatabricksTest(t *testing.T, chosen bool) *databricksTest {
 	t.Helper()
 	dt := &databricksTest{dbx: &fakeDatabricks{}}
-	deps := frontend.Deps{Backend: "dbt", Engine: newFakeEngine(databricksGraph()), Now: time.Now,
+	deps := frontend.Deps{Backend: "dbt", Engine: newFakeEngine(databricksGraph()), Now: time.Now, Root: t.TempDir(),
 		DryRun: func(context.Context, string, string, string) (*warehouse.Check, error) {
 			dt.mu.Lock()
 			dt.dryRuns++
@@ -93,6 +125,7 @@ func newDatabricksTest(t *testing.T, chosen bool) *databricksTest {
 		return v
 	}
 	dt.post = func(path string, body, v any) { t.Helper(); postJSON(t, c, ts.URL+path, body, v) }
+	dt.getJSON = func(path string, v any) { t.Helper(); getJSON(t, c, ts.URL+path, v) }
 	return dt
 }
 
@@ -151,7 +184,7 @@ func TestDatabricksChecksOnlyWhenAsked(t *testing.T) {
 		t.Errorf("%d dry runs and %d checks ran unasked", n, len(dt.dbx.checked))
 	}
 	c := dt.caps()
-	if !c.Check || c.Warehouse != project.Databricks || c.Cost || c.Impact || c.Defer || c.Scratch || c.Inspector || c.DryRun {
+	if !c.Check || c.Warehouse != project.Databricks || c.Cost || c.Impact || c.Defer || !c.Scratch || !c.Inspector || c.DryRun {
 		t.Errorf("caps = %+v", c)
 	}
 }
@@ -220,5 +253,93 @@ func TestBigQueryDbtStillDryRuns(t *testing.T) {
 	postJSON(t, c, ts.URL+"/api/check", map[string]string{"id": "p.mart.orders"}, &ok)
 	if ok.OK {
 		t.Error("a BigQuery project took an on-demand check")
+	}
+}
+
+// Scratch queries on Databricks: the dry run as SQL is typed calls nothing
+// and still says what writes; a run goes to the SQL warehouse, saying so
+// while it starts; a model's columns select from its table named part by
+// part; a table's card links to Catalog Explorer.
+func TestDatabricksScratch(t *testing.T) {
+	dt := newDatabricksTest(t, true)
+	var f scratchFile
+	dt.post("/api/scratch/create", map[string]any{"id": "workspace.shop.orders", "form": "columns"}, &f)
+	if !strings.Contains(f.SQL, "FROM workspace.shop.orders") || f.Project != "workspace" {
+		t.Errorf("scratch = %+v", f)
+	}
+	var d scratchDryView
+	dt.post("/api/scratch/dryrun", map[string]any{"id": f.ID, "sql": "select * from workspace.shop.orders"}, &d)
+	if !d.OK || !d.NoDryRun || d.Writes || d.StatementType != "SELECT" {
+		t.Errorf("dry run = %+v", d)
+	}
+	dt.post("/api/scratch/dryrun", map[string]any{"id": f.ID, "sql": "-- tidy\ndelete from workspace.shop.orders"}, &d)
+	if !d.Writes || d.StatementType != "DELETE" {
+		t.Errorf("a DELETE's dry run = %+v", d)
+	}
+	if n := dt.dryRunCount(); n != 0 || len(dt.dbx.checked) != 0 || len(dt.dbx.queries) != 0 {
+		t.Fatalf("typing reached the warehouse: %d dry runs, %d checks, %d queries", n, len(dt.dbx.checked), len(dt.dbx.queries))
+	}
+
+	var ref warehouse.JobRef
+	dt.post("/api/scratch/run", map[string]any{"id": f.ID, "sql": "select 1"}, &ref)
+	if ref.ID != "st-1" || len(dt.dbx.queries) != 1 {
+		t.Fatalf("run = %+v, queries %q", ref, dt.dbx.queries)
+	}
+	q := "project=workspace&id=st-1"
+	var job jobView
+	dt.getJSON("/api/scratch/job?"+q, &job)
+	if job.State != "PENDING" || !job.Starting {
+		t.Errorf("first poll = %+v, starting %v", job.QueryStatus, job.Starting)
+	}
+	job = jobView{}
+	dt.getJSON("/api/scratch/job?"+q, &job)
+	if job.State != "DONE" || job.Starting || job.Cost != "" {
+		t.Errorf("second poll = %+v", job)
+	}
+	var page warehouse.Page
+	dt.getJSON("/api/scratch/rows?"+q, &page)
+	if page.Total != 2 || len(page.Rows) != 2 {
+		t.Errorf("rows = %+v", page)
+	}
+
+	var card tableCard
+	dt.getJSON("/api/scratch/meta/table?project=workspace&dataset=shop&table=orders", &card)
+	if card.Detail == nil || card.URL != "https://dbc-1.cloud.databricks.com/explore/data/workspace/shop/orders" {
+		t.Errorf("card = %+v", card)
+	}
+}
+
+// The inspector on Databricks reads each table named part by part, and its
+// dry run calls nothing.
+func TestDatabricksInspector(t *testing.T) {
+	dt := newDatabricksTest(t, true)
+	var d scratchDryView
+	dt.post("/api/inspector/dryrun", map[string]string{"table": "workspace.shop.orders", "filter": "order_id = 1"}, &d)
+	if !d.OK || !d.NoDryRun || d.Writes {
+		t.Errorf("dry run = %+v", d)
+	}
+	var runs map[string]*inspectorRun
+	dt.post("/api/inspector/run", map[string]any{"key": "orders", "rows": []map[string]string{{"key": "r1", "table": "workspace.shop.orders", "filter": "order_id = 1"}}}, &runs)
+	if r := runs["r1"]; r == nil || r.SQL != "SELECT * FROM workspace.shop.orders WHERE order_id = 1" {
+		t.Errorf("runs = %+v", runs)
+	}
+	if n := dt.dryRunCount(); n != 0 || len(dt.dbx.checked) != 0 {
+		t.Errorf("%d dry runs, %d checks", n, len(dt.dbx.checked))
+	}
+}
+
+func TestDialect(t *testing.T) {
+	bq, dbx := dialect{}, dialect{databricks: true}
+	if got := bq.table("p", "d", "t"); got != "`p.d.t`" {
+		t.Errorf("BigQuery table = %s", got)
+	}
+	if got := dbx.table("main", "my schema", "t"); got != "main.`my schema`.t" {
+		t.Errorf("Databricks table = %s", got)
+	}
+	if got := dbx.ident("a`b"); got != "`a``b`" {
+		t.Errorf("Databricks ident = %s", got)
+	}
+	if got := bq.ident("a`b"); got != "`a\\`b`" {
+		t.Errorf("BigQuery ident = %s", got)
 	}
 }

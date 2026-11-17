@@ -1244,9 +1244,10 @@ export async function checkModel() {
 }
 
 // openWarehousePicker lists the workspace's SQL warehouses to choose the
-// one checks run on (databricks.js, loaded the first time).
-export function openWarehousePicker() {
-  import('./databricks.js').then((m) => m.openWarehousePicker());
+// one checks and queries run on (databricks.js, loaded the first time);
+// then runs once one is chosen, else the model is checked.
+export function openWarehousePicker(then) {
+  import('./databricks.js').then((m) => m.openWarehousePicker(then));
 }
 
 // ---- panes ----
@@ -2417,7 +2418,9 @@ export function handleKey(k) {
   if (S.mode === 'picker') return pickerKey(k);
   if (S.mode !== 'project') return false;
   if (hooks.scratchOpen && hooks.scratchOpen() && !S.overlay) return hooks.scratchKey(k);
-  // The dependency inspector has only its own few keys (inspector.js).
+  // The dependency inspector has only its own few keys (inspector.js), and
+  // the SQL warehouse picker's while that is open.
+  if (S.inspector && S.overlay === 'dbxWarehouse') return hooks.dbxKey ? hooks.dbxKey(k) : true;
   if (S.inspector) return k === 'palette' || k === 'commands' || !hooks.inspectorKey ? true : hooks.inspectorKey(k);
   // The Checks page has only its own keys, and its prod prompt's.
   if (S.checks) {

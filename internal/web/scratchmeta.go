@@ -206,6 +206,9 @@ type tableCard struct {
 	Error  string                 `json:"error,omitempty"`
 	// Model is the project's action that builds the table, if one does.
 	Model *modelCard `json:"model,omitempty"`
+	// URL is the table's page: in Catalog Explorer for Databricks, else
+	// the BigQuery console.
+	URL string `json:"url,omitempty"`
 }
 
 func (p *projectState) modelOf(proj, ds, table string) *modelCard {
@@ -241,7 +244,8 @@ func (p *projectState) scratchTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	card := &tableCard{Project: proj, Dataset: ds, Table: table, Model: p.modelOf(proj, ds, table)}
+	card := &tableCard{Project: proj, Dataset: ds, Table: table, Model: p.modelOf(proj, ds, table),
+		URL: p.tableURL(project.Target{Database: proj, Schema: ds, Name: table})}
 	c, err := p.bq(r.Context())
 	if err != nil {
 		writeError(w, err)
@@ -410,7 +414,7 @@ func (p *projectState) scratchFilter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if st.ResultTable == nil {
-		writeError(w, errors.New("BigQuery kept no table for this result, so only the loaded rows can be searched"))
+		writeError(w, errors.New("the warehouse kept no table for this result, so only the loaded rows can be searched"))
 		return
 	}
 	t := *st.ResultTable

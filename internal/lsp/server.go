@@ -49,6 +49,10 @@ type Config struct {
 	// Tables fetches a table's BigQuery metadata for hover cards. Nil means
 	// cards show only what the compile knows.
 	Tables func(ctx context.Context, project, dataset, table string) (*warehouse.Table, error)
+	// TablesFor is where the hover cards of the project at root, whose
+	// latest compile is g (nil before one), look tables up when it builds
+	// outside BigQuery; nil, or a nil result, means Tables (ADR 0042).
+	TablesFor func(root string, g *project.Graph) *TableSource
 	// DryRun asks BigQuery to plan a query in a job in project, for
 	// diagnostics and cost hints. Nil means no dry runs.
 	DryRun func(ctx context.Context, project, location, query string) (*warehouse.Check, error)
@@ -69,6 +73,19 @@ type Config struct {
 	// the file at path, in the project at root, formatted. Nil means the
 	// server doesn't format.
 	Format func(ctx context.Context, root, path string, text []byte) ([]byte, error)
+}
+
+// TableSource is where hover cards look up the tables of a project that
+// builds outside BigQuery, such as Databricks' Unity Catalog.
+type TableSource struct {
+	// Name is the source as a card words it: "Unity Catalog".
+	Name string
+	// Tables fetches a table's metadata; it must wake no billed warehouse.
+	Tables func(ctx context.Context, catalog, schema, table string) (*warehouse.Table, error)
+	// URL is a table's page, linked from its card; nil or "" for none.
+	URL func(project.Target) string
+	// AuthHint says how to sign in, for a lookup without credentials.
+	AuthHint string
 }
 
 const defaultHoverTimeout = 5 * time.Second
@@ -419,19 +436,25 @@ func (s *server) hover(ctx context.Context, path string, text []byte, pos Positi
 	timeout := cmp.Or(s.cfg.HoverTimeout, defaultHoverTimeout)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	tables, src := s.cfg.Tables, bigQuery
+	if s.cfg.TablesFor != nil {
+		if ts := s.cfg.TablesFor(s.root, proj.Graph); ts != nil {
+			tables, src = ts.Tables, sourceOf(ts)
+		}
+	}
 	cards := make([]string, len(refs))
 	for i, ref := range refs {
 		var tbl *warehouse.Table
 		var err error
 		// An ephemeral model, a test or an operation without hasOutput has
 		// no table to look up.
-		if ref.Source != navigate.SourceSelf && s.cfg.Tables != nil && (ref.Action == nil || hasOutputTable(ref.Action)) {
+		if ref.Source != navigate.SourceSelf && tables != nil && (ref.Action == nil || hasOutputTable(ref.Action)) {
 			t := ref.Target
-			if tbl, err = s.cfg.Tables(ctx, t.Database, t.Schema, t.Name); err != nil {
+			if tbl, err = tables(ctx, t.Database, t.Schema, t.Name); err != nil {
 				s.log.Printf("table metadata for %s: %v", t.ID(), err)
 			}
 		}
-		cards[i] = card(ref, tbl, err, timeout)
+		cards[i] = cardFrom(src, ref, tbl, err, timeout)
 	}
 	r := Range{Start: positionAt(text, refs[0].Start, s.utf16), End: positionAt(text, refs[0].End, s.utf16)}
 	return &Hover{Contents: MarkupContent{Kind: "markdown", Value: strings.Join(cards, "\n\n---\n\n")}, Range: &r}

@@ -2,7 +2,7 @@
 // dry run of the SQL being edited, and the query job with its pages of
 // rows. The view itself is scratch-view.js; the editor is scratch-editor.js.
 
-import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects } from './state.js';
+import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects, openWarehousePicker } from './state.js';
 import { openThemePicker, themeLabel } from './theme.js';
 import { part } from './workspace.js';
 import { vimOn } from './vim-mode.js';
@@ -530,6 +530,8 @@ export async function runScratch(force) {
     run.job = await post('/api/scratch/run', { id: SC.cur.id, sql });
   } catch (e) {
     run.phase = 'failed'; run.error = e.message; run.ended = Date.now();
+    // A Databricks project with no SQL warehouse yet: pick one, then run.
+    if (onDbx() && /^no SQL warehouse chosen/.test(e.message)) openWarehousePicker(() => runScratch(true));
     redraw();
     return;
   }
@@ -667,8 +669,15 @@ export function dismissConfirm() { SC.confirm = null; redraw(); }
 
 // ---- the result ----
 
+// onDbx says the project builds in Databricks (ADR 0042): its queries run
+// on a SQL warehouse, with no dry run, job page or table of the result.
+export const onDbx = () => !!S.caps && S.caps.warehouse === 'databricks';
+// site is the warehouse's name, as the page words where a query runs.
+export const site = () => onDbx() ? 'Databricks' : 'BigQuery';
+
+// jobURL is a job's page in the BigQuery console; '' on Databricks.
 export function jobURL(job) {
-  if (!job) return '';
+  if (!job || onDbx()) return '';
   const loc = job.location ? job.location : '';
   return `https://console.cloud.google.com/bigquery?project=${encodeURIComponent(job.project)}&j=bq:${encodeURIComponent(loc)}:${encodeURIComponent(job.id)}&page=queryresults`;
 }
@@ -921,10 +930,11 @@ export function scratchCommands() {
   add('Scratch: new empty query', SC.standalone ? 'n' : '', newDraft);
   if (!SC.standalone && S.view && S.sel) add('Scratch: new query from the selected model', 'n', askNew, S.view.name);
   if (cur && !cur.draft) add('Scratch: delete this scratch', 'd', () => { toResults(); SC.delAsk = cur.id; }, cur.id);
-  if (cur) add('Scratch: change its project or location', '', () => {
+  if (cur) add(onDbx() ? 'Scratch: change its catalog' : 'Scratch: change its project or location', '', () => {
     toResults();
     setTimeout(() => { const el = document.querySelector('.sc-target-in'); if (el) { el.focus(); el.select(); } }, 0);
   }, [cur.project, cur.location].filter(Boolean).join(' · '));
+  if (onDbx()) add('Databricks: choose the SQL warehouse queries run on', '', () => openWarehousePicker(() => {}));
   if (cur && ed && ed.format) add('Format: query with sqlfluff', vimOn() ? ':format' : '', () => ed.format());
   add('Tables: refresh what is known of tables and columns', ':refresh', refreshMeta);
   if (SC.recent.length) add('Results: recent results', 'h', toggleRecent, SC.recent.length + ' kept');
@@ -1214,6 +1224,7 @@ export async function searchAll(confirm, auto, ctx = SC) {
   const terms = activeFilters(ctx);
   const sort = ctx.sort;
   if (!run || !run.rowsJob || !run.schema || (!terms.length && !sort)) return;
+  if (onDbx()) return; // Databricks keeps no table of a result to search
   dropSearch(run);
   const job = run.rowsJob;
   const key = filtersKey(ctx);

@@ -40,6 +40,12 @@ type Client struct {
 	warehouse string
 	// poll is how long a statement's status is waited on between polls.
 	poll time.Duration
+	// jobs are what this client knows of the queries it started, which
+	// the API doesn't say: their type and times.
+	jobs map[string]*job
+	// chunks are the chunks of results read last, so paging through one
+	// fetches its file once.
+	chunks []cachedChunk
 }
 
 // Config is where a Client connects, and as whom.
@@ -191,25 +197,3 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 	}
 	return nil, &warehouse.APIError{Status: resp.StatusCode, Message: msg}
 }
-
-// errNotYet is what the scratch queries fail with: they come in ADR 0042's
-// second phase.
-var errNotYet = errors.New("queries on Databricks aren't in xf yet")
-
-// StartQuery is not done yet.
-func (c *Client) StartQuery(context.Context, warehouse.QueryOptions) (warehouse.JobRef, error) {
-	return warehouse.JobRef{}, errNotYet
-}
-
-// QueryJob is not done yet.
-func (c *Client) QueryJob(context.Context, warehouse.JobRef) (*warehouse.QueryStatus, error) {
-	return nil, errNotYet
-}
-
-// Rows is not done yet.
-func (c *Client) Rows(context.Context, warehouse.JobRef, string, int) (*warehouse.Page, error) {
-	return nil, errNotYet
-}
-
-// CancelQuery is not done yet.
-func (c *Client) CancelQuery(context.Context, warehouse.JobRef) error { return errNotYet }

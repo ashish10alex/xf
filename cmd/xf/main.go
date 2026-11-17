@@ -963,7 +963,14 @@ func runLSP(args []string) error {
 			}
 			return b.Watch(ctx, root, 300*time.Millisecond)
 		},
-		Tables:      lazyTables(bq),
+		Tables: lazyTables(bq),
+		TablesFor: catalogTables(func(root string) *projectWarehouse {
+			b, err := openRoot(root)
+			if err != nil {
+				return nil
+			}
+			return newProjectWarehouse(root, dbtTargetName(b), func() (config.Loaded, error) { return sf.load(root) })
+		}),
 		DryRun:      dryRunner(bq),
 		Credentials: gcpauth.Generation,
 		Log:         os.Stderr,

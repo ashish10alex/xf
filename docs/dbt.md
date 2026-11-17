@@ -65,8 +65,14 @@ Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the 
   Nothing checks on a save, a compile or in the language server.
 - **A built table's columns show without asking**, from Unity Catalog, which wakes no warehouse; the columns tab says they are the built table's.
   After a check, it shows the columns of the SQL as compiled instead.
+- **Scratch queries and the dependency inspector run on the SQL warehouse** when you run them, starting it when it is stopped: the run line says `SQL warehouse starting` while it waits.
+  There is no dry run, so nothing reaches the warehouse as you type; a statement that changes data is still asked about first, from its first words.
+  A scratch's first line names the catalog its unqualified names are in.
+  Results are read a chunk at a time, so a large one pages as on BigQuery; Databricks keeps a result for a short while, and has no table of it to search every row of, so a search covers the loaded rows.
+  Completion lists Unity Catalog's schemas, tables and columns; Databricks SQL's functions aren't listed yet.
+- **Hover cards** on a table, in xf web's editors and the language server, read Unity Catalog and link to Catalog Explorer.
 - `u` opens a table in Catalog Explorer.
-- Query cost (`C`), column impact (`I`), defer to prod, scratch queries and the dependency inspector are hidden for now.
+- Query cost (`C`), column impact (`I`) and defer to prod are hidden for now.
 - The TUI shows browsing, lineage, compiles and runs, and says on its status line that dry runs, columns and cost are off.
 
 Where xf connects:

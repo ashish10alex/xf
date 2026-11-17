@@ -71,8 +71,11 @@ function DryChip() {
   if (!d.ok) {
     return html`<span class="error" title=${d.error}>dry run ✗ ${shortErr(d.error)}</span>`;
   }
+  if (d.noDryRun) {
+    return html`<span class="chip dry" title="Databricks has no dry run. A run starts the SQL warehouse when it is stopped, and it bills while it runs.">no dry run${d.statementType && d.statementType !== 'SELECT' ? ' · ' + d.statementType : ''}${d.writes ? html` <b class="warn">changes data</b>` : ''}</span>`;
+  }
   const tone = sc.dryTone(d);
-  const bits = [`dry run: ${d.accuracy === 'UNKNOWN' ? 'unknown size' : sc.fmtBytes(d.bytes)}${d.cost ? ' ≈ ' + d.cost : ''}`];
+  const bits = [`dry run:${d.accuracy === 'UNKNOWN' ? 'unknown size' : sc.fmtBytes(d.bytes)}${d.cost ? ' ≈ ' + d.cost : ''}`];
   if (d.statementType && d.statementType !== 'SELECT') bits.push(d.statementType);
   return html`<span class=${'chip dry ' + tone + (d.pending ? ' pending' : '')} title=${d.pending ? 'updating…' : 'what BigQuery would scan, from a dry run of the ' + (SC.cur && SC.cur.sql !== d.sql ? 'selection' : 'file') + (d.cost ? ', and its on-demand price ($6.25 per TiB)' : '')}>
     ${bits.join(' · ')}${tone === 'red' ? ' ⚠' : ''}${d.writes ? html` <b class="warn">changes data</b>` : ''}</span>`;
@@ -98,7 +101,7 @@ function RunLine({ ctx = SC, cancel = sc.cancelRun, csvName = '' }) {
   const bits = [];
   switch (run.phase) {
     case 'starting': case 'running': case 'loading':
-      bits.push(html`<span class="warn">${SPIN[Math.floor(Date.now() / 90) % SPIN.length]} ${run.phase === 'loading' ? 'reading rows' : 'running'} ${elapsed}</span>`);
+      bits.push(html`<span class="warn">${SPIN[Math.floor(Date.now() / 90) % SPIN.length]} ${run.phase === 'loading' ? 'reading rows' : st.starting ? 'SQL warehouse starting' : 'running'} ${elapsed}</span>`);
       if (run.phase !== 'loading') bits.push(html`<button class="link error" onClick=${() => cancel()}>cancel (ctrl+c)</button>`);
       break;
     case 'failed': case 'cancelled':
@@ -108,13 +111,13 @@ function RunLine({ ctx = SC, cancel = sc.cancelRun, csvName = '' }) {
     default:
       bits.push(html`<span class="ok">✓ ${elapsed}</span>`);
   }
-  if (run.restored) bits.push(html`<span class="dim" title=${'A recent result, read again from BigQuery, which keeps it about 24 hours. It ran ' + new Date(run.restored).toLocaleString() + (ctx === SC && SC.cur && run.sql !== SC.cur.sql ? ', from SQL that has changed since' : '')}>ran ${sc.ago(run.restored)}</span>`);
+  if (run.restored) bits.push(html`<span class="dim" title=${'A recent result, read again from ' + (sc.onDbx() ? 'Databricks, which keeps it a short while' : 'BigQuery, which keeps it about 24 hours') + '. It ran ' + new Date(run.restored).toLocaleString() + (ctx === SC && SC.cur && run.sql !== SC.cur.sql ? ', from SQL that has changed since' : '')}>ran ${sc.ago(run.restored)}</span>`);
   if (st.statementType && st.statementType !== 'SELECT') bits.push(html`<span>${st.statementType}</span>`);
   if (run.phase === 'done') {
     if (run.schema && run.schema.length) bits.push(html`<span>${run.total.toLocaleString()} row${run.total === 1 ? '' : 's'}${run.next ? html` <span class="dim">(${run.rows.length.toLocaleString()} loaded)</span>` : ''}</span>`);
     if (st.dmlRows >= 0) bits.push(html`<span class="ok">${st.dmlRows.toLocaleString()} row${st.dmlRows === 1 ? '' : 's'} modified</span>`);
   }
-  if (run.phase === 'done' && st) {
+  if (run.phase === 'done' && st && !sc.onDbx()) { // Databricks bills warehouse time, not bytes
     bits.push(st.cacheHit ? html`<span class="dim">cache hit · $0</span>`
       : html`<span title=${st.cost ? 'The bytes BigQuery billed, and their on-demand price ($6.25 per TiB)' : ''}>billed ${sc.fmtBytes(st.bytesBilled)}${st.cost ? ' ≈ ' + st.cost : ''}</span>`);
   }
@@ -127,8 +130,8 @@ function RunLine({ ctx = SC, cancel = sc.cancelRun, csvName = '' }) {
     </span>
     ${bits.map((b, i) => html`${i ? html`<span class="dim"> · </span>` : ''}${b}`)}
     <span class="spacer"></span>
-    ${csv && html`<a class="link" href=${csv} download title="Every row of this result, streamed from BigQuery">⇩ export CSV</a>`}
-    ${run.job && html`<a class="link" href=${sc.jobURL(run.job)} target="_blank" rel="noopener" title="Open the job in the BigQuery console">job ↗</a>`}
+    ${csv && html`<a class="link" href=${csv} download title=${'Every row of this result, streamed from ' + sc.site()}>⇩ export CSV</a>`}
+    ${run.job && sc.jobURL(run.job) && html`<a class="link" href=${sc.jobURL(run.job)} target="_blank" rel="noopener" title="Open the job in the BigQuery console">job ↗</a>`}
   </div>`;
 }
 
@@ -328,7 +331,7 @@ function FilterBar({ ctx = SC }) {
   } else {
     const vis = sc.visibleRows(run, ctx) || [];
     bits.push(html`<span>${active.length ? `${vis.length.toLocaleString()} of ${run.rows.length.toLocaleString()}${run.next ? ' loaded' : ''} rows match` : `the ${run.rows.length.toLocaleString()} loaded rows are sorted`}${active.length && sorting && run.next ? ', sorted' : ''}</span>`);
-    if (run.next) bits.push(html`<button class="link" title="Do it to every row in BigQuery, over the table it keeps this result in (enter in a filter)" onClick=${() => sc.searchAll(false, false, ctx)}>${what} all ${run.total.toLocaleString()} rows${run.searchBytes !== undefined && active.length ? ` (scans ${sc.fmtBytes(run.searchBytes)})` : ''}</button>`);
+    if (run.next && !sc.onDbx()) bits.push(html`<button class="link" title="Do it to every row in BigQuery, over the table it keeps this result in (enter in a filter)" onClick=${() => sc.searchAll(false, false, ctx)}>${what} all ${run.total.toLocaleString()} rows${run.searchBytes !== undefined && active.length ? ` (scans ${sc.fmtBytes(run.searchBytes)})` : ''}</button>`);
   }
   if (active.length) bits.push(html`<button class="link" onClick=${() => sc.clearFilters(ctx)}>✕ clear filters</button>`);
   if (sorting) bits.push(html`<button class="link" onClick=${() => sc.clearSort(ctx)}>✕ clear sort</button>`);
@@ -490,7 +493,7 @@ function RecentMenu() {
   const name = (id) => (SC.list.find((s) => s.id === id) || {}).from || 'scratch';
   return html`<div class="overlay-back win-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) sc.closeRecent(); }}>
     <div class="ctx-menu sc-recent" role="menu">
-      <div class="sc-recent-head dim">recent results · kept by BigQuery about 24 hours</div>
+      <div class="sc-recent-head dim">recent results · ${sc.onDbx() ? 'kept by Databricks a short while' : 'kept by BigQuery about 24 hours'}</div>
       ${SC.recent.map((r, i) => {
         const gone = sc.recentGone(r);
         return html`<div class=${'ctx-row sc-recent-row' + (i === SC.recentCursor ? ' cur' : '') + (gone ? ' off' : '')} role="menuitem"
@@ -569,6 +572,7 @@ export function ScratchPage() {
     </div>
     ${S.overlay === 'projects' && hooks.projectsOverlay && hooks.projectsOverlay()}
     ${S.overlay === 'palette' && hooks.paletteOverlay && hooks.paletteOverlay()}
+    ${S.overlay === 'dbxWarehouse' && hooks.dbxOverlay && hooks.dbxOverlay()}
     <div class=${'sc-body' + (SC.listOpen ? '' : ' no-list')} style=${SC.listOpen && SC.size.list ? `grid-template-columns:${SC.size.list}px minmax(0,1fr)` : ''}>
       ${SC.listOpen && html`<${List} />`}
       <main class="sc-main">
@@ -578,7 +582,10 @@ export function ScratchPage() {
             <button class="run-btn" onClick=${() => sc.runScratch()} disabled=${sc.isRunning() || !SC.cur}>▶ run <kbd>${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘↵' : 'ctrl+↵'}</kbd></button>
             <${DryChip} />
             <span class="spacer"></span>
-            ${SC.cur && html`<span class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
+            ${SC.cur && sc.onDbx() && html`<span class="sc-target" title="The catalog the query's unqualified names are in, kept in the scratch's first line; it runs on the project's SQL warehouse">
+              <input class="sc-target-in" value=${SC.cur.project || ''} placeholder="catalog" size=${fieldSize(SC.cur.project, 'catalog')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+            </span>`}
+            ${SC.cur && !sc.onDbx() && html`<span class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
               <input class="sc-target-in" value=${SC.cur.project || ''} placeholder="project" size=${fieldSize(SC.cur.project, 'project')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), SC.cur.location || '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
               <span class="dim">·</span>
               <input class="sc-target-in" value=${SC.cur.location || ''} placeholder="location" size=${fieldSize(SC.cur.location, 'location')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(SC.cur.project || '', e.currentTarget.value.trim())} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
