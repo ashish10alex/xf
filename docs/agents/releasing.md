@@ -14,6 +14,9 @@ A release is a `v*` tag on `main`. The tag runs `.github/workflows/release.yml`:
 2. **Tag it.**
    Ask the user for the version, then `git tag -a vX.Y.Z -m vX.Y.Z` on `main` and push the tag.
    Done when the release workflow is green, the GitHub Release has every archive and `checksums.txt`, the tap and the bucket have a commit for the version, and the winget pull request is open (unless winget is skipped, below).
+3. **Move the site to it.**
+   The CI snippets in `site/index.html` name a release, for the GitHub Action, the GitLab template and the download (`grep -n 'v0\.' site/index.html`).
+   Done when they name the new tag, shipped as `docs(site): …`.
 
 ## While a winget pull request is pending
 

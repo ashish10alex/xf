@@ -13,15 +13,19 @@
   <meta property="og:site_name" content="xf">
   <meta property="og:title" content="xf — BigQuery cost and breakage checks for Dataform and dbt">
   <meta property="og:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, in CI or from a coding agent.">
-  <meta property="og:image" content="https://xf.dataformtools.com/og.svg">
+  <meta property="og:image" content="https://xf.dataformtools.com/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="xf: cost and breakage, checked before the merge. xf cost, xf impact and xf check, in CI and agents.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="xf — BigQuery cost and breakage checks for Dataform and dbt">
   <meta name="twitter:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, in CI or from a coding agent.">
-  <meta name="twitter:image" content="https://xf.dataformtools.com/og.svg">
+  <meta name="twitter:image" content="https://xf.dataformtools.com/og.png">
 
   <link rel="canonical" href="https://xf.dataformtools.com/">
   <link rel="icon" type="image/svg+xml" href="icon.svg">
   <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="alternate" type="text/plain" href="/llms.txt" title="xf for coding agents (llms.txt)">
   <link rel="preload" href="fonts/martian-mono.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/newsreader-text.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/fragment-mono.woff2" as="font" type="font/woff2" crossorigin>
@@ -29,7 +33,9 @@
     // Before first paint: a saved theme wins over the system's, and motion waits for JS.
     (function () {
       var d = document.documentElement;
-      d.classList.add("js");
+      // ?static, and a browser driven by automation, show everything at once:
+      // a full-page screenshot never scrolls the reveals into view.
+      if (!/[?&]static\b/.test(location.search) && !navigator.webdriver) d.classList.add("js");
       try {
         var t = localStorage.getItem("xf-site-theme");
         if (t === "light" || t === "dark") d.setAttribute("data-theme", t);
@@ -38,6 +44,21 @@
   </script>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="demo.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "xf",
+    "url": "https://xf.dataformtools.com/",
+    "description": "Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops. For GitHub Actions, GitLab CI and coding agents.",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS, Linux, Windows",
+    "license": "https://github.com/ashish10alex/xf/blob/main/LICENSE",
+    "downloadUrl": "https://github.com/ashish10alex/xf/releases",
+    "sameAs": ["https://github.com/ashish10alex/xf"],
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -173,6 +194,9 @@
             <p>
               A reader your branch also edits is dry run against the new table, so <q>still reads it</q> is BigQuery’s answer, not a guess. <code>--fail-on critical</code> fails the job.
             </p>
+            <p>
+              A dbt project on <a href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md#databricks">Databricks</a> is checked on its SQL warehouse, with Unity Catalog’s lineage, and its cost is each changed model’s last run.
+            </p>
           </div>
         </div>
 
@@ -307,7 +331,7 @@ jobs:
           workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/github/providers/github
           service_account: xf-check@my-project.iam.gserviceaccount.com
 
-      - uses: ashish10alex/xf@v0.0.5
+      - uses: ashish10alex/xf@v0.0.8
         with:
           fail-on: critical  <span class="c"># a dropped column something still reads</span>
           fail-over: 1TB     <span class="c"># the changed actions scan more than 1 TiB</span></code></pre>
@@ -319,11 +343,11 @@ jobs:
                 <button type="button" class="copy" data-copy-active aria-label="Copy the GitLab CI include"><span class="copy-label">Copy</span></button>
               </div>
 <pre class="snip-code"><code>include:
-  - remote: https://raw.githubusercontent.com/ashish10alex/xf/v0.0.5/ci/gitlab/xf-check.yml
+  - remote: https://raw.githubusercontent.com/ashish10alex/xf/v0.0.8/ci/gitlab/xf-check.yml
 
 xf-check:
   variables:
-    XF_VERSION: v0.0.5
+    XF_VERSION: v0.0.8
     XF_FAIL_ON: critical
     XF_FAIL_OVER: 1TB
     <span class="c"># XF_DIR: analytics/dataform</span></code></pre>
@@ -336,7 +360,7 @@ xf-check:
               </div>
 <pre class="snip-code"><code>git fetch origin main                  <span class="c"># xf needs origin/main; it never fetches</span>
 npm i -g @dataform/cli
-curl -fsSL https://github.com/ashish10alex/xf/releases/download/v0.0.5/xf_linux_amd64.tar.gz | tar -xz xf
+curl -fsSL https://github.com/ashish10alex/xf/releases/download/v0.0.8/xf_linux_amd64.tar.gz | tar -xz xf
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json  <span class="c"># or workload identity</span>
 
 set +e
@@ -384,9 +408,11 @@ exit "$code"</code></pre>
           <div class="chapter-text" data-reveal>
             <p>
               With <code>--json</code>, <code>xf cost</code>, <code>xf impact</code> and <code>xf check</code> give an agent fields to act on: a <code>severity</code> on every table and column, and <code>null</code> where BigQuery gave no estimate, never <code>0</code>.
+              Each document has a <code>version</code>, which changes only when a field is removed or changes meaning: the <a href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md#impact-json">impact JSON</a> and the <a href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md#json">cost JSON</a> list every field.
             </p>
             <p>
               The <a href="https://github.com/ashish10alex/xf/blob/main/skills/xf-checks/SKILL.md">xf-checks</a> Agent Skill teaches Claude Code, Codex and other agents that read skills to run them on a branch, and to ask you about each critical change before fixing anything.
+              An agent can start at <a href="/llms.txt"><code>/llms.txt</code></a>: the commands, the skills and the docs, as Markdown.
             </p>
           </div>
         </div>
@@ -396,16 +422,16 @@ exit "$code"</code></pre>
             <li data-reveal>
               <span class="step-n">1</span>
               <div>
-                <h3>Install the skill</h3>
-                <p>From a checkout of xf, for Claude Code. Codex looks in <code>~/.agents/skills/</code>.</p>
-                <div class="one-cmd"><code id="skill-cmd">mkdir -p ~/.claude/skills &amp;&amp; cp -R skills/xf-checks ~/.claude/skills/</code><button type="button" class="copy" data-copy="skill-cmd" aria-label="Copy the skill install command"><span class="copy-label">Copy</span></button></div>
+                <h3>Install the skills</h3>
+                <p>xf-checks and xf-run, for Claude Code; Codex looks in <code>~/.agents/skills/</code>. Run it again when you update xf.</p>
+                <div class="one-cmd"><code id="skill-cmd">curl -fsSL --create-dirs "https://xf.dataformtools.com/skills/{xf-checks,xf-run}/SKILL.md" -o "$HOME/.claude/skills/#1/SKILL.md"</code><button type="button" class="copy" data-copy="skill-cmd" aria-label="Copy the skill install command"><span class="copy-label">Copy</span></button></div>
               </div>
             </li>
             <li data-reveal>
               <span class="step-n">2</span>
               <div>
                 <h3>Ask what the branch costs, or breaks</h3>
-                <p>The agent dry runs both checks and reads the JSON. Exit <code>0</code> is a report; <code>2</code> a check that couldn’t be made, with the reason on stderr.</p>
+                <p>The agent dry runs both checks and reads the JSON. Exit <code>0</code> is a report; <code>1</code> a gate that tripped, only with <code>--fail-on</code> or <code>--fail-over</code>; <code>2</code> a check that couldn’t be made, with the reason on stderr.</p>
               </div>
             </li>
             <li data-reveal>
@@ -521,7 +547,7 @@ exit "$code"</code></pre>
         <div class="get-head">
           <h2 id="install-title" class="title" data-reveal>Install <em>xf.</em></h2>
           <p class="chapter-text" data-reveal>
-            One executable for macOS, Linux and Windows. It needs <code>gcloud auth application-default login</code>, and the <a href="https://github.com/dataform-co/dataform">Dataform CLI</a> or <a href="https://www.getdbt.com/">dbt</a> with BigQuery. In CI, the GitHub Action and the GitLab template download it for you.
+            One executable for macOS, Linux and Windows. It needs the <a href="https://github.com/dataform-co/dataform">Dataform CLI</a> or <a href="https://www.getdbt.com/">dbt</a>, and <code>gcloud auth application-default login</code> for BigQuery, or a Databricks login. In CI, the GitHub Action and the GitLab template download it for you.
           </p>
         </div>
 
@@ -565,6 +591,7 @@ exit "$code"</code></pre>
         <a href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md">dbt</a>
         <a href="https://github.com/ashish10alex/xf/blob/main/docs/neovim.md">Neovim</a>
         <a href="https://github.com/ashish10alex/xf/releases">Releases</a>
+        <a href="/llms.txt">llms.txt</a>
       </nav>
     </div>
   </footer>

@@ -1473,7 +1473,8 @@ html:not(.js) .pin {
 }
 
 /* ───────── Motion ───────── */
-@media (prefers-reduced-motion: no-preference) {
+/* Screen only: a print shows every section, whether or not it was scrolled into view. */
+@media screen and (prefers-reduced-motion: no-preference) {
   .js .rise {
     opacity: 0;
     transform: translateY(14px);

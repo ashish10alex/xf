@@ -1,0 +1,68 @@
+# xf
+
+> xf dry runs what a Dataform or dbt branch changes, before it merges: what its queries will scan and cost in BigQuery (`xf cost`), and which downstream tables still read the columns and tables it drops or retypes (`xf impact`). `xf check` puts both in one report and gate on a pull request, in GitHub Actions, GitLab CI or any CI. With `--json`, each gives a coding agent fields to act on. MIT licensed; one executable for macOS, Linux and Windows.
+
+Dry runs are free in BigQuery and run nothing. A dbt project on Databricks is checked on its SQL warehouse, with Unity Catalog's lineage, and its cost is each changed model's last run from Query History, not an estimate.
+
+## Install
+
+- Homebrew: `brew install --cask ashish10alex/tap/xf`
+- macOS and Linux: `curl -fsSL https://xf.dataformtools.com/install.sh | sh`
+- Go 1.26+: `go install github.com/ashish10alex/xf/cmd/xf@latest`
+- Windows: `winget install AshishAlex.xf`, or Scoop ([Windows guide](https://xf.dataformtools.com/docs/windows.md))
+- Archives for every platform: [GitHub Releases](https://github.com/ashish10alex/xf/releases)
+
+xf needs the Dataform CLI or dbt, and `gcloud auth application-default login` for BigQuery, or a Databricks login. `xf update` updates it the way it was installed.
+
+## Commands for agents
+
+Run them in the project's root (or pass `--dir`), on the branch to check, after `git fetch origin main`: xf compares the branch, uncommitted files included, with its merge-base on `origin/<default branch>`, and never fetches. JSON goes to stdout, progress to stderr.
+
+- `xf cost --json`: what each changed action would scan and cost, and the change from the merge-base. `--fail-over 1TB` gates on bytes.
+- `xf impact --json`: the columns and tables the branch drops or retypes, each with a `severity` (`critical`, `warning`, `unknown`, `low`) and its readers. `--fail-on critical` gates.
+- `xf check --json`: both, as `impact` and `cost`, with the pull request's `verdict`. `--comment` posts the report on the pull request in CI.
+- `xf run --dry-run --json`: a free plan of a run: what it builds, reads from prod and scans. Run for real only when the user says yes.
+- `xf config --json`: the settings xf would use and where each came from.
+- `xf <command> --help`: every flag.
+
+Exit codes, the same for all three checks:
+
+- `0`: the report was made, and no gate tripped.
+- `1`: `--fail-on` or `--fail-over` tripped; only with those flags.
+- `2`: the check couldn't be made; the reason is on stderr.
+
+The JSON of `xf cost`, `xf impact` and `xf check` has `version` (now 1): fields may be added, and it changes only when one is removed or changes meaning. A figure BigQuery couldn't give is `null`, never `0`.
+
+## Agent skills
+
+Install both for Claude Code (Codex looks in `~/.agents/skills/`), and again after updating xf, so they match its flags:
+
+```bash
+curl -fsSL --create-dirs "https://xf.dataformtools.com/skills/{xf-checks,xf-run}/SKILL.md" -o "$HOME/.claude/skills/#1/SKILL.md"
+```
+
+- [xf-checks](https://xf.dataformtools.com/skills/xf-checks/SKILL.md): run `xf cost` and `xf impact` on a branch, read their JSON, and ask the user about each critical change before fixing anything.
+- [xf-run](https://xf.dataformtools.com/skills/xf-run/SKILL.md): start every run as `xf run --dry-run --json`, and run for real only once the user approves.
+
+## Docs
+
+- [Checking a branch](https://xf.dataformtools.com/docs/checks.md): `xf cost`, `xf impact` and `xf check`, their flags and exit codes, the GitHub Action and GitLab template, `xf check init`, and the agent skill. Its "Impact JSON" and "JSON" (under "Query cost in CI/CD") sections list every field of the impact and cost JSON.
+- [dbt projects](https://xf.dataformtools.com/docs/dbt.md): what works in a dbt project and how it differs, Databricks included.
+- [Running and branches](https://xf.dataformtools.com/docs/running.md): Run Changed, tag runs, deferring to prod, and `xf run --defer`.
+- [Settings and API runs](https://xf.dataformtools.com/docs/settings.md): the config files, Dataform API runs, and which Google account xf uses.
+- [xf web](https://xf.dataformtools.com/docs/xf-web.md): the browser UI.
+- [Troubleshooting](https://xf.dataformtools.com/docs/troubleshooting.md)
+
+## CI
+
+- [GitHub Action](https://raw.githubusercontent.com/ashish10alex/xf/main/action.yml): `uses: ashish10alex/xf@<tag>`, with `fail-on` and `fail-over`; it downloads the xf release of its tag.
+- [GitLab CI template](https://raw.githubusercontent.com/ashish10alex/xf/main/ci/gitlab/xf-check.yml): include it from a tag, and set `XF_FORGE_TOKEN` and `GOOGLE_APPLICATION_CREDENTIALS`.
+- `xf check init github` (or `gitlab`) writes the job and checks the setup.
+
+## Optional
+
+- [README](https://raw.githubusercontent.com/ashish10alex/xf/main/README.md)
+- [The TUI](https://xf.dataformtools.com/docs/tui.md)
+- [Neovim](https://xf.dataformtools.com/docs/neovim.md)
+- [Windows](https://xf.dataformtools.com/docs/windows.md)
+- [Source on GitHub](https://github.com/ashish10alex/xf)
