@@ -207,6 +207,9 @@ func LaterLine(r *Report, o Options) string {
 
 // TotalLine is "Total scanned: 4.20 TiB | Estimated cost: $26.26".
 func TotalLine(r *Report, o Options) string {
+	if r.PastRuns != nil {
+		return PastTotalLine(r)
+	}
 	total, bound := r.Total()
 	return fmt.Sprintf("Total scanned: %s%s | Estimated cost: %s%s", bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)))
 }
@@ -216,6 +219,9 @@ func TotalLine(r *Report, o Options) string {
 func GateLine(r *Report, o Options) string {
 	if o.Threshold <= 0 {
 		return ""
+	}
+	if r.PastRuns != nil {
+		return "Gate not applied: there is no estimate to compare with " + warehouse.FormatBytes(o.Threshold) + ", only past runs"
 	}
 	total, _ := r.Total()
 	if r.Exceeds(o.Threshold) {
@@ -228,6 +234,9 @@ func GateLine(r *Report, o Options) string {
 // as Markdown: they may be dev tables, and the setting that reads prod's.
 // It is "" when the setting is set.
 func UnsetHint(r *Report) string {
+	if r.PastRuns != nil {
+		return pastUnsetHint(r)
+	}
 	switch r.Unset {
 	case "":
 		return ""
@@ -327,6 +336,9 @@ func waitsByAction(r *Report) map[string][]string {
 // Text is the report for a terminal: a line per action, most bytes first,
 // the total, and how it compares with o.Threshold.
 func Text(r *Report, o Options) string {
+	if r.PastRuns != nil {
+		return pastText(r, o)
+	}
 	var b strings.Builder
 	what := o.paint(plural(len(r.Actions), "changed action", "changed actions"), ansiBold)
 	if c := r.Comparison; c != nil {
@@ -449,6 +461,9 @@ const markdownFootnote = "Bytes are BigQuery dry-run estimates of each changed a
 
 // Markdown is the report for a pull request.
 func Markdown(r *Report, o Options) string {
+	if r.PastRuns != nil {
+		return pastMarkdown(r, o)
+	}
 	lines := []string{"### Query Cost of Branch Changes", ""}
 	if c := r.Comparison; c != nil {
 		lines = append(lines, fmt.Sprintf("**Branch:** `%s` vs `%s` @ `%s` | %s", c.HeadRef, c.BaseRef, c.MergeBase[:min(len(c.MergeBase), 7)], c.HeadLabel), "")
@@ -727,6 +742,9 @@ type jsonReport struct {
 	Gate            *jsonGate `json:"gate,omitempty"`
 	BaseError       string    `json:"baseError,omitempty"`
 	CheckedAt       time.Time `json:"checkedAt"`
+	// PastRuns is a Databricks report's past runs (Report.PastRuns), with
+	// no actions or totals.
+	PastRuns *PastRuns `json:"pastRuns,omitempty"`
 }
 
 // boundName is "lower" or "upper" for Total's bound, else "".
@@ -752,7 +770,7 @@ func JSON(r *Report, o Options) ([]byte, error) {
 	total, bound := r.Total()
 	out := jsonReport{Version: JSONVersion, Comparison: r.Comparison, Compiled: r.Compiled, DryRunIn: r.DryRunIn, Unset: r.Unset, Actions: []jsonAction{},
 		TotalBytes: total, TotalBound: boundName(bound), TotalUSD: o.USD(total), USDPerTiB: o.price(), Unestimated: r.Unestimated(),
-		BaseError: r.BaseError, CheckedAt: r.CheckedAt}
+		BaseError: r.BaseError, CheckedAt: r.CheckedAt, PastRuns: r.PastRuns}
 	if later, bound, ok := r.Later(); ok {
 		usd := o.USD(later)
 		out.LaterBytes, out.LaterBound, out.LaterUSD = &later, boundName(bound), &usd

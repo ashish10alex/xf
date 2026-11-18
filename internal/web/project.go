@@ -116,8 +116,6 @@ type projectState struct {
 	// the lock.
 	dbx   *Databricks
 	onDbx atomic.Bool
-	// dbxCoster says the Databricks client prices queries (a Coster).
-	dbxCoster bool
 	// startCheck is the Checks page's tab the next page to start opens on.
 	startCheck string
 	// sourceAutosaveMs is how long the source pane waits after an edit
@@ -547,9 +545,9 @@ func (p *projectState) capsLocked() capabilities {
 	}
 	if p.databricksLocked() {
 		// Scratch queries, the inspector and column impact (I) run on the
-		// SQL warehouse when asked; nothing dry runs (ADR 0042).
+		// SQL warehouse when asked; nothing dry runs, and cost (C) is the
+		// changed models' past runs (ADR 0042).
 		c.Warehouse, c.Check, c.DryRun = project.Databricks, true, false
-		c.Cost = c.Cost && p.dbxCoster
 		c.Defer = false
 		c.Scratch = p.hasWarehouseLocked()
 		c.Inspector = c.Scratch && !p.standalone

@@ -39,6 +39,19 @@ func TestLiveUnityCatalog(t *testing.T) {
 	}
 }
 
+// Query History answers with no SQL warehouse; what it has depends on the
+// workspace, so the test logs what a day of it holds.
+func TestLiveQueryHistory(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	h, err := c.DbtRuns(ctx, time.Now().AddDate(0, 0, -1), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%d queries, %d of them dbt's, by target %v; %d nodes built", h.Queries, h.Dbt, h.Targets, len(h.Runs))
+}
+
 // The lineage API answers for a table, with no SQL warehouse; samples has
 // no readers to expect, so the test logs what it finds.
 func TestLiveLineage(t *testing.T) {

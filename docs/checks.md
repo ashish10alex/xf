@@ -88,6 +88,7 @@ With `a` on, it checks what you pushed.
 `C` shows what the same changed actions would scan in BigQuery, and what that costs on demand; `y` copies the report as the Markdown a pull request gets.
 Every changed action with a query is dry run: tables, views, incremental tables, assertions and operations (in dbt: models, snapshots and tests).
 Dry runs are free and run nothing.
+A dbt project on Databricks, which bills warehouse time rather than bytes, gets each changed model's last run from Query History instead ([Databricks](dbt.md#databricks)).
 The report lists them with the most bytes first:
 
 - **Scans and cost.**

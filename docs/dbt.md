@@ -79,7 +79,12 @@ Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the 
   The report names the SQL warehouse, and says when the check started it.
   In xf web, an impact report the branch has moved on from is marked stale rather than checked again on its own: `c` checks again.
 - **`xf check`'s preflight** probes the workspace and the SQL warehouse, which asking doesn't start, in place of Google and BigQuery.
-- **Query cost** (`C`, `xf cost`, and `xf check`'s cost) says Databricks has none to estimate: it bills warehouse time, not bytes scanned.
+  Without credentials it stops both checks; with no SQL warehouse chosen it warns, and query cost still runs.
+- **Query cost** (`C`, `xf cost`, and `xf check`'s cost) is each changed model's last run, not an estimate: Databricks bills warehouse time, not bytes scanned, so there is nothing to estimate before a run.
+  xf reads Query History, which wakes no warehouse, back 30 days, and keeps each model's latest build whose dbt query comment names it and the prod target (`dbtProdTarget`, else the target xf compiles with, which the report warns may be dev).
+  It shows when the run started, how long it took, what it read and the rows it wrote, and the SQL warehouse it ran on, with no dollar figure; a model with no run says so.
+  The run is of the model as it was then, not as the branch has it; `--fail-over` doesn't apply.
+  dbt's query comment is on by default: a project that turns `query-comment` off gets no runs, and the report says why.
 - Defer to prod is hidden.
 - The TUI shows browsing, lineage, compiles and runs, and says on its status line that dry runs, columns and cost are off.
 

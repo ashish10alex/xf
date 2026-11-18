@@ -914,11 +914,6 @@ func (p *projectState) setScratch(o *Project) {
 	p.warehouse, p.scratchWarnGB, p.scratchConfirmGB = o.Warehouse, o.ScratchWarnGB, o.ScratchConfirmGB
 	p.dbx = o.Databricks
 	p.onDbx.Store(p.dbx != nil && p.dbx.TargetType == project.Databricks)
-	if p.dbx != nil && p.dbx.Client != nil {
-		if c, err := p.dbx.Client(context.Background()); err == nil {
-			_, p.dbxCoster = c.(warehouse.Coster)
-		}
-	}
 	p.scratchDirAbs, p.scratchDefProject, p.scratchDefLocation = o.ScratchDir, o.ScratchProject, o.ScratchLocation
 	p.standalone, p.startScratch, p.startCheck = o.Standalone, o.StartScratch, o.StartCheck
 	p.sourceAutosaveMs = o.SourceAutosaveMs

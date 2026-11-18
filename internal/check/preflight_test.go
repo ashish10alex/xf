@@ -27,18 +27,33 @@ func TestPreflightDatabricks(t *testing.T) {
 		t.Error("asked Google for a Databricks project")
 		return gcpauth.ADC{}
 	}
-	p.Databricks = func(context.Context) (string, error) { return "SQL warehouse Starter on https://dbc-1 (running)", nil }
+	line := Line{Name: "Databricks", Status: Pass, Detail: "SQL warehouse Starter on https://dbc-1 (running)"}
+	p.Databricks = func(context.Context) Line { return line }
 	pf := Run(context.Background(), p)
 	if pf.Stops() || !strings.Contains(pf.Text(), "Databricks") || strings.Contains(pf.Text(), "Google") || strings.Contains(pf.Text(), "BigQuery") {
 		t.Errorf("checklist:\n%s", pf.Text())
 	}
-	p.Databricks, p.DatabricksFix = func(context.Context) (string, error) { return "", errors.New("no SQL warehouse chosen") }, "set databricksWarehouse"
-	if pf := Run(context.Background(), p); !pf.Stops() || !strings.Contains(pf.Text(), "set databricksWarehouse") {
+	// No SQL warehouse warns: query cost reads Query History and needs none.
+	line = Line{Name: "Databricks", Status: Warn, Detail: "no SQL warehouse is chosen", Fix: "set databricksWarehouse"}
+	if pf := Run(context.Background(), p); pf.Stops() || !strings.Contains(pf.Text(), "set databricksWarehouse") {
 		t.Errorf("no warehouse:\n%s", pf.Text())
 	}
-	r := &Report{Project: ".", Impact: &impact.Report{DryRunIn: "workspace", Warehouse: &impact.WarehouseUse{Name: "Databricks SQL warehouse `Starter`", Started: true}}}
-	if md := Markdown(r, Options{}); !strings.Contains(md, "Column impact checked on the Databricks SQL warehouse `Starter`, which this check started") {
-		t.Errorf("markdown:\n%s", md)
+	line = Line{Name: "Databricks", Status: Fail, Detail: "no valid Databricks credentials"}
+	if pf := Run(context.Background(), p); !pf.Stops() {
+		t.Errorf("no credentials:\n%s", pf.Text())
+	}
+	r := &Report{Project: ".", Impact: &impact.Report{DryRunIn: "workspace", Warehouse: &impact.WarehouseUse{Name: "Databricks SQL warehouse `Starter`", Started: true}},
+		Cost: &cost.Report{Actions: []cost.Action{}, PastRuns: &cost.PastRuns{Source: "Databricks Query History", Days: 30,
+			Runs: []cost.PastRun{{Name: "main.shop.orders", Ran: true, ReadBytes: 4 << 30}, {Name: "main.shop.daily"}}}}}
+	md := Markdown(r, Options{Cost: cost.Options{Threshold: 1}})
+	for _, want := range []string{"Column impact checked on the Databricks SQL warehouse `Starter`, which this check started",
+		"ℹ️ their last runs read 4.00 GiB (1 of 2 models)", "Last runs from Databricks Query History"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown lacks %q:\n%s", want, md)
+		}
+	}
+	if r.CostTripped(Options{Cost: cost.Options{Threshold: 1}}) {
+		t.Error("past runs tripped --fail-over")
 	}
 }
 

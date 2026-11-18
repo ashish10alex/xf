@@ -188,7 +188,7 @@ func TestDatabricksChecksOnlyWhenAsked(t *testing.T) {
 		t.Errorf("%d dry runs and %d checks ran unasked", n, len(dt.dbx.checked))
 	}
 	c := dt.caps()
-	if !c.Check || c.Warehouse != project.Databricks || c.Cost || !c.Impact || c.Defer || !c.Scratch || !c.Inspector || c.DryRun {
+	if !c.Check || c.Warehouse != project.Databricks || !c.Cost || !c.Impact || c.Defer || !c.Scratch || !c.Inspector || c.DryRun {
 		t.Errorf("caps = %+v", c)
 	}
 }

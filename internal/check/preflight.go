@@ -144,11 +144,10 @@ type Probes struct {
 	Lineage func(ctx context.Context, project, location string) error
 	// Databricks, set for a dbt project that builds in Databricks (ADR
 	// 0042), probes its workspace and SQL warehouse in place of Google and
-	// BigQuery, starting nothing: it says which warehouse the checks will
-	// use and how it stands, or why there is none. DatabricksFix says how
-	// to fix a failure.
-	Databricks    func(ctx context.Context) (string, error)
-	DatabricksFix string
+	// BigQuery, starting nothing: its line says which warehouse the checks
+	// will use and how it stands, warns when there is none (query cost
+	// needs none), and fails without credentials.
+	Databricks func(ctx context.Context) Line
 	// NoAccess leaves the access probes out (xf check init, which runs as
 	// you); AsYou says the probes run outside CI, as you.
 	NoAccess, AsYou bool
@@ -174,11 +173,7 @@ func Run(ctx context.Context, p Probes) *Preflight {
 
 	if p.Databricks != nil {
 		if !p.NoAccess {
-			if detail, err := p.Databricks(ctx); err != nil {
-				add(Line{Name: "Databricks", Status: Fail, Detail: err.Error(), Fix: p.DatabricksFix})
-			} else {
-				add(Line{Name: "Databricks", Status: Pass, Detail: detail})
-			}
+			add(p.Databricks(ctx))
 		}
 		if p.Comment {
 			tokenLines(ctx, p, add)

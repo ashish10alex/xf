@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,7 @@ import (
 	"github.com/ashish10alex/xf/internal/gcpauth"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // preflightTimeout bounds the probes: they take seconds when all is well.
@@ -77,28 +79,44 @@ func preflightProbes(name, root, base string, settings config.Loaded, comment bo
 	if p.Dbt {
 		pw := newProjectWarehouse(root, settings.DbtTarget, func() (config.Loaded, error) { return settings, nil })
 		if pw.kind() == project.Databricks {
-			p.Databricks, p.DatabricksFix = pw.preflight, databricks.AuthHint+"; and a SQL warehouse: databricksWarehouse, or the dbt target's http_path"
+			p.Databricks = pw.preflight
 		}
 	}
 	return p
 }
 
 // preflight is xf check's probe of a Databricks project (ADR 0042): its
-// SQL warehouse, as it stands, which asking doesn't start.
-func (w *projectWarehouse) preflight(ctx context.Context) (string, error) {
+// SQL warehouse, as it stands, which asking doesn't start. Without one it
+// warns, as query cost reads Query History and needs none; without
+// credentials it fails, as both checks need them.
+func (w *projectWarehouse) preflight(ctx context.Context) check.Line {
+	line := check.Line{Name: "Databricks"}
+	fail := func(err error) check.Line {
+		line.Status, line.Detail = check.Fail, err.Error()
+		if errors.Is(err, warehouse.ErrAuth) {
+			line.Fix = databricks.AuthHint
+		}
+		return line
+	}
 	c := w.databricks()
 	if c.Warehouse() == "" {
-		return "", errNoImpactWarehouse
+		if _, err := c.Warehouses(ctx); err != nil {
+			return fail(err)
+		}
+		line.Status, line.Detail = check.Warn, "signed in to "+c.Host()+", but no SQL warehouse is chosen: column impact can't plan the changed models; query cost needs none"
+		line.Fix = "set databricksWarehouse, or the dbt target's http_path"
+		return line
 	}
 	sw, err := c.SQLWarehouse(ctx)
 	if err != nil {
-		return "", err
+		return fail(err)
 	}
 	state := strings.ToLower(sw.State)
 	if sw.State != "RUNNING" {
 		state += ": column impact starts it, and it bills while it runs"
 	}
-	return fmt.Sprintf("SQL warehouse %s on %s (%s)", cmp.Or(sw.Name, sw.ID), c.Host(), state), nil
+	line.Status, line.Detail = check.Pass, fmt.Sprintf("SQL warehouse %s on %s (%s)", cmp.Or(sw.Name, sw.ID), c.Host(), state)
+	return line
 }
 
 // runPreflight runs the probes, bounded by preflightTimeout.

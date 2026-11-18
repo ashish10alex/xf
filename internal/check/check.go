@@ -229,6 +229,13 @@ func costVerdict(r *Report, o Options) string {
 	if c == nil {
 		return "❔ query cost couldn't be checked"
 	}
+	if p := c.PastRuns; p != nil { // Databricks: no estimate, the last runs (ADR 0042)
+		bytes, ran := p.ReadTotal()
+		if ran == 0 {
+			return "ℹ️ no past run of the changed models to show"
+		}
+		return fmt.Sprintf("ℹ️ their last runs read %s (%d of %d models)", warehouse.FormatBytes(bytes), ran, len(p.Runs))
+	}
 	if len(c.Actions) == 0 {
 		return "nothing to dry run"
 	}

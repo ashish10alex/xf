@@ -184,6 +184,10 @@ type Report struct {
 	Signature string `json:"signature"`
 	// Stale is set when the branch has changed since.
 	Stale bool `json:"stale,omitempty"`
+	// PastRuns, set on a warehouse that bills its time (Databricks, ADR
+	// 0042), is the changed models' latest runs, in place of Actions'
+	// estimates.
+	PastRuns *PastRuns `json:"pastRuns,omitempty"`
 }
 
 // Progress is how far a check got.

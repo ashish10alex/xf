@@ -507,6 +507,8 @@ type CostView struct {
 	NotEstimated *CostSkipped `json:"notEstimated,omitempty"`
 	Footnote     string       `json:"footnote"`
 	Markdown     string       `json:"markdown"`
+	// Past is a Databricks report's past runs, in place of Rows.
+	Past *CostPast `json:"past,omitempty"`
 }
 
 // CostRow is an estimated action of a CostView.
@@ -539,6 +541,43 @@ func costFigure(e *cost.Estimate) CostFigure {
 		return CostFigure{}
 	}
 	return CostFigure{Scans: cost.Size(*e), Cost: cost.FormatUSD(cost.Options{}.USD(e.Bytes))}
+}
+
+// CostPast is a report of past runs (Databricks, ADR 0042) as the cost tab
+// shows it, in place of the estimates' rows.
+type CostPast struct {
+	// Line says what the runs are; Why why none was found.
+	Line string        `json:"line"`
+	Why  string        `json:"why,omitempty"`
+	Rows []CostPastRow `json:"rows"`
+}
+
+// CostPastRow is a changed model and its last run; Note says why it has
+// none.
+type CostPastRow struct {
+	Action    string `json:"action"`
+	Type      string `json:"type"`
+	When      string `json:"when,omitempty"`
+	Took      string `json:"took,omitempty"`
+	Read      string `json:"read,omitempty"`
+	Rows      string `json:"rows,omitempty"`
+	Warehouse string `json:"warehouse,omitempty"`
+	Note      string `json:"note,omitempty"`
+}
+
+func pastView(r *cost.Report) *CostPast {
+	p := r.PastRuns
+	v := &CostPast{Line: cost.PastLine(r, func(s string) string { return s }) + ".", Why: strings.ReplaceAll(p.Why, "`", ""), Rows: []CostPastRow{}}
+	for _, run := range p.Runs {
+		row := CostPastRow{Action: impact.ShortTable(run.Name), Type: run.Type}
+		if run.Ran {
+			row.When, row.Took, row.Read, row.Rows, row.Warehouse = run.When(), run.Took(), warehouse.FormatBytes(run.ReadBytes), cost.RowsText(run.Rows), run.Warehouse
+		} else {
+			row.Note = run.NoRunText(p)
+		}
+		v.Rows = append(v.Rows, row)
+	}
+	return v
 }
 
 // CostReport lays r out as the C overlay and the cost tab do.
@@ -587,6 +626,13 @@ func CostReport(r *cost.Report) CostView {
 	}
 	v.Later = cost.LaterLine(r, cost.Options{})
 	v.NotEstimated = costSkipped(r)
+	if p := r.PastRuns; p != nil {
+		v.Past, v.Footnote = pastView(r), PastFootnote
+		if len(p.Runs) == 0 {
+			v.Empty = "Nothing to show: the branch changes no model."
+		}
+		return v
+	}
 	if len(r.Actions) == 0 {
 		v.Empty = "Nothing to estimate: the branch changes no action with a query to dry run."
 	}

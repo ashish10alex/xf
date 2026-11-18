@@ -54,7 +54,11 @@ on the branch and as it was at the merge-base with the default branch. An
 incremental table counts its incremental run, with its full rebuild beside
 it. A read of a partitioned table that never names its partition column is
 marked. An action BigQuery gives no estimate for is listed and left out of
-the total. Dry runs are free and run nothing. It always checks afresh, and
+the total. Dry runs are free and run nothing. A dbt project on Databricks,
+which bills warehouse time rather than bytes, has nothing to estimate: it
+gets each changed model's latest run with the prod target instead, from
+Query History, found by dbt's query comment, and --fail-over doesn't apply.
+It always checks afresh, and
 shares the work with xf through xf serve. Progress goes to stderr. Exits 0, 1
 with --fail-over when the total is over the limit, or 2 when the check could
 not be made.`)
@@ -338,7 +342,8 @@ func inDev(g *project.Graph, lookups *deferral.Lookups, logger *log.Logger) func
 // the merge-base is a snapshot compiled for the purpose, as Changed Actions
 // only parse theirs. With dbtProdTarget set to another target, both are
 // compiled with it instead, so the dry runs read prod's tables. A project
-// that builds in Databricks has no cost to estimate (ADR 0042).
+// that builds in Databricks has nothing to estimate, so its report is each
+// changed model's last run instead (ADR 0042, databricksCost).
 func dbtCost(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engine.CostFunc {
 	bq := pw.bq
 	return func(ctx context.Context, req engine.CostRequest, res *changes.Result, g *project.Graph, progress func(cost.Progress)) (*cost.Report, error) {
@@ -346,7 +351,7 @@ func dbtCost(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engin
 			return nil, changes.ErrWorktreeOnly
 		}
 		if g.WarehouseOr(pw.dbtTarget().Type) == project.Databricks {
-			return nil, errNoDatabricksCost
+			return pw.databricksCost(ctx, res, g, req.DbtProdTarget, progress)
 		}
 		target := req.DbtProdTarget
 		deps := cost.Deps{DryRun: dryRun, Partition: partitionLookup(bq)}

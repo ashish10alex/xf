@@ -6,14 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
 	"github.com/ashish10alex/xf/internal/bigquery"
+	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/config"
+	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/databricks"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/frontend"
@@ -252,9 +256,90 @@ func (w *projectWarehouse) webDatabricks() *web.Databricks {
 // host is the Databricks workspace's URL, for links.
 func (w *projectWarehouse) host() string { return w.databricks().Host() }
 
-// errNoDatabricksCost is what query cost answers on Databricks, which bills
-// warehouse time, not bytes scanned (ADR 0042).
-var errNoDatabricksCost = errors.New("Databricks bills SQL warehouse time, not bytes scanned, so there is no cost to estimate before a run; xf doesn't show a model's past runs yet")
+// databricksCost is query cost on Databricks (ADR 0042), which bills SQL
+// warehouse time, not bytes scanned, so nothing is estimated before a run:
+// each changed model's latest run with target (the prod target, else the
+// one xf compiles with), from Query History, which wakes no warehouse. dbt
+// names the node and target of each query it runs in a comment.
+func (w *projectWarehouse) databricksCost(ctx context.Context, res *changes.Result, g *project.Graph, target string, progress func(cost.Progress)) (*cost.Report, error) {
+	target = cmp.Or(target, w.dbtTarget().Name)
+	report := &cost.Report{Comparison: impact.ComparisonOf(res), Actions: []cost.Action{},
+		PastRuns: &cost.PastRuns{Source: "Databricks Query History", Target: target, Days: databricks.HistoryDays, Runs: []cost.PastRun{}}}
+	var models []*project.Action
+	var changed []changes.Changed
+	for _, c := range res.Changed {
+		if a := g.Actions[c.ID]; a != nil && a.DbtName != nil && builds(a) {
+			models, changed = append(models, a), append(changed, c)
+		}
+	}
+	if len(models) > 0 {
+		progress(cost.Progress{Phase: "Reading Databricks Query History"})
+		h, err := w.databricks().DbtRuns(ctx, time.Now().AddDate(0, 0, -databricks.HistoryDays), target)
+		if err != nil {
+			return nil, err
+		}
+		report.PastRuns.Truncated = h.Truncated
+		byNode := map[string]databricks.Run{}
+		for id, r := range h.Runs {
+			byNode[nodeKey(id)] = r
+		}
+		for i, a := range models {
+			c := changed[i]
+			pr := cost.PastRun{Name: string(c.ID), FileName: c.FileName, Type: c.Type, New: slices.Contains(c.Reasons, changes.ReasonNew)}
+			n := a.DbtName
+			key := n.Package + "." + n.Name
+			if n.Version != "" {
+				key += ".v" + n.Version
+			}
+			if r, ok := byNode[key]; ok {
+				pr.Ran, pr.Started, pr.Duration, pr.ReadBytes, pr.ReadRows, pr.Rows, pr.Warehouse, pr.QueryID =
+					true, r.Started, r.Duration, r.ReadBytes, r.ReadRows, r.ProducedRows, r.Warehouse, r.QueryID
+			}
+			report.PastRuns.Runs = append(report.PastRuns.Runs, pr)
+		}
+		cost.SortPastRuns(report.PastRuns.Runs)
+		if len(h.Runs) == 0 {
+			report.PastRuns.Why = historyWhy(h, target)
+		}
+	}
+	report.CheckedAt = time.Now()
+	return report, nil
+}
+
+// builds says a builds a table or view whose runs Query History has.
+func builds(a *project.Action) bool {
+	switch a.Kind {
+	case project.KindTable, project.KindView, project.KindIncremental, project.KindMaterializedView, project.KindSnapshot:
+		return true
+	}
+	return false
+}
+
+// nodeKey is a dbt node ID without its resource type: model.shop.orders is
+// shop.orders, and a version's model.shop.orders.v2 shop.orders.v2.
+func nodeKey(id string) string {
+	_, rest, _ := strings.Cut(id, ".")
+	return rest
+}
+
+// historyWhy says why Query History has no run of any model, when it
+// isn't only that none ran.
+func historyWhy(h *databricks.History, target string) string {
+	switch {
+	case h.Queries == 0:
+		return fmt.Sprintf("Query History has no query of the last %d days that you can see.", databricks.HistoryDays)
+	case h.Dbt == 0:
+		return fmt.Sprintf("No query of the last %d days carries dbt's query comment, which names a query's model: is `query-comment` turned off in dbt_project.yml?", databricks.HistoryDays)
+	case h.Targets[target] == 0:
+		var seen []string
+		for t := range h.Targets {
+			seen = append(seen, "`"+cmp.Or(t, "(none)")+"`")
+		}
+		slices.Sort(seen)
+		return fmt.Sprintf("dbt's queries of the last %d days are of target %s, not `%s`.", databricks.HistoryDays, strings.Join(seen, ", "), target)
+	}
+	return ""
+}
 
 // errNoImpactWarehouse is column impact on Databricks without a SQL
 // warehouse to plan the changed models on.
