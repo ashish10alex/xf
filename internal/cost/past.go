@@ -46,10 +46,10 @@ type PastRun struct {
 	Ran       bool          `json:"ran"`
 	Started   time.Time     `json:"started,omitzero"`
 	Duration  time.Duration `json:"durationNs,omitempty"`
-	ReadBytes int64         `json:"readBytes,omitempty"`
-	ReadRows  int64         `json:"readRows,omitempty"`
-	// Rows is what the run wrote.
-	Rows      int64  `json:"rows,omitempty"`
+	// ReadBytes and ReadRows are what the run read. Query History counts
+	// no rows a CREATE OR REPLACE TABLE writes.
+	ReadBytes int64  `json:"readBytes,omitempty"`
+	ReadRows  int64  `json:"readRows,omitempty"`
 	Warehouse string `json:"warehouse,omitempty"`
 	QueryID   string `json:"queryId,omitempty"`
 }
@@ -180,8 +180,8 @@ func pastText(r *Report, o Options) string {
 			fmt.Fprintf(&b, "  %s  %s\n", name, o.paint(run.NoRunText(p), ansiDim))
 			continue
 		}
-		fmt.Fprintf(&b, "  %s  ran %s · %s · read %s · %s rows · on %s\n", name, run.When(), run.Took(),
-			warehouse.FormatBytes(run.ReadBytes), RowsText(run.Rows), run.Warehouse)
+		fmt.Fprintf(&b, "  %s  ran %s · %s · read %s, %s rows · on %s\n", name, run.When(), run.Took(),
+			warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.Warehouse)
 	}
 	if len(p.Runs) == 0 {
 		b.WriteString(o.paint("Nothing to show: the branch changes no model.", ansiDim) + "\n")
@@ -212,14 +212,14 @@ func pastMarkdown(r *Report, o Options) string {
 		return strings.Join(lines, "\n") + "\n"
 	}
 	lines = append(lines, "**"+PastTotalLine(r)+"**", "",
-		"| Model | Type | Last run | Took | Read | Rows written | Warehouse |", "| --- | --- | --- | --: | --: | --: | --- |")
+		"| Model | Type | Last run | Took | Read | Rows read | Warehouse |", "| --- | --- | --- | --: | --: | --: | --- |")
 	for _, run := range p.Runs {
 		if !run.Ran {
 			lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | | |", run.Name, run.Type, run.NoRunText(p)))
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s | %s |", run.Name, run.Type, run.When(), run.Took(),
-			warehouse.FormatBytes(run.ReadBytes), RowsText(run.Rows), run.Warehouse))
+			warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.Warehouse))
 	}
 	if line := GateLine(r, o); line != "" {
 		lines = append(lines, "", line)

@@ -40,12 +40,12 @@ func TestLiveUnityCatalog(t *testing.T) {
 }
 
 // Query History answers with no SQL warehouse; what it has depends on the
-// workspace, so the test logs what a day of it holds.
+// workspace, so the test logs what the days xf reads hold.
 func TestLiveQueryHistory(t *testing.T) {
 	c := liveClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	h, err := c.DbtRuns(ctx, time.Now().AddDate(0, 0, -1), "")
+	h, err := c.DbtRuns(ctx, time.Now().AddDate(0, 0, -HistoryDays), "")
 	if err != nil {
 		t.Fatal(err)
 	}

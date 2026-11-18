@@ -162,6 +162,29 @@ func TestCheckExplainsAFailure(t *testing.T) {
 	if _, err := c.Check(context.Background(), "", "", "select form x"); err == nil || err.Error() != "[PARSE_SYNTAX_ERROR] near 'form' (HTTP 400)" {
 		t.Errorf("err = %v", err)
 	}
+
+	// As a workspace answers: the plan a line to a row, the error's
+	// position counting the EXPLAIN in front of the query.
+	f.answer = func(sql string) string {
+		if strings.HasPrefix(sql, "EXPLAIN ") {
+			return `{"statement_id":"s2","status":{"state":"SUCCEEDED"},"result":{"data_array":[["Error occurred during query planning: "],` +
+				`["[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column with name ` + "`nope`" + ` cannot be resolved. SQLSTATE: 42703; line 1 pos 15;"],["'Project ['nope]"]]}}`
+		}
+		return `{"statement_id":"s1","status":{"state":"FAILED","error":{"message":"[UNRESOLVED_COLUMN.WITH_SUGGESTION] line 1 pos 22"}}}`
+	}
+	_, err = c.Check(context.Background(), "", "", "select nope from t")
+	if api, ok := errors.AsType[*warehouse.APIError](err); !ok || api.Message != "[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column with name `nope` cannot be resolved. SQLSTATE: 42703; line 1 pos 7" {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAtQuery(t *testing.T) {
+	if got := atQuery("bad; line 1 pos 22", "DESCRIBE QUERY "); got != "bad; line 1 pos 7" {
+		t.Errorf("got %q", got)
+	}
+	if got := atQuery("bad; line 2 pos 4", "EXPLAIN "); got != "bad; line 2 pos 4" {
+		t.Errorf("a later line moved: %q", got)
+	}
 }
 
 func TestCheckNeedsAWarehouse(t *testing.T) {
@@ -283,6 +306,28 @@ func TestResolve(t *testing.T) {
 	env["DATABRICKS_HOST"] = "dbc-env.cloud.databricks.com"
 	if c := Resolve(s); c.Warehouse != "" || c.Host != "https://dbc-env.cloud.databricks.com" || c.Profile != "" {
 		t.Errorf("connection = %+v", c)
+	}
+
+	// As databricks auth login leaves it: an empty [DEFAULT], and the
+	// workspace's profile named after the account. A target whose host is
+	// Jinja finds that profile by $DATABRICKS_HOST, not DEFAULT.
+	login := filepath.Join(dir, "login")
+	if err := os.WriteFile(login, []byte("[DEFAULT]\n\n[me@example.com]\nhost = https://dbc-7.cloud.databricks.com\nauth_type = databricks-cli\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	delete(env, "DATABRICKS_TOKEN")
+	env["DATABRICKS_HOST"] = "https://dbc-7.cloud.databricks.com"
+	ran = nil
+	c = Resolve(Setup{Host: "{{ env_var('DATABRICKS_HOST') }}", Getenv: getenv, ConfigFile: login, CLI: cli})
+	if _, err := c.Token(context.Background()); err != nil || c.Profile != "me@example.com" || len(ran) != 1 || ran[0] != "auth token --profile me@example.com" {
+		t.Errorf("connection = %+v, ran %q, %v", c, ran, err)
+	}
+	// With no host to match, an empty DEFAULT is asked by host instead.
+	delete(env, "DATABRICKS_HOST")
+	ran = nil
+	c = Resolve(Setup{Host: "dbc-9.cloud.databricks.com", Getenv: getenv, ConfigFile: login, CLI: cli})
+	if _, err := c.Token(context.Background()); err != nil || len(ran) != 1 || ran[0] != "auth token --host https://dbc-9.cloud.databricks.com" {
+		t.Errorf("connection = %+v, ran %q, %v", c, ran, err)
 	}
 }
 

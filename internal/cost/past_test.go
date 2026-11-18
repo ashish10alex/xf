@@ -13,7 +13,7 @@ func pastReport() *Report {
 	started := time.Date(2026, 11, 17, 6, 0, 0, 0, time.Local)
 	runs := []PastRun{
 		{Name: "main.shop.daily", Type: "view"},
-		{Name: "main.shop.orders", Type: "table", Ran: true, Started: started, Duration: 151 * time.Second, ReadBytes: 4 << 30, Rows: 1234567, Warehouse: "Prod jobs"},
+		{Name: "main.shop.orders", Type: "table", Ran: true, Started: started, Duration: 151 * time.Second, ReadBytes: 4 << 30, ReadRows: 1234567, Warehouse: "Prod jobs"},
 		{Name: "main.shop.returns", Type: "table", New: true},
 	}
 	SortPastRuns(runs)
@@ -33,7 +33,7 @@ func TestPastRunsReport(t *testing.T) {
 	for _, want := range []string{
 		"3 changed models in",
 		"Last runs from Databricks Query History, target prod, in the last 30 days",
-		"main.shop.orders   ran Nov 17 06:00 · 2m 31s · read 4.00 GiB · 1,234,567 rows · on Prod jobs",
+		"main.shop.orders   ran Nov 17 06:00 · 2m 31s · read 4.00 GiB, 1,234,567 rows · on Prod jobs",
 		"main.shop.daily    no run in the last 30 days",
 		"main.shop.returns  new on this branch: not run yet",
 		"Last runs read 4.00 GiB between them (1 of 3 models)",

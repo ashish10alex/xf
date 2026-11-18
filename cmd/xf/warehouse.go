@@ -292,8 +292,8 @@ func (w *projectWarehouse) databricksCost(ctx context.Context, res *changes.Resu
 				key += ".v" + n.Version
 			}
 			if r, ok := byNode[key]; ok {
-				pr.Ran, pr.Started, pr.Duration, pr.ReadBytes, pr.ReadRows, pr.Rows, pr.Warehouse, pr.QueryID =
-					true, r.Started, r.Duration, r.ReadBytes, r.ReadRows, r.ProducedRows, r.Warehouse, r.QueryID
+				pr.Ran, pr.Started, pr.Duration, pr.ReadBytes, pr.ReadRows, pr.Warehouse, pr.QueryID =
+					true, r.Started, r.Duration, r.ReadBytes, r.ReadRows, r.Warehouse, r.QueryID
 			}
 			report.PastRuns.Runs = append(report.PastRuns.Runs, pr)
 		}

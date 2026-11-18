@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -217,7 +219,7 @@ func (c *Client) Check(ctx context.Context, _, _, query string) (*warehouse.Chec
 	st, err := c.execute(ctx, "DESCRIBE QUERY "+query)
 	var se *StatementError
 	if errors.As(err, &se) {
-		msg := se.Message
+		msg := atQuery(se.Message, "DESCRIBE QUERY ")
 		if why := c.explainError(ctx, query); why != "" {
 			msg = why
 		}
@@ -249,17 +251,45 @@ const planningError = "Error occurred during query planning:"
 // explainError is why the planner rejects query, from EXPLAIN; "" when it
 // doesn't say.
 func (c *Client) explainError(ctx context.Context, query string) string {
-	st, err := c.execute(ctx, "EXPLAIN "+query)
+	const prefix = "EXPLAIN "
+	st, err := c.execute(ctx, prefix+query)
 	if se, ok := errors.AsType[*StatementError](err); ok {
-		return se.Message
+		return atQuery(se.Message, prefix)
 	}
-	if err != nil || len(st.Result.Rows) == 0 || len(st.Result.Rows[0]) == 0 || st.Result.Rows[0][0] == nil {
+	if err != nil {
 		return ""
 	}
-	plan := *st.Result.Rows[0][0]
+	// The plan comes a line to a row: the marker, then the error, then
+	// the plan as far as it got.
+	var lines []string
+	for _, row := range st.Result.Rows {
+		if len(row) > 0 && row[0] != nil {
+			lines = append(lines, *row[0])
+		}
+	}
+	plan := strings.Join(lines, "\n")
 	i := strings.Index(plan, planningError)
 	if i < 0 {
 		return ""
 	}
-	return strings.TrimSpace(plan[i+len(planningError):])
+	for _, l := range strings.Split(plan[i+len(planningError):], "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return atQuery(strings.TrimSuffix(l, ";"), prefix)
+		}
+	}
+	return ""
+}
+
+var linePos = regexp.MustCompile(`\bline 1 pos (\d+)`)
+
+// atQuery places a message's "line 1 pos N" in the query as the user wrote
+// it, before prefix was put in front of it.
+func atQuery(msg, prefix string) string {
+	return linePos.ReplaceAllStringFunc(msg, func(m string) string {
+		n, err := strconv.Atoi(linePos.FindStringSubmatch(m)[1])
+		if err != nil || n < len(prefix) {
+			return m
+		}
+		return "line 1 pos " + strconv.Itoa(n-len(prefix))
+	})
 }

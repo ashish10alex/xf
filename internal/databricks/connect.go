@@ -68,9 +68,11 @@ func Resolve(s Setup) Connection {
 	profiles := readProfiles(file)
 	host := plain(s.Host)
 	name := s.Profile
-	if name == "" && host != "" {
+	// The profile is the one for the target's host, else $DATABRICKS_HOST's:
+	// a target that gives its host in Jinja leaves only that.
+	if want := cmp.Or(host, getenv("DATABRICKS_HOST")); name == "" && want != "" {
 		for _, p := range profiles {
-			if sameHost(p.values["host"], host) {
+			if sameHost(p.values["host"], want) {
 				name = p.name
 				break
 			}
@@ -95,8 +97,10 @@ func Resolve(s Setup) Connection {
 	case prof.values["token"] != "":
 		c.Token, c.TokenFrom = static(prof.values["token"]), "~/.databrickscfg"
 	default:
+		// The CLI is asked by profile when the profile names the host,
+		// else by host: an empty [DEFAULT] has none to sign in to.
 		args := []string{"auth", "token", "--host", c.Host}
-		if name != "" {
+		if name != "" && (prof.values["host"] != "" || c.Host == "") {
 			args = []string{"auth", "token", "--profile", name}
 		}
 		c.TokenFrom = "databricks " + strings.Join(args, " ")

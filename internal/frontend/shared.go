@@ -560,7 +560,7 @@ type CostPastRow struct {
 	When      string `json:"when,omitempty"`
 	Took      string `json:"took,omitempty"`
 	Read      string `json:"read,omitempty"`
-	Rows      string `json:"rows,omitempty"`
+	ReadRows  string `json:"readRows,omitempty"`
 	Warehouse string `json:"warehouse,omitempty"`
 	Note      string `json:"note,omitempty"`
 }
@@ -571,7 +571,7 @@ func pastView(r *cost.Report) *CostPast {
 	for _, run := range p.Runs {
 		row := CostPastRow{Action: impact.ShortTable(run.Name), Type: run.Type}
 		if run.Ran {
-			row.When, row.Took, row.Read, row.Rows, row.Warehouse = run.When(), run.Took(), warehouse.FormatBytes(run.ReadBytes), cost.RowsText(run.Rows), run.Warehouse
+			row.When, row.Took, row.Read, row.ReadRows, row.Warehouse = run.When(), run.Took(), warehouse.FormatBytes(run.ReadBytes), cost.RowsText(run.ReadRows), run.Warehouse
 		} else {
 			row.Note = run.NoRunText(p)
 		}

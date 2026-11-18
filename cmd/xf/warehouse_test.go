@@ -37,7 +37,7 @@ func TestDatabricksCost(t *testing.T) {
 			}
 			b, _ := json.Marshal(map[string]any{"res": []any{map[string]any{"query_id": "q1", "status": "FINISHED", "statement_type": "CREATE",
 				"warehouse_id": "wh1", "query_start_time_ms": time.Now().Add(-time.Hour).UnixMilli(), "duration": 61_000, "query_text": text,
-				"metrics": map[string]any{"read_bytes": 3 << 30, "rows_produced_count": 42}}}})
+				"metrics": map[string]any{"read_bytes": 3 << 30, "rows_read_count": 42}}}})
 			_, _ = w.Write(b)
 		default:
 			http.NotFound(w, r)
@@ -63,7 +63,7 @@ func TestDatabricksCost(t *testing.T) {
 	if p == nil || len(p.Runs) != 2 || p.Target != "prod" || p.Why != "" {
 		t.Fatalf("past runs = %+v", p)
 	}
-	if o := p.Runs[0]; o.Name != "main.shop.orders" || !o.Ran || o.ReadBytes != 3<<30 || o.Rows != 42 || o.Warehouse != "Prod jobs" || o.Duration != 61*time.Second {
+	if o := p.Runs[0]; o.Name != "main.shop.orders" || !o.Ran || o.ReadBytes != 3<<30 || o.ReadRows != 42 || o.Warehouse != "Prod jobs" || o.Duration != 61*time.Second {
 		t.Errorf("orders = %+v", o)
 	}
 	if d := p.Runs[1]; d.Ran || !d.New {
