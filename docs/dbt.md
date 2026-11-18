@@ -82,7 +82,7 @@ Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the 
   Without credentials it stops both checks; with no SQL warehouse chosen it warns, and query cost still runs.
 - **Query cost** (`C`, `xf cost`, and `xf check`'s cost) is each changed model's last run, not an estimate: Databricks bills warehouse time, not bytes scanned, so there is nothing to estimate before a run.
   xf reads Query History, which wakes no warehouse, back 30 days, and keeps each model's latest build whose dbt query comment names it and the prod target (`dbtProdTarget`, else the target xf compiles with, which the report warns may be dev).
-  It shows when the run started, how long it took, what it read and the rows it wrote, and the SQL warehouse it ran on, with no dollar figure; a model with no run says so.
+  It shows when the run started, how long it took, the bytes and rows it read (Query History counts no rows a table build writes), and the SQL warehouse it ran on, with no dollar figure; a model with no run says so.
   The run is of the model as it was then, not as the branch has it; `--fail-over` doesn't apply.
   dbt's query comment is on by default: a project that turns `query-comment` off gets no runs, and the report says why.
 - Defer to prod is hidden.
@@ -94,6 +94,6 @@ Where xf connects:
 - **The SQL warehouse** is the `databricksWarehouse` setting (an ID or an HTTP path), else the dbt target's `http_path`.
   When neither names one, or names it in Jinja xf doesn't read, the first check lists the workspace's warehouses to pick from and saves the pick to `.xf/config.json`.
 - **The token** is `$DATABRICKS_TOKEN`, else the dbt target's `token`, else the profile's `token`, else `databricks auth token --profile <profile>`, which refreshes an OAuth login (`databricks auth login --host <workspace>` first).
-  The profile is the `databricksProfile` setting, else the `~/.databrickscfg` profile whose host is the dbt target's, else `DEFAULT`.
+  The profile is the `databricksProfile` setting, else the `~/.databrickscfg` profile whose host is the dbt target's (or `$DATABRICKS_HOST`'s, when xf can't read the target's), else `DEFAULT`.
 
 `examples/dbt-databricks` is a small project that reads the `samples` catalog every workspace has.
