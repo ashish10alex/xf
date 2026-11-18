@@ -259,6 +259,21 @@ type Deps struct {
 	Base func(ctx context.Context) (*project.Graph, error)
 	// Now returns the current time; nil means time.Now.
 	Now func() time.Time
+	// OnDemand is set for a warehouse that bills while it runs, a
+	// Databricks SQL warehouse (ADR 0042): DryRun plans one query, not a
+	// script, so each changed model is checked by its query alone, without
+	// its hooks, and the readers of a dropped column aren't dry run, so
+	// only the changed models wake the warehouse.
+	OnDemand bool
+}
+
+// checkSQL is what a's dry run plans: its first dry run query, or with
+// deps.OnDemand its query alone.
+func checkSQL(a *project.Action, queries []project.DryRunQuery, deps Deps) string {
+	if deps.OnDemand && a.Kind != project.KindOperation && strings.TrimSpace(a.Query) != "" {
+		return a.Query
+	}
+	return queries[0].SQL
 }
 
 // producesTable says whether an action builds a table whose columns can be
@@ -350,7 +365,11 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 	candidates := make([]Candidate, len(changed))
 	var mu sync.Mutex
 	done := 0
-	progress(Progress{Phase: "Dry running", Total: len(changed)})
+	phase := "Dry running"
+	if deps.OnDemand {
+		phase = "Checking on the SQL warehouse (it starts if stopped)"
+	}
+	progress(Progress{Phase: phase, Total: len(changed)})
 	indexes := make([]int, len(changed))
 	for i := range indexes {
 		indexes[i] = i
@@ -359,7 +378,7 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		candidates[i] = check(ctx, changed[i], g.Actions[changed[i].ID], g, deps)
 		mu.Lock()
 		done++
-		progress(Progress{Phase: "Dry running", Done: done, Total: len(changed)})
+		progress(Progress{Phase: phase, Done: done, Total: len(changed)})
 		mu.Unlock()
 	})
 	if err := ctx.Err(); err != nil {
@@ -624,7 +643,7 @@ func check(ctx context.Context, c changes.Changed, a *project.Action, g *project
 		cand.UncheckedReason = "no project to dry run in: set defaultProject"
 		return cand
 	}
-	dr, err := deps.DryRun(ctx, project, location, queries[0].SQL)
+	dr, err := deps.DryRun(ctx, project, location, checkSQL(a, queries, deps))
 	if err != nil {
 		cand.UncheckedReason = "dry run failed: " + errorText(err)
 		return cand
@@ -679,7 +698,7 @@ func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]warehous
 	if len(queries) == 0 || project == "" {
 		return nil, false, nil
 	}
-	dr, err := deps.DryRun(ctx, project, location, queries[0].SQL)
+	dr, err := deps.DryRun(ctx, project, location, checkSQL(a, queries, deps))
 	if err != nil {
 		return nil, false, nil
 	}

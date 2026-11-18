@@ -711,8 +711,8 @@ func runServe(args []string) error {
 		addStages(&cfg, b, root, logger)
 		cfg.Changes = dbtChangesSource(root, b, logger)
 		targets := newDbtTargets(b, root, logger)
-		cfg.Impact = dbtImpact(bq, engineDryRun, targets)
-		cfg.Cost = dbtCost(bq, engineDryRun, targets)
+		cfg.Impact = dbtImpact(pw, engineDryRun, targets)
+		cfg.Cost = dbtCost(pw, engineDryRun, targets)
 		dd := newDbtDeferrer(b, root, func() (config.Loaded, error) { return sf.load(root) }, logger)
 		dd.recompile = func() {
 			if eng != nil {

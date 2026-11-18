@@ -1,11 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
@@ -14,6 +17,8 @@ import (
 	"github.com/ashish10alex/xf/internal/databricks"
 	"github.com/ashish10alex/xf/internal/deferral"
 	"github.com/ashish10alex/xf/internal/frontend"
+	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/lsp"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/warehouse"
@@ -246,6 +251,49 @@ func (w *projectWarehouse) webDatabricks() *web.Databricks {
 
 // host is the Databricks workspace's URL, for links.
 func (w *projectWarehouse) host() string { return w.databricks().Host() }
+
+// errNoDatabricksCost is what query cost answers on Databricks, which bills
+// warehouse time, not bytes scanned (ADR 0042).
+var errNoDatabricksCost = errors.New("Databricks bills SQL warehouse time, not bytes scanned, so there is no cost to estimate before a run; xf doesn't show a model's past runs yet")
+
+// errNoImpactWarehouse is column impact on Databricks without a SQL
+// warehouse to plan the changed models on.
+var errNoImpactWarehouse = fmt.Errorf("%w: column impact plans the changed models on one: set databricksWarehouse (xf settings, or xf web asks), or the dbt target's http_path", warehouse.ErrNoWarehouse)
+
+// databricksImpact is what column impact on Databricks works with (ADR
+// 0042): schemas and readers from Unity Catalog, which wake nothing, and
+// DESCRIBE QUERY of the changed models alone on the SQL warehouse, which
+// running the check asks for. used says afterwards which warehouse the
+// check used, and whether it started it; nil when no model needed it.
+func (w *projectWarehouse) databricksImpact(ctx context.Context, g *project.Graph, toProd func(string) string) (deps impact.Deps, used func() *impact.WarehouseUse, err error) {
+	c := w.databricks()
+	if c.Warehouse() == "" {
+		return deps, nil, errNoImpactWarehouse
+	}
+	// Its state now, before a check may start it; asking starts nothing.
+	sw, err := c.SQLWarehouse(ctx)
+	if err != nil {
+		return deps, nil, err
+	}
+	var checked atomic.Int64
+	tables := lineage.NewTables(c.Table)
+	deps = impact.Deps{
+		Schema: tables.Schema,
+		DryRun: func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
+			checked.Add(1)
+			return c.Check(ctx, project, location, sql)
+		},
+		Readers:  databricks.NewReaders(c, g, toProd),
+		OnDemand: true,
+	}
+	used = func() *impact.WarehouseUse {
+		if checked.Load() == 0 {
+			return nil
+		}
+		return &impact.WarehouseUse{Name: "Databricks SQL warehouse `" + cmp.Or(sw.Name, sw.ID) + "`", Started: sw.State != "RUNNING", Lineage: "Unity Catalog"}
+	}
+	return deps, used, nil
+}
 
 // catalogTables is the language server's TablesFor: a Databricks project's
 // hover cards read Unity Catalog, which wakes no SQL warehouse, and link to

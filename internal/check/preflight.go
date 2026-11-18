@@ -142,6 +142,13 @@ type Probes struct {
 	// there; Lineage searches Data Lineage in projects/<project>/locations/<location>.
 	DryRun  func(ctx context.Context, project, location string) error
 	Lineage func(ctx context.Context, project, location string) error
+	// Databricks, set for a dbt project that builds in Databricks (ADR
+	// 0042), probes its workspace and SQL warehouse in place of Google and
+	// BigQuery, starting nothing: it says which warehouse the checks will
+	// use and how it stands, or why there is none. DatabricksFix says how
+	// to fix a failure.
+	Databricks    func(ctx context.Context) (string, error)
+	DatabricksFix string
 	// NoAccess leaves the access probes out (xf check init, which runs as
 	// you); AsYou says the probes run outside CI, as you.
 	NoAccess, AsYou bool
@@ -164,6 +171,20 @@ func Run(ctx context.Context, p Probes) *Preflight {
 	tools(p, add)
 	gitLines(p, add)
 	prodLine(p, add)
+
+	if p.Databricks != nil {
+		if !p.NoAccess {
+			if detail, err := p.Databricks(ctx); err != nil {
+				add(Line{Name: "Databricks", Status: Fail, Detail: err.Error(), Fix: p.DatabricksFix})
+			} else {
+				add(Line{Name: "Databricks", Status: Pass, Detail: detail})
+			}
+		}
+		if p.Comment {
+			tokenLines(ctx, p, add)
+		}
+		return out
+	}
 
 	signedIn := false
 	if p.ADC != nil {

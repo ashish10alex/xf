@@ -52,7 +52,11 @@ func runImpact(args []string) int {
 as JSON for scripts; --output also writes it as Markdown for a pull request:
 every changed table, view and incremental table (in dbt: model) is dry run
 and compared with its table in BigQuery, and Dataplex is asked who reads the
-columns it drops or retypes and the tables it deletes. It always checks
+columns it drops or retypes and the tables it deletes. A dbt project on
+Databricks is checked there instead: each changed model's query is planned
+with DESCRIBE QUERY on its SQL warehouse, which starts if it is stopped and
+bills while it runs, and Unity Catalog gives the tables and their readers;
+the report names the warehouse. It always checks
 afresh, and shares the work with xf through xf serve. Progress goes to
 stderr. With --web it opens xf web on the column impact tab of its Checks
 page instead, where y copies the Markdown, and runs until ctrl+c as xf web

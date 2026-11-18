@@ -10,6 +10,7 @@ import (
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
+	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/warehouse"
 )
@@ -105,6 +106,9 @@ func newDatabricksTest(t *testing.T, chosen bool) *databricksTest {
 			return &warehouse.Check{}, nil
 		},
 		QueryCost: func(context.Context, engine.CostRequest, func(cost.Progress)) (*cost.Report, error) { return nil, nil },
+		ColumnImpact: func(context.Context, engine.ImpactRequest, func(impact.Progress)) (*impact.Report, error) {
+			return nil, nil
+		},
 		Table: func(_ context.Context, catalog, schema, table string) (*warehouse.Table, error) {
 			if table != "orders" {
 				return nil, &warehouse.APIError{Status: 404, Message: "Table does not exist"}
@@ -184,7 +188,7 @@ func TestDatabricksChecksOnlyWhenAsked(t *testing.T) {
 		t.Errorf("%d dry runs and %d checks ran unasked", n, len(dt.dbx.checked))
 	}
 	c := dt.caps()
-	if !c.Check || c.Warehouse != project.Databricks || c.Cost || c.Impact || c.Defer || !c.Scratch || !c.Inspector || c.DryRun {
+	if !c.Check || c.Warehouse != project.Databricks || c.Cost || !c.Impact || c.Defer || !c.Scratch || !c.Inspector || c.DryRun {
 		t.Errorf("caps = %+v", c)
 	}
 }

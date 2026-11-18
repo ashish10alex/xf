@@ -241,11 +241,14 @@ export function onProgress(ev) {
 }
 
 // recheckShowing checks the shown tab afresh when a compile has moved the
-// branch on from its report, rather than leaving a warning.
+// branch on from its report, rather than leaving a warning. Column impact
+// on Databricks is left stale instead: it starts the SQL warehouse, which
+// bills, so it runs only when asked (ADR 0042).
 export function recheckShowing() {
   const which = S.checks;
   const o = which && S[which];
   if (!o || S.overlay || o.loading || o.err || !checkStale(o)) return;
+  if (which === 'impact' && S.caps.warehouse === 'databricks') { redraw(); return; }
   openCheck(which, true);
 }
 

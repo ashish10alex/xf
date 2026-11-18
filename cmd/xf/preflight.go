@@ -1,8 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,9 +15,11 @@ import (
 	"github.com/ashish10alex/xf/internal/backend/dataform"
 	"github.com/ashish10alex/xf/internal/check"
 	"github.com/ashish10alex/xf/internal/config"
+	"github.com/ashish10alex/xf/internal/databricks"
 	"github.com/ashish10alex/xf/internal/forge"
 	"github.com/ashish10alex/xf/internal/gcpauth"
 	"github.com/ashish10alex/xf/internal/lineage"
+	"github.com/ashish10alex/xf/internal/project"
 )
 
 // preflightTimeout bounds the probes: they take seconds when all is well.
@@ -70,7 +74,31 @@ func preflightProbes(name, root, base string, settings config.Loaded, comment bo
 	if pr != nil && pr.Token != "" {
 		p.Comments = forge.NewComments(pr.Repo, pr.Number, pr.Token, nil)
 	}
+	if p.Dbt {
+		pw := newProjectWarehouse(root, settings.DbtTarget, func() (config.Loaded, error) { return settings, nil })
+		if pw.kind() == project.Databricks {
+			p.Databricks, p.DatabricksFix = pw.preflight, databricks.AuthHint+"; and a SQL warehouse: databricksWarehouse, or the dbt target's http_path"
+		}
+	}
 	return p
+}
+
+// preflight is xf check's probe of a Databricks project (ADR 0042): its
+// SQL warehouse, as it stands, which asking doesn't start.
+func (w *projectWarehouse) preflight(ctx context.Context) (string, error) {
+	c := w.databricks()
+	if c.Warehouse() == "" {
+		return "", errNoImpactWarehouse
+	}
+	sw, err := c.SQLWarehouse(ctx)
+	if err != nil {
+		return "", err
+	}
+	state := strings.ToLower(sw.State)
+	if sw.State != "RUNNING" {
+		state += ": column impact starts it, and it bills while it runs"
+	}
+	return fmt.Sprintf("SQL warehouse %s on %s (%s)", cmp.Or(sw.Name, sw.ID), c.Host(), state), nil
 }
 
 // runPreflight runs the probes, bounded by preflightTimeout.

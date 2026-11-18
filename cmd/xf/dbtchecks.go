@@ -15,7 +15,6 @@ import (
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
-	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // dbtTargets compiles a dbt project for column impact and query cost with
@@ -124,15 +123,24 @@ func compiledSQL(g *project.Graph) error {
 // xf's target fold into the actions they run. The merge-base is compiled
 // with the same target, to tell the base branch's changes from the
 // branch's.
-func dbtImpact(bq func(context.Context) (warehouse.Warehouse, error), dryRun dryRunFunc, targets *dbtTargets) engine.ImpactFunc {
+//
+// A project that builds in Databricks (ADR 0042) is checked there: schemas
+// and readers from Unity Catalog, and the changed models planned with
+// DESCRIBE QUERY on the SQL warehouse, which the report names.
+func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engine.ImpactFunc {
 	lc := lazyLineage()
+	bq := pw.bq
 	return func(ctx context.Context, req engine.ImpactRequest, res *changes.Result, g *project.Graph, progress func(impact.Progress)) (*impact.Report, error) {
 		if g == nil {
 			return nil, changes.ErrWorktreeOnly
 		}
-		client, err := lc(ctx)
-		if err != nil {
-			return nil, err
+		dbx := g.WarehouseOr(pw.dbtTarget().Type) == project.Databricks
+		var client *lineage.Client
+		if !dbx {
+			var err error
+			if client, err = lc(ctx); err != nil {
+				return nil, err
+			}
 		}
 		target := req.DbtProdTarget
 		var toProd func(string) string
@@ -148,15 +156,28 @@ func dbtImpact(bq func(context.Context) (warehouse.Warehouse, error), dryRun dry
 		} else if err := compiledSQL(g); err != nil {
 			return nil, err
 		}
+		base := func(ctx context.Context) (*project.Graph, error) {
+			return targets.commit(ctx, target, res.MergeBase)
+		}
+		if dbx {
+			deps, used, err := pw.databricksImpact(ctx, g, toProd)
+			if err != nil {
+				return nil, err
+			}
+			deps.ToProd, deps.Base = toProd, base
+			report, err := impact.Run(ctx, res, g, deps, progress)
+			if report != nil {
+				report.Warehouse = used()
+			}
+			return report, err
+		}
 		tables := lineage.NewTables(lazyTables(bq))
 		return impact.Run(ctx, res, g, impact.Deps{
 			Schema:  tables.Schema,
 			DryRun:  dryRun,
 			Readers: lineage.NewSource(client, tables, g, toProd),
 			ToProd:  toProd,
-			Base: func(ctx context.Context) (*project.Graph, error) {
-				return targets.commit(ctx, target, res.MergeBase)
-			},
+			Base:    base,
 		}, progress)
 	}
 }

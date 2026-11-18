@@ -23,6 +23,59 @@ func TestSwapTable(t *testing.T) {
 	}
 }
 
+// On a warehouse that bills its checks (Databricks), a changed model is
+// checked by its query alone, without its hooks, and its readers aren't dry
+// run; the report says which warehouse was used, and where readers came
+// from.
+func TestRunOnDemand(t *testing.T) {
+	g := graph(t, "SELECT order_id, amount FROM src", "SELECT discount FROM `p.marts.orders`")
+	g.Actions["p.marts.orders"].PreOps = []string{"SET spark.sql.ansi.enabled = true"}
+	res := &changes.Result{BaseRef: "origin/main", MergeBase: "abcdef123456", HeadRef: "feat", Head: changes.HeadWorktree,
+		Diff: changes.Diff{Changed: []changes.Changed{
+			{ID: "p.marts.daily", FileName: "definitions/daily.sqlx", Type: "view", Reasons: []changes.Reason{changes.ReasonSQL}},
+			{ID: "p.marts.orders", FileName: "definitions/orders.sqlx", Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+		}}}
+	prod := map[string][]warehouse.Column{
+		"p.marts.orders": {f("order_id", "bigint"), f("amount", "double"), f("discount", "decimal(10,2)")},
+		"p.marts.daily":  {f("discount", "decimal(10,2)")},
+	}
+	var planned []string
+	deps := Deps{
+		OnDemand: true,
+		Schema:   func(_ context.Context, table string) ([]warehouse.Column, error) { return prod[table], nil },
+		DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
+			planned = append(planned, sql)
+			if strings.Contains(sql, "discount") {
+				return &warehouse.Check{Schema: []warehouse.Column{f("discount", "decimal(10,2)")}}, nil
+			}
+			return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "bigint"), f("amount", "double")}}, nil
+		},
+		Readers: &fakeSource{columnLinks: map[string][]lineage.ColumnLink{
+			"p.marts.orders#discount": {{Table: "p.marts.daily", Column: "discount", DependencyType: lineage.Other}},
+		}},
+	}
+	report, err := Run(context.Background(), res, g, deps, func(Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planned) != 2 {
+		t.Fatalf("planned %q, want the two changed models alone", planned)
+	}
+	for _, sql := range planned {
+		if strings.Contains(sql, "SET ") {
+			t.Errorf("planned a hook: %q", sql)
+		}
+	}
+	if len(report.AtRisk) != 1 || report.AtRisk[0].Columns[0].Readers[0].Checked != "" {
+		t.Fatalf("at risk %+v", report.AtRisk)
+	}
+	report.Warehouse = &WarehouseUse{Name: "Databricks SQL warehouse `Starter`", Started: true, Lineage: "Unity Catalog"}
+	md := Markdown(report)
+	if !strings.Contains(md, "checked on the Databricks SQL warehouse `Starter`, which this check started") || !strings.Contains(md, "Readers come from Unity Catalog lineage") {
+		t.Errorf("markdown:\n%s", md)
+	}
+}
+
 func TestMissingColumn(t *testing.T) {
 	for msg, want := range map[string]bool{
 		"Unrecognized name: discount at [3:5]":              true,

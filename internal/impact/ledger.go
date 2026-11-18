@@ -628,10 +628,18 @@ func BuildLedger(r *Report) Ledger {
 	if c := r.Comparison; c != nil && strings.HasPrefix(c.HeadLabel, "pushed") {
 		ctx = append(ctx, c.HeadLabel)
 	}
+	if r.Warehouse != nil {
+		ctx = append(ctx, r.Warehouse.Line())
+	}
 	l.Context = strings.Join(ctx, " · ")
 
 	l.setLegend()
-	if len(every) > 0 {
+	switch {
+	case len(every) == 0:
+	case r.Warehouse != nil && r.Warehouse.Lineage != "":
+		l.Notes = append(l.Notes, "Readers come from "+r.Warehouse.Lineage+" lineage. "+
+			"Only the changed models were checked on the SQL warehouse, so a changed reader that still names a dropped column isn't dry run.")
+	default:
 		l.Notes = append(l.Notes, "Readers come from Dataplex lineage of prod runs in the last 30 days, about 2 h behind. "+
 			"A changed reader that still names a dropped column is dry run against the branch's table: a pass means it no longer reads it.")
 	}

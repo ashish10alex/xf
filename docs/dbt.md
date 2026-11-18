@@ -72,7 +72,15 @@ Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the 
   Completion lists Unity Catalog's schemas, tables and columns; Databricks SQL's functions aren't listed yet.
 - **Hover cards** on a table, in xf web's editors and the language server, read Unity Catalog and link to Catalog Explorer.
 - `u` opens a table in Catalog Explorer.
-- Query cost (`C`), column impact (`I`) and defer to prod are hidden for now.
+- **Column impact** (`xf impact`, `xf check`, and `I` in xf web) runs when you ask for it, and may start the SQL warehouse.
+  It plans the changed models alone with `DESCRIBE QUERY`, each by its query without its hooks, and compares them with their tables in Unity Catalog.
+  Unity Catalog's lineage says who reads a column the branch drops or retypes; a reader whose column lineage it doesn't track is listed as one that may read it.
+  Readers aren't dry run, as they are on BigQuery.
+  The report names the SQL warehouse, and says when the check started it.
+  In xf web, an impact report the branch has moved on from is marked stale rather than checked again on its own: `c` checks again.
+- **`xf check`'s preflight** probes the workspace and the SQL warehouse, which asking doesn't start, in place of Google and BigQuery.
+- **Query cost** (`C`, `xf cost`, and `xf check`'s cost) says Databricks has none to estimate: it bills warehouse time, not bytes scanned.
+- Defer to prod is hidden.
 - The TUI shows browsing, lineage, compiles and runs, and says on its status line that dry runs, columns and cost are off.
 
 Where xf connects:

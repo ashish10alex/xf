@@ -18,6 +18,30 @@ import (
 	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
+// A Databricks project probes its SQL warehouse instead of Google and
+// BigQuery, and its report says the warehouse column impact used.
+func TestPreflightDatabricks(t *testing.T) {
+	p := goodProbes()
+	p.Dbt, p.Bin = true, "/usr/bin/dbt"
+	p.ADC = func(context.Context) gcpauth.ADC {
+		t.Error("asked Google for a Databricks project")
+		return gcpauth.ADC{}
+	}
+	p.Databricks = func(context.Context) (string, error) { return "SQL warehouse Starter on https://dbc-1 (running)", nil }
+	pf := Run(context.Background(), p)
+	if pf.Stops() || !strings.Contains(pf.Text(), "Databricks") || strings.Contains(pf.Text(), "Google") || strings.Contains(pf.Text(), "BigQuery") {
+		t.Errorf("checklist:\n%s", pf.Text())
+	}
+	p.Databricks, p.DatabricksFix = func(context.Context) (string, error) { return "", errors.New("no SQL warehouse chosen") }, "set databricksWarehouse"
+	if pf := Run(context.Background(), p); !pf.Stops() || !strings.Contains(pf.Text(), "set databricksWarehouse") {
+		t.Errorf("no warehouse:\n%s", pf.Text())
+	}
+	r := &Report{Project: ".", Impact: &impact.Report{DryRunIn: "workspace", Warehouse: &impact.WarehouseUse{Name: "Databricks SQL warehouse `Starter`", Started: true}}}
+	if md := Markdown(r, Options{}); !strings.Contains(md, "Column impact checked on the Databricks SQL warehouse `Starter`, which this check started") {
+		t.Errorf("markdown:\n%s", md)
+	}
+}
+
 func TestVerdictUnsetAndDryRuns(t *testing.T) {
 	r := &Report{Project: ".", Impact: &impact.Report{Unset: "prodCompilerOptions", DryRunIn: "acme-dev"}, Cost: &cost.Report{DryRunIn: "acme-dev (EU)"}}
 	if v := Verdict(r, Options{}); !strings.HasSuffix(v, "· ⚠️ compared with the default targets, which may be dev tables (`prodCompilerOptions` isn't set)") {

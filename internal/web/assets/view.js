@@ -1596,7 +1596,9 @@ function CheckHeader({ which, o, verb }) {
     const partial = which === 'cost' && o.report && o.report.basePending;
     out.push(html`<div><span class="warn">${spinner()} ${partial ? 'estimating the same actions at the merge-base…' : verb(what)}</span>  <span class="dim">${o.progress || 'Working out the changed actions'}</span></div>`);
     if (!o.report) {
-      out.push(html`<div class="dim">${which === 'impact'
+      out.push(html`<div class="dim">${which === 'impact' && S.caps.warehouse === 'databricks'
+        ? 'Plans every changed model with DESCRIBE QUERY on the SQL warehouse, which starts if it is stopped and bills while it runs, compares it with its table in Unity Catalog, then asks Unity Catalog who reads the columns it drops or retypes. The first time today, this also compiles the merge-base.'
+        : which === 'impact'
         ? 'Dry runs every changed table, view and incremental table, compares it with the table in BigQuery, then asks Dataplex who reads the columns it drops or retypes. The first time today, this also compiles the merge-base.'
         : 'Dry runs every changed action with a query, as it is on the branch and as it was at the merge-base. Dry runs are free and run nothing. The first time today, this also compiles the merge-base.'}</div>`);
     }

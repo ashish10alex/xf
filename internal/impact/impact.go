@@ -258,13 +258,36 @@ type Report struct {
 	Unset string `json:"unset,omitempty"`
 	// DryRunIn is the project the branch's models were dry run in, "" when
 	// they ran in more than one.
-	DryRunIn  string    `json:"dryRunIn,omitempty"`
-	CheckedAt time.Time `json:"checkedAt"`
+	DryRunIn string `json:"dryRunIn,omitempty"`
+	// Warehouse is the warehouse that bills while it runs the branch's
+	// models were checked on (ADR 0042); nil for BigQuery, or when no model
+	// needed it.
+	Warehouse *WarehouseUse `json:"warehouse,omitempty"`
+	CheckedAt time.Time     `json:"checkedAt"`
 	// Signature is what was checked (see Signature).
 	Signature string `json:"signature"`
 	// Stale is set when the branch has changed since: what it changes, or
 	// the SQL of what it changes.
 	Stale bool `json:"stale,omitempty"`
+}
+
+// WarehouseUse is the SQL warehouse a check ran its models on, which bills
+// while it runs: the report says so, since a check started it.
+type WarehouseUse struct {
+	// Name names it: "Databricks SQL warehouse `Starter`".
+	Name string `json:"name"`
+	// Started says it was stopped and the check started it.
+	Started bool `json:"started,omitempty"`
+	// Lineage is where readers came from: "Unity Catalog".
+	Lineage string `json:"lineage,omitempty"`
+}
+
+// Line is the warehouse as a report's context words it.
+func (w *WarehouseUse) Line() string {
+	if w.Started {
+		return "checked on the " + w.Name + ", which this check started"
+	}
+	return "checked on the " + w.Name
 }
 
 // Progress is how far a check got.

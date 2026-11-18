@@ -4,6 +4,7 @@
 
 `I` shows the column impact of the same changed actions, as the Markdown report a pull request gets; `y` copies it.
 Every changed table, view and incremental table is dry run and compared with its table in BigQuery, and Dataplex Data Lineage is asked who reads the columns it drops or retypes, and the tables it deletes.
+A dbt project on Databricks is checked there instead, on its SQL warehouse and with Unity Catalog's lineage, and its report names the warehouse ([Databricks](dbt.md#databricks)).
 
 The report is a ledger.
 Its heading is the verdict ("✅ Nothing to fix", or "🚨 2 to fix before merging"), then there is one row per model: what it changes (all the columns it drops, retypes or adds, in one row) and who that affects, each reader with how it reads (exact copy, derived, may read) and what this branch does about it.

@@ -39,6 +39,23 @@ func TestLiveUnityCatalog(t *testing.T) {
 	}
 }
 
+// The lineage API answers for a table, with no SQL warehouse; samples has
+// no readers to expect, so the test logs what it finds.
+func TestLiveLineage(t *testing.T) {
+	c := liveClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	down, err := c.Downstream(ctx, "samples.nyctaxi.trips")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := c.DownstreamColumns(ctx, "samples.nyctaxi.trips", "fare_amount")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("readers %v; of fare_amount %v", down, cols)
+}
+
 func TestLiveCheck(t *testing.T) {
 	c := liveClient(t)
 	if c.Warehouse() == "" {

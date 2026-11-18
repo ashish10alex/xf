@@ -27,6 +27,9 @@ const (
 // no longer reads the column, "Unrecognized name" that it does. Any other
 // failure leaves the reader as it was. progress is told after each run.
 func verifyReaders(ctx context.Context, tables []Table, g *project.Graph, deps Deps, progress func(done, total int)) {
+	if deps.OnDemand {
+		return // only the changed models wake a warehouse that bills
+	}
 	type check struct {
 		reader *Reader
 		column string

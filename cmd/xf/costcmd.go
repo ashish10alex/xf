@@ -337,11 +337,16 @@ func inDev(g *project.Graph, lookups *deferral.Lookups, logger *log.Logger) func
 // tree's compile is dry run, which reads what b's target resolves to, and
 // the merge-base is a snapshot compiled for the purpose, as Changed Actions
 // only parse theirs. With dbtProdTarget set to another target, both are
-// compiled with it instead, so the dry runs read prod's tables.
-func dbtCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun dryRunFunc, targets *dbtTargets) engine.CostFunc {
+// compiled with it instead, so the dry runs read prod's tables. A project
+// that builds in Databricks has no cost to estimate (ADR 0042).
+func dbtCost(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engine.CostFunc {
+	bq := pw.bq
 	return func(ctx context.Context, req engine.CostRequest, res *changes.Result, g *project.Graph, progress func(cost.Progress)) (*cost.Report, error) {
 		if g == nil {
 			return nil, changes.ErrWorktreeOnly
+		}
+		if g.WarehouseOr(pw.dbtTarget().Type) == project.Databricks {
+			return nil, errNoDatabricksCost
 		}
 		target := req.DbtProdTarget
 		deps := cost.Deps{DryRun: dryRun, Partition: partitionLookup(bq)}

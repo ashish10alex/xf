@@ -164,7 +164,10 @@ func dryRunsLine(r *Report) string {
 		costIn = cmp.Or(costIn, r.Preflight.CostIn)
 	}
 	var parts []string
-	if impactIn != "" && r.Impact != nil {
+	switch {
+	case r.Impact != nil && r.Impact.Warehouse != nil: // Databricks, ADR 0042
+		parts = append(parts, "Column impact "+r.Impact.Warehouse.Line())
+	case impactIn != "" && r.Impact != nil:
 		parts = append(parts, "Column impact dry ran the branch in `"+impactIn+"`")
 	}
 	if costIn != "" && r.Cost != nil {
