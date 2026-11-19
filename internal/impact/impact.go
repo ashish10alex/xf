@@ -324,10 +324,16 @@ func isIdentChar(b byte) bool {
 }
 
 // Mentions reports whether sql names identifier as a whole word,
-// case-insensitively as BigQuery compares column names. Only a hint: an
-// alias or a SELECT * can make it wrong either way.
+// case-insensitively as BigQuery compares column names. A dotted
+// identifier is a table path, dataset.table, and matches with backticks
+// round each part too: `p.dataset.table` and `dataset`.`table`. Only a
+// hint: an alias or a SELECT * can make it wrong either way.
 func Mentions(sql, identifier string) bool {
-	re := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(identifier))
+	parts := strings.Split(identifier, ".")
+	for i, p := range parts {
+		parts[i] = regexp.QuoteMeta(p)
+	}
+	re := regexp.MustCompile(`(?i)` + strings.Join(parts, "`?\\.`?"))
 	for from := 0; from <= len(sql); {
 		loc := re.FindStringIndex(sql[from:])
 		if loc == nil {
@@ -342,9 +348,18 @@ func Mentions(sql, identifier string) bool {
 	return false
 }
 
+// TablePath is what a reader of the table with ID id has to stop naming
+// when it is deleted: dataset.table, its last two parts. The table name
+// alone isn't enough: a branch that moves a table to another dataset
+// leaves its readers naming the new table by the same name.
+func TablePath(id string) string {
+	parts := strings.Split(id, ".")
+	return strings.Join(parts[max(0, len(parts)-2):], ".")
+}
+
 // AnnotateReader is a reader as the report shows it. name is what the
 // reader would have to stop naming: the column for a dropped or retyped
-// column, the table name for a deleted table.
+// column, the table path (see TablePath) for a deleted table.
 func AnnotateReader(link lineage.ColumnLink, name string, ctx ReaderContext) Reader {
 	table := link.Table
 	if ctx.ToProd != nil {

@@ -115,6 +115,13 @@ func TestMentionsWholeIdentifiersOnly(t *testing.T) {
 		{"SELECT total$ FROM t", "total", false}, // $ is part of an identifier in Dataform JS output
 		{"SELECT xdiscount, discount FROM t", "discount", true},
 		{"discount", "discount", true},
+		{"SELECT * FROM `p.marts.customers`", "marts.customers", true},
+		{"SELECT * FROM `p`.`Marts`.`customers` c", "marts.customers", true},
+		{"SELECT * FROM marts.customers", "marts.customers", true},
+		{"SELECT * FROM `p.crm.customers`", "marts.customers", false}, // moved to another dataset
+		{"SELECT * FROM `p.old_marts.customers`", "marts.customers", false},
+		{"SELECT * FROM `p.marts.customers_v2`", "marts.customers", false},
+		{"SELECT * FROM `p.martsXcustomers`", "marts.customers", false}, // the dot is literal
 	} {
 		if got := Mentions(c.sql, c.id); got != c.want {
 			t.Errorf("Mentions(%q, %q) = %v", c.sql, c.id, got)
@@ -268,6 +275,30 @@ func TestBuildSplitsTablesAndLooksUpOnlyWhatIsAtRisk(t *testing.T) {
 		if strings.Contains(c, "p.marts.daily") {
 			t.Errorf("a lookup for a safe table: %s", c)
 		}
+	}
+}
+
+func TestBuildSettlesAReaderOfATableMovedToAnotherDataset(t *testing.T) {
+	// The branch moves customers from marts to crm, and revenue's ref()
+	// follows it: its new SQL still names customers, but in crm.
+	src := &fakeSource{tableLinks: map[string][]lineage.ColumnLink{
+		"p.marts.customers": {{Table: "p.marts.revenue", DependencyType: lineage.TableOnly}},
+	}}
+	res, err := Build(context.Background(), []Candidate{
+		{Table: "p.marts.customers", FileName: "definitions/customers.sqlx", Type: "table", Deleted: true},
+	}, src, readerContext([]string{"p.marts.revenue"}, map[string]string{"p.marts.revenue": "SELECT amount AS net FROM `p.crm.customers`"}), func(int, int) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.AtRisk) != 1 || len(res.AtRisk[0].Readers) != 1 {
+		t.Fatalf("at risk %+v", res.AtRisk)
+	}
+	customers := res.AtRisk[0]
+	if r := customers.Readers[0]; !r.ProbablyUpdated || r.StillNamed {
+		t.Errorf("reader %+v: it names crm.customers now, not marts.customers", r)
+	}
+	if got := TableSeverity(customers); got != SeverityLow {
+		t.Errorf("severity %v, want low", got)
 	}
 }
 

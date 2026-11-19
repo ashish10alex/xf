@@ -143,7 +143,7 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 		if c.Deleted {
 			entry := &Table{Table: c.Table, FileName: c.FileName, Type: c.Type, Deleted: true, Columns: []Column{}, RenamedTo: c.RenamedTo}
 			atRisk = append(atRisk, entry)
-			name := c.Table[strings.LastIndexByte(c.Table, '.')+1:]
+			name := TablePath(c.Table)
 			lookups = append(lookups, func() {
 				links, err := src.TableReaders(ctx, c.target())
 				if err != nil {
