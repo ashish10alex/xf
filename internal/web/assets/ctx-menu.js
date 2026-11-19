@@ -12,6 +12,11 @@ let menu = null; // the open menu: {el, rows, at, onPick, close()}
 
 export const menuOpen = () => !!menu;
 
+// menuItems are the open menu's rows, {label, key, off}, null with none
+// open (agent.js); pickMenuItem picks row i, as a click on it does.
+export const menuItems = () => (menu ? menu.rows.map(({ it }) => ({ label: it.label, key: it.key || '', off: it.off || '' })) : null);
+export const pickMenuItem = (i) => pick(i);
+
 // showMenu shows items at xy (client px). opts.scrollEl closes it when
 // that element scrolls; opts.onPick runs before a picked item does (the
 // source pane gives its editor focus back there).

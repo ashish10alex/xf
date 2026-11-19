@@ -3,7 +3,8 @@
 // failed or hang, focus moves, the event stream dropping and stalls. Its
 // lines go to xf web every few seconds, which appends them to its page
 // log (pagelog.go: ~/.local/state/xf/web-page.log); xfLog() in the
-// console prints this page's. It imports nothing, so any module can note.
+// console prints this page's. It imports nothing, so any module can note;
+// xfAgent() in the console loads agent.js.
 
 const keepMax = 1000;
 const kept = []; // this page's last lines, for xfLog()
@@ -201,6 +202,10 @@ export function requestStart(method, path) {
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined' && window.addEventListener) {
   window.xfLog = () => console.log(diagLines().join('\n'));
+  // xfAgent loads agent.js, which reads and drives the page for an agent
+  // in the browser preview: `const a = await xfAgent(); a.snapshot()`.
+  // It is outside the first load, and comes only when asked for.
+  window.xfAgent = () => import('./agent.js');
   window.addEventListener('error', (e) => note(`error: ${errText(e.error || e.message)}${e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : ''} · ${stateOf()}`, true));
   window.addEventListener('unhandledrejection', (e) => note(`unhandled rejection: ${errText(e.reason)} · ${stateOf()}`, true));
   document.addEventListener('focusin', (e) => note(`focus → ${describe(e.target)}`));

@@ -49,15 +49,37 @@ Both run `scripts/preview.sh`, whose header says what it sets up:
 - `key` sends an empty `code`. Where a handler reads `code`, dispatch a `KeyboardEvent` that carries one from `javascript_tool`.
 - The pane denies the clipboard.
 
+### Reading and driving the page
+
+`await xfAgent()` in the page loads `agent.js` (outside the first load), the page as an agent sees it:
+
+```js
+const a = await xfAgent();
+a.snapshot();                                  // mode, top layer, focus, selection, source pane, palette, menu, legal commands, last log lines
+await a.act('command', 'zoom pane');           // a legal palette command, by its title or a unique part of it
+await a.act('key', 'ctrl+shift+p');            // a KeyboardEvent with its code, through main.js's handlers
+await a.act('palette', { query: '#orders', pick: 0 });
+await a.act('selectAction', 'project.dataset.orders');
+await a.act('openFile', 'definitions/orders.sqlx');
+await a.act('focus', 'sql');                   // also closeOverlay, pickMenu (a right-click menu's row, by label)
+await a.waitFor((s) => s.view?.id === 'project.dataset.orders', 5000);
+a.log(20);                                     // the page log's last lines, the agent's steps among them
+```
+
+- Each `act` answers `{ ok, blocked, reason, candidates, snapshot }`: an ambiguous title lists the candidates.
+- It refuses what costs money or can't be undone (runs, full refresh, Databricks checks, git commit or push, deletes, discards, removing a worktree, closing the project, quitting xf web, keys into the terminal) with `blocked: true`.
+  Ask the user, then pass `{ allowDangerous: true }` as its third argument.
+- `waitFor` checks after each draw and every 100ms, so it works while the pane is hidden.
+
 ### Reading what the page shows
 
-- Read state, not pixels: `await import(new URL('state.js', location.href))` gives the live `S`; `settings.js` gives `SET`.
+- Read state, not pixels: `snapshot()` above, or `await import(new URL('state.js', location.href))` for the live `S`; `settings.js` gives `SET`.
   Check the DOM by JS (for example `.cm-activeLine`) over a screenshot, which can lag a render while the pane is hidden.
 - A screenshot or zoom costs as much context as dozens of JS reads, and stays in it for the rest of the session.
   Take one only when a look is the point (a layout, a colour), at `scale: 0.5`, and not inside a `browser_batch` of key presses.
 - `requestAnimationFrame` stops while the pane is hidden. To record something that changes over time, use a `MutationObserver` and `setTimeout`.
 - A `navigate` that hangs is an approval prompt waiting on the Mac: tell the user.
-- In the source editor, drive loads through `selectAction` and `discard()`.
+- In the source editor, drive loads through `selectAction` (`act('selectAction', id)`) and `discard()`.
   Calling `ed.set()` directly skips `hooks.sourceLoaded`, and the next edit then logs "Mismatched change set lengths".
 
 ## BigQuery and GCP

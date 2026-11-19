@@ -34,6 +34,7 @@ When the page stops answering, read `~/.local/state/xf/web-page.log` (`$XDG_STAT
 `diag.js` notes each key with what had the keys and what it did (`used, drew`, `draw failed`, `to the editor`, …), draws that threw, with their stack, uncaught errors, failed and hanging requests, focus moves, event stream drops and stalls, and sends them every 2s; `pagelog.go` appends them, starting again past 4 MB (the last kept as `.1`).
 Typed text is never logged: a key into an editor or box is `·`.
 `xfLog()` in the console prints this page's lines.
+`xfAgent()` loads `agent.js`, which reads and drives the page for an agent (`docs/agents/checking-changes.md`): it reads the modules' state objects and runs their own functions, so a new overlay or page shows in its `snapshot()` once `layer()` there names it, and a new command that costs money or can't be undone needs a pattern in its `risky` list.
 A draw that throws also shows a red banner, since the page then looks frozen.
 
 ## Performance budgets

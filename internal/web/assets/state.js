@@ -142,6 +142,10 @@ export const S = {
 
 let drawFn = () => {};
 export function onRedraw(f) { drawFn = f; }
+// afterRedraw adds f to what runs after each draw that works, beside
+// onRedraw's one (agent.js's waitFor). It returns what takes f off again.
+const afterDraw = new Set();
+export function afterRedraw(f) { afterDraw.add(f); return () => afterDraw.delete(f); }
 let pending = false;
 export function redraw() {
   if (pending) return;
@@ -157,6 +161,9 @@ export function redraw() {
       return;
     }
     drew();
+    for (const f of afterDraw) {
+      try { f(); } catch (err) { note('after draw: ' + (err && err.message)); }
+    }
   });
 }
 
@@ -1633,7 +1640,7 @@ export function openPalette(query = '') {
   if (!keptZoom) S.zoomed = false;
   S.overlay = 'palette';
   S.palette = { ...S.palette, scratch: false, keptZoom, query, cursor: 0, first, firstFiles: firstFiles(), commands: byRecent(commands()), symbols: null, symKind: '', items: [], found: 0, fromEditor: editingSource() };
-  if (actionQuery() !== null) findActions(true);
+  if (actionQuery() !== null) findAsked = findActions(true);
   else if (fileQuery() !== null) { startOnPrevious(); fetchFiles(); }
 }
 
@@ -1664,12 +1671,16 @@ export function symbolQuery() {
   return q.startsWith("@") ? q.slice(1) : null;
 }
 
-export async function fetchSymbols() {
-  if (hooks.sourceSymbols) {
+let symbolsAsked = null;
+export function fetchSymbols() {
+  if (!hooks.sourceSymbols) return Promise.resolve();
+  const p = (async () => {
     const syms = await hooks.sourceSymbols();
     S.palette.symbols = syms || [];
     redraw();
-  }
+  })();
+  symbolsAsked = p;
+  return p;
 }
 
 export async function openSymbols() {
@@ -1689,7 +1700,7 @@ export async function openSymbols() {
 }
 hooks.openSymbols = openSymbols;
 
-let findTimer = null;
+let findTimer = null, findAsked = null, findDone = null;
 export function setPaletteQuery(q) {
   S.palette.query = q;
   S.palette.cursor = 0;
@@ -1704,8 +1715,24 @@ export function setPaletteQuery(q) {
     return;
   }
   clearTimeout(findTimer);
-  findTimer = setTimeout(() => findActions(false), 25);
+  if (findDone) findDone();
+  findAsked = new Promise((res) => {
+    findDone = res;
+    findTimer = setTimeout(() => { findDone = null; findActions(false).then(res, res); }, 25);
+  });
   redraw();
+}
+
+// paletteSettled waits for any in-flight palette fetch (actions, files
+// or symbols) so agent.js can pick right after opening or querying.
+export async function paletteSettled() {
+  for (let n = 0; n < 4; n++) {
+    const a = findAsked, b = filesAsked, c = symbolsAsked;
+    const p = [a, b, c].filter(Boolean);
+    if (!p.length) return;
+    await Promise.allSettled(p);
+    if (a === findAsked && b === filesAsked && c === symbolsAsked) break;
+  }
 }
 
 async function findActions(opening) {
@@ -1997,6 +2024,10 @@ function countUse(title) {
   S.commandUses[title] = { count: u.count + 1, last: new Date().toISOString() };
   post('/api/command', { title }).then((r) => { if (r) S.commandUses = r; }).catch(() => {});
 }
+
+// paletteCommands are the commands the palette's ">" would list now,
+// {title, key, run, state}, for agent.js to read and pick from.
+export const paletteCommands = () => commands();
 
 // commands are what the palette's ">" lists, as the TUI's do.
 function commands() {
