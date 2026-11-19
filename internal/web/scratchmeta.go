@@ -2,7 +2,7 @@ package web
 
 // What the Scratch editor asks of the server beyond running queries:
 // the tables and columns to complete, a table's documentation for its hover
-// card, BigQuery's functions, and the filter that searches every row of a
+// card, the warehouse's functions, and the filter that searches every row of a
 // result in BigQuery.
 
 import (
@@ -17,6 +17,7 @@ import (
 
 	"github.com/ashish10alex/xf/internal/bqfuncs"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/sparkfuncs"
 	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
@@ -77,12 +78,16 @@ func clearsMeta(statementType string) bool {
 	return false
 }
 
-// ---- BigQuery's functions ----
+// ---- the warehouse's functions ----
 
-// scratchFunctions lists the functions the editor completes and explains;
-// they are no project's, and are the same while xf runs.
+// scratchFunctions lists the functions the editors complete and explain:
+// BigQuery's, or Databricks' for ?dialect=databricks. They are no
+// project's, and are the same while xf runs.
 func (s *Server) scratchFunctions(w http.ResponseWriter, r *http.Request) {
 	all, err := bqfuncs.All()
+	if r.URL.Query().Get("dialect") == "databricks" {
+		all, err = sparkfuncs.All()
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

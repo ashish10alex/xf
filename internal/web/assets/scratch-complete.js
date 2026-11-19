@@ -154,6 +154,8 @@ function cteNames(clean) {
 
 // KEYWORDS are left out of the editor's words.
 const KEYWORDS = new Set([...NOT_ALIAS, ...'with recursive distinct by asc desc null true false case if all any exists between like rows range over current row unbounded preceding following interval struct array cast safe_cast extract date datetime time timestamp int64 float64 numeric bignumeric bool string bytes json geography insert into values update delete merge create replace table view temp temporary declare begin commit rollback'.split(' ')]);
+// DBX_KEYWORDS are Databricks SQL's words left out too.
+const DBX_KEYWORDS = new Set('int bigint smallint tinyint long short double float decimal boolean binary void map timestamp_ntz variant try_cast lateral qualify pivot unpivot'.split(' '));
 
 // words are the names written anywhere in the editor but the one being
 // typed at [from, to): backticked names, keywords and functions left out.
@@ -162,7 +164,7 @@ export function words(sql, from, to) {
   const out = new Map();
   for (const m of text.replace(/`[^`\n]*`?/g, (x) => ' '.repeat(x.length)).matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
     const w = m[0];
-    if (w.length < 2 || KEYWORDS.has(w.toLowerCase()) || out.has(w.toLowerCase()) || isFunctionName(w)) continue;
+    if (w.length < 2 || KEYWORDS.has(w.toLowerCase()) || (onDbx() && DBX_KEYWORDS.has(w.toLowerCase())) || out.has(w.toLowerCase()) || isFunctionName(w)) continue;
     out.set(w.toLowerCase(), w);
   }
   return [...out.values()];
@@ -374,7 +376,11 @@ export function afterTable(clean, start) {
 // '2024-01-31' _2024_01_31), after the aggregate's prefix and _ when it has
 // one; a value of any other kind with no alias names none. An UNPIVOT makes
 // its values and name columns.
-export function madeColumns(sql, clean, from = 0, to = clean.length) {
+//
+// On Databricks (dbx) a value names its column by its alias or itself ('Q1'
+// gives Q1, 1 gives 1, DATE '2024-01-31' 2024-01-31), and only when there is
+// more than one aggregate is the aggregate's alias put after it, with _.
+export function madeColumns(sql, clean, from = 0, to = clean.length, dbx = onDbx()) {
   const out = [];
   const add = (name, by) => { if (name && !out.some((c) => c.name === name)) out.push({ name, by }); };
   const re = /\b(un)?pivot(?:\s+(?:include|exclude)\s+nulls)?\s*\(/gi;
@@ -398,6 +404,14 @@ export function madeColumns(sql, clean, from = 0, to = clean.length) {
       return p ? p[1] : '';
     });
     for (const [a, b] of splitTop(clean, list + 1, listEnd)) {
+      if (dbx) {
+        const name = dbxPivotName(sql.slice(a, b), clean.slice(a, b));
+        // An aggregate with no alias of several names its column by its
+        // SQL, which isn't worth guessing.
+        if (prefixes.length === 1) add(name, 'pivot');
+        else for (const p of prefixes) if (name && p) add(name + '_' + p, 'pivot');
+        continue;
+      }
       const name = pivotName(sql.slice(a, b), clean.slice(a, b));
       for (const p of prefixes) if (name) add(p ? p + '_' + name : name, 'pivot');
     }
@@ -418,6 +432,19 @@ function pivotName(raw, clean) {
   if (lit === null) return (/\bas\s+([A-Za-z_]\w*)\s*$/i.exec(clean) || [])[1] || '';
   const rest = t.slice(m[0].length);
   return rest.trim() ? alias(rest) || '' : lit;
+}
+
+// dbxPivotName is the column a value of a PIVOT's IN list names on
+// Databricks, or ''.
+function dbxPivotName(raw, clean) {
+  const t = raw.trim();
+  let m, lit = null;
+  if ((m = /^(?:date\s*)?(['"])((?:\\.|(?!\1)[^\\])*)\1/i.exec(t))) lit = m[2];
+  else if ((m = /^-?\s*\d+(?:\.\d+)?(?![\w.])/.exec(t))) lit = m[0].replace(/\s/g, '');
+  else if ((m = /^(true|false|null)\b/i.exec(t))) lit = m[1].toLowerCase();
+  if (lit === null) return (/\bas\s+([A-Za-z_]\w*)\s*$/i.exec(clean) || [])[1] || '';
+  const rest = t.slice(m[0].length);
+  return rest.trim() ? (/^\s*(?:as\s+)?([A-Za-z_]\w*)\s*$/i.exec(rest) || [])[1] || '' : lit;
 }
 
 // keywordAt is where the word kw is in clean[a, b), at the level of a, or -1.
@@ -500,8 +527,9 @@ async function columnOptions(tok, tokStart, sql, pos) {
       for (const f of fields) options.push(field(f, hit ? hit.ref.alias || hit.ref.parts[hit.ref.parts.length - 1] : '', 2));
       return { from, options };
     }
-    // SAFE. comes before a function.
-    if (qual.length === 1 && first === 'safe') return { from, options: await functionOptions(1) };
+    // SAFE. comes before a function, in BigQuery; on Databricks it may be a
+    // schema.
+    if (qual.length === 1 && first === 'safe' && !onDbx()) return { from, options: await functionOptions(1) };
     // Anything else, such as a CTE, offers everything below.
   }
   const names = new Set();
@@ -534,9 +562,9 @@ async function columnOptions(tok, tokStart, sql, pos) {
       options.push(o);
     }
   }
-  // BigQuery's functions, below the columns, unless a backticked name is
-  // being typed; none on Databricks, whose functions xf doesn't list yet.
-  if (!qual.length && !tok.startsWith('`') && !onDbx()) options.push(...await functionOptions(1));
+  // The warehouse's functions, below the columns, unless a backticked name
+  // is being typed.
+  if (!qual.length && !tok.startsWith('`')) options.push(...await functionOptions(1));
   // Every other word in the editor: a CTE's columns and aliases, names in
   // another statement, whatever has been typed.
   for (const w of words(sql, from, pos)) {

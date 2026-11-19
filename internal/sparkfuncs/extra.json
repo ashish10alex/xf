@@ -1,0 +1,102 @@
+{
+  "$comment": "xf's own, in bqfuncs' catalog format: Databricks SQL's functions and forms that Spark's reference (spark-functions.json) lacks, and the values of arguments it lists none for. An entry takes the place of the catalog's function of its name, or adds one. A param with no type is its name alone in the signature.",
+  "valueSets": {
+    "unit": ["MICROSECOND", "MILLISECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR"],
+    "field": ["'YEAR'", "'QUARTER'", "'MONTH'", "'WEEK'", "'DAY'", "'DAYOFWEEK'", "'DOY'", "'HOUR'", "'MINUTE'", "'SECOND'"]
+  },
+  "functions": [
+    {
+      "name": "TIMESTAMPADD",
+      "doc": "Adds `value` `unit`s to a timestamp; a negative `value` subtracts them.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "unit", "type": "", "values": "unit" },
+            { "name": "value", "type": "", "doc": "the number of units to add" },
+            { "name": "expr", "type": "", "doc": "a TIMESTAMP expression" }
+          ],
+          "returns": "TIMESTAMP"
+        }
+      ],
+      "example": { "sql": "timestampadd(HOUR, 2, TIMESTAMP'2022-02-28 00:00:00')", "result": "2022-02-28 02:00:00" },
+      "url": "https://docs.databricks.com/aws/en/sql/language-manual/functions/timestampadd"
+    },
+    {
+      "name": "TIMESTAMPDIFF",
+      "doc": "The whole `unit`s elapsed from `start` to `end`; negative when `start` is later.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "unit", "type": "", "values": "unit" },
+            { "name": "start", "type": "", "doc": "a TIMESTAMP expression" },
+            { "name": "end", "type": "", "doc": "a TIMESTAMP expression" }
+          ],
+          "returns": "BIGINT"
+        }
+      ],
+      "example": { "sql": "timestampdiff(HOUR, TIMESTAMP'2022-01-01 00:00:00', TIMESTAMP'2022-01-01 05:00:00')", "result": "5" },
+      "url": "https://docs.databricks.com/aws/en/sql/language-manual/functions/timestampdiff"
+    },
+    {
+      "name": "DATEADD",
+      "doc": "Adds `value` `unit`s to a timestamp, as TIMESTAMPADD; or, given a date and a number, that many days to the date.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "unit", "type": "", "values": "unit" },
+            { "name": "value", "type": "", "doc": "the number of units to add" },
+            { "name": "expr", "type": "", "doc": "a TIMESTAMP expression" }
+          ],
+          "returns": "TIMESTAMP"
+        },
+        {
+          "params": [
+            { "name": "start_date", "type": "" },
+            { "name": "num_days", "type": "" }
+          ],
+          "returns": "DATE"
+        }
+      ],
+      "example": { "sql": "dateadd(MONTH, 1, TIMESTAMP'2022-01-31 00:00:00')", "result": "2022-02-28 00:00:00" },
+      "url": "https://docs.databricks.com/aws/en/sql/language-manual/functions/dateadd"
+    },
+    {
+      "name": "DATEDIFF",
+      "doc": "The days from `startDate` to `endDate`; or, given a unit first, the whole units from `start` to `end`, as TIMESTAMPDIFF.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "endDate", "type": "" },
+            { "name": "startDate", "type": "" }
+          ],
+          "returns": "INT"
+        },
+        {
+          "params": [
+            { "name": "unit", "type": "", "values": "unit" },
+            { "name": "start", "type": "" },
+            { "name": "end", "type": "" }
+          ],
+          "returns": "BIGINT"
+        }
+      ],
+      "example": { "sql": "datediff('2009-07-31', '2009-07-30')", "result": "1" },
+      "url": "https://docs.databricks.com/aws/en/sql/language-manual/functions/datediff"
+    },
+    {
+      "name": "DATE_PART",
+      "doc": "Extracts a part of a date, timestamp or interval, as EXTRACT does, with the part as a string.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "field", "type": "", "values": "field" },
+            { "name": "source", "type": "", "doc": "a date, timestamp or interval" }
+          ],
+          "returns": ""
+        }
+      ],
+      "example": { "sql": "date_part('YEAR', TIMESTAMP '2019-08-12 01:00:00.123456')", "result": "2019" },
+      "url": "https://docs.databricks.com/aws/en/sql/language-manual/functions/date_part"
+    }
+  ]
+}

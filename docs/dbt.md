@@ -69,7 +69,9 @@ Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the 
   There is no dry run, so nothing reaches the warehouse as you type; a statement that changes data is still asked about first, from its first words.
   A scratch's first line names the catalog its unqualified names are in.
   Results are read a chunk at a time, so a large one pages as on BigQuery; Databricks keeps a result for a short while, and has no table of it to search every row of, so a search covers the loaded rows.
-  Completion lists Unity Catalog's schemas, tables and columns; Databricks SQL's functions aren't listed yet.
+  Completion lists Unity Catalog's schemas, tables and columns, and Databricks SQL's functions, in scratches and in a model's SQL: snippets, the values an argument takes (`DATE_TRUNC`'s `'YEAR'`, `TIMESTAMPADD`'s `HOUR`), signature help and `K` cards that link to the Databricks SQL reference.
+  They come from Apache Spark's function reference (`just spark-functions`), with the forms Databricks adds (`TIMESTAMPADD`, `DATEDIFF(unit, …)`); Spark's reference gives no argument types, so a signature names its arguments alone.
+  PIVOT's columns are named as Databricks names them: `Q1`, or `Q1_total` when there are several aggregates.
 - **Hover cards** on a table, in xf web's editors and the language server, read Unity Catalog and link to Catalog Explorer.
 - `u` opens a table in Catalog Explorer.
 - **Column impact** (`xf impact`, `xf check`, and `I` in xf web) runs when you ask for it, and may start the SQL warehouse.

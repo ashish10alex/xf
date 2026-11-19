@@ -55,7 +55,9 @@ A project that turns dbt's query comment off gets no history, and xf says why.
 **The TUI hides warehouse features for Databricks** (dry runs, columns, cost) with a one-line note.
 Browsing, lineage, compiles and runs work as they do; the TUI is in maintenance mode and gets no Databricks work.
 
-**Not now:** defer to prod (it needs the tables a query reads, and on Databricks would be better built on dbt's own `--defer --state`), Spark SQL functions in scratch completion (its own catalog, source and licence, as `bqfuncs`), and the queries of a run in the runs view (dbt's output only, until cost history can link them).
+**Not now:** defer to prod (it needs the tables a query reads, and on Databricks would be better built on dbt's own `--defer --state`), and the queries of a run in the runs view (dbt's output only, until cost history can link them).
+
+**Amended 2026-11-19: Databricks SQL's functions complete** in xf web's editors, from `internal/sparkfuncs`: a catalog in `bqfuncs`' format that `just spark-functions` writes from Apache Spark's built-in function reference (Apache License 2.0), linked to the Databricks SQL reference, with xf's own `extra.json` for the forms Databricks adds. The page asks for them with `/api/scratch/functions?dialect=databricks`.
 
 **Testing.**
 `internal/databricks` is tested against `httptest`, as `internal/bigquery` is.

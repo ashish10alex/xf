@@ -1,0 +1,44 @@
+{
+  "$comment": "xf's own, in bqfuncs' catalog format: the operators written as a call after a table in FROM, as Databricks writes them. The editor offers them there alone, not where a function goes. Params with no type and no doc keep the card short.",
+  "valueSets": {},
+  "functions": [
+    {
+      "name": "PIVOT",
+      "doc": "Turns rows into columns: one column for each value in IN.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "aggregate", "type": "", "snippet": "{SUM}({value_column})" },
+            { "name": "column", "type": "", "before": "FOR" },
+            { "name": "(values)", "type": "", "before": "IN", "snippet": "({values})" }
+          ],
+          "returns": ""
+        }
+      ],
+      "example": {
+        "sql": "SELECT * FROM sales PIVOT(SUM(amount) FOR quarter IN ('Q1', 'Q2'))",
+        "result": "product, Q1, Q2"
+      },
+      "url": "https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-pivot"
+    },
+    {
+      "name": "UNPIVOT",
+      "doc": "Turns columns into rows: one row for each column in IN.",
+      "signatures": [
+        {
+          "params": [
+            { "name": "value_column", "type": "" },
+            { "name": "name_column", "type": "", "before": "FOR" },
+            { "name": "(columns)", "type": "", "before": "IN", "snippet": "({columns})" }
+          ],
+          "returns": ""
+        }
+      ],
+      "example": {
+        "sql": "SELECT * FROM sales UNPIVOT(amount FOR quarter IN (Q1, Q2))",
+        "result": "product, amount, quarter"
+      },
+      "url": "https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-unpivot"
+    }
+  ]
+}

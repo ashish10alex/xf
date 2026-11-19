@@ -1,9 +1,11 @@
-// BigQuery's functions in the Scratch editor: their completion as snippets,
-// the values an argument takes, the card the mouse and K show of one, and
-// the signature help above a call while its arguments are typed.
+// The warehouse's functions in the Scratch editor: their completion as
+// snippets, the values an argument takes, the card the mouse and K show of
+// one, and the signature help above a call while its arguments are typed.
 //
-// The server lists them (internal/bqfuncs): vscode-dataform-tools' catalog,
-// each function's typed arguments, and the snippets it borrowed for the rest.
+// The server lists them: BigQuery's (internal/bqfuncs), vscode-dataform-tools'
+// catalog, each function's typed arguments, and the snippets it borrowed for
+// the rest; or, for a project that builds in Databricks (ADR 0042),
+// Databricks' (internal/sparkfuncs), from Spark's function reference.
 // The call and argument the cursor is in are read as the extension reads
 // them (its src/bigquery/functionCall.ts).
 //
@@ -12,40 +14,49 @@
 // JavaScript blanked, and does nothing when it gives null.
 
 import * as cm from './vendor/codemirror.mjs';
-import { get } from './state.js';
+import { S, get } from './state.js';
 
-// F is the functions once they are here: { list, byName }.
-let F = null;
-let loading = null;
+// dialect is the SQL of the open project: 'databricks' or 'bigquery'.
+export const dialect = () => (S.caps && S.caps.warehouse === 'databricks' ? 'databricks' : 'bigquery');
+const onBigQuery = () => dialect() === 'bigquery';
 
-// loadFunctions asks the server for the functions, once.
+// loaded is each dialect's functions once they are here, { list, byName },
+// and loading its request.
+const loaded = {};
+const loading = {};
+const fns = () => loaded[dialect()] || null;
+
+// loadFunctions asks the server for the dialect's functions, once.
 export function loadFunctions() {
-  if (!loading) {
-    loading = get('/api/scratch/functions').then((list) => {
-      F = { list, byName: new Map(list.map((f) => [f.name, f])) };
-      return F;
-    }).catch(() => { loading = null; return null; });
+  const d = dialect();
+  if (!loading[d]) {
+    loading[d] = get('/api/scratch/functions' + (d === 'bigquery' ? '' : '?dialect=' + d)).then((list) => {
+      loaded[d] = { list, byName: new Map(list.map((f) => [f.name, f])) };
+      return loaded[d];
+    }).catch(() => { loading[d] = null; return null; });
   }
-  return loading;
+  return loading[d];
 }
 
-// functionNamed is the function of a name as written, in any case and with
-// or without SAFE. before it.
+// functionNamed is the function of a name as written, in any case and, on
+// BigQuery, with or without SAFE. before it.
 export function functionNamed(name) {
+  const F = fns();
   if (!F) return undefined;
   const upper = name.toUpperCase();
-  return F.byName.get(upper) || (upper.startsWith('SAFE.') ? F.byName.get(upper.slice(5)) : undefined);
+  return F.byName.get(upper) || (upper.startsWith('SAFE.') && onBigQuery() ? F.byName.get(upper.slice(5)) : undefined);
 }
 
-export const isFunctionName = (word) => !!F && F.byName.has(word.toUpperCase());
+export const isFunctionName = (word) => !!fns() && fns().byName.has(word.toUpperCase());
 
 // ---- the call the cursor is in ----
 
 // scan is each bracket open at the end of text, with the commas and words
 // written at its own level, and whether the end is in code rather than in a
-// string or a comment.
+// string or a comment. # begins a comment in BigQuery alone.
 function scan(text) {
   const frames = [];
+  const hash = onBigQuery();
   let i = 0;
   const skipTo = (end, from) => {
     const at = text.indexOf(end, from);
@@ -55,7 +66,7 @@ function scan(text) {
   while (i < text.length) {
     const c = text[i];
     const two = text.slice(i, i + 2);
-    if (two === '--' || c === '#') {
+    if (two === '--' || (c === '#' && hash)) {
       if (!skipTo('\n', i)) return { frames, inCode: false };
       continue;
     }
@@ -186,19 +197,21 @@ const asOption = (f, boost) => cm.snippetCompletion(f.snippet, {
   label: f.name, detail: shortArgs(f), type: 'function', boost, info: () => functionCard(f, true),
 });
 
-export const isAggregate = (f) => /aggregate_functions/.test(f.url);
+export const isAggregate = (f) => !!f.aggregate;
 
 // functionOptions are every function, each inserted as its snippet, or
 // the aggregates alone. PIVOT and UNPIVOT are no function: clauseOptions
 // has them.
 export async function functionOptions(boost, aggregates = false) {
-  if (!(await loadFunctions())) return [];
+  const F = await loadFunctions();
+  if (!F) return [];
   return F.list.filter((f) => !f.clause && (!aggregates || isAggregate(f))).map((f) => asOption(f, boost));
 }
 
 // clauseOptions are PIVOT and UNPIVOT, which go after a table in FROM.
 export async function clauseOptions(boost) {
-  if (!(await loadFunctions())) return [];
+  const F = await loadFunctions();
+  if (!F) return [];
   return F.list.filter((f) => f.clause).map((f) => ({ ...asOption(f, boost), type: 'keyword' }));
 }
 
@@ -242,6 +255,9 @@ function rich(tag, cls, text) {
   return e;
 }
 
+// docsSite names the docs a function links to.
+const docsSite = (url) => (/databricks\.com/.test(url) ? 'Databricks' : /spark\.apache\.org/.test(url) ? 'Spark' : 'BigQuery');
+
 // functionCard is what a function is: its signatures, what it does, its
 // params, notes, an example and its docs. compact is the narrower one
 // beside a completion.
@@ -270,7 +286,7 @@ export function functionCard(f, compact) {
     ex.append(el('b', '', 'Example: '), el('code', '', f.example.sql), document.createTextNode(' → ' + f.example.result));
     root.append(ex);
   }
-  const a = el('a', 'sc-card-link', f.searched ? 'Search the BigQuery docs ↗' : 'BigQuery docs ↗');
+  const a = el('a', 'sc-card-link', (f.searched ? 'Search the ' : '') + docsSite(f.url) + ' docs ↗');
   a.href = f.url; a.target = '_blank'; a.rel = 'noopener';
   const link = el('div', 'sc-card-line');
   link.append(a);

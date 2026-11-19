@@ -38,6 +38,20 @@ const dialectOf = (functions) => cm.SQLDialect.define({
 // from builtins) colored as such.
 export const bigquerySQL = (functions) => cm.sql({ dialect: dialectOf(functions), upperCaseKeywords: false });
 
+// Databricks SQL: backtick-quoted names too, but no # comments, and Spark's
+// types.
+const dbxTypes = sqlTypes + ' bigint smallint tinyint long short double float decimal boolean binary void map timestamp_ntz variant';
+const dbxDialectOf = (functions) => cm.SQLDialect.define({
+  identifierQuotes: '`',
+  keywords: sqlKeywords + ' lateral pivot unpivot try_cast',
+  types: dbxTypes,
+  builtin: functions.join(' '),
+});
+
+// warehouseSQL is the language of a query in BigQuery, or in Databricks when
+// dbx says so.
+export const warehouseSQL = (dbx, functions) => (dbx ? cm.sql({ dialect: dbxDialectOf(functions), upperCaseKeywords: false }) : bigquerySQL(functions));
+
 // builtins are the names of the functions to color: one word each, and no
 // keyword or type.
 export function builtins(list) {

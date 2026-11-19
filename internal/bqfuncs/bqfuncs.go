@@ -62,6 +62,8 @@ type Func struct {
 	// Clause says it is an operator after a table in FROM, as PIVOT: it is
 	// offered there, not where a function goes.
 	Clause bool `json:"clause,omitempty"`
+	// Aggregate says it is an aggregate, which PIVOT( takes.
+	Aggregate bool `json:"aggregate,omitempty"`
 }
 
 // Signature is one way to call a function.
@@ -108,16 +110,16 @@ func load() ([]Func, error) {
 	if err := json.Unmarshal(catalogJSON, &sets); err != nil {
 		return nil, fmt.Errorf("bigquery-functions.json: %w", err)
 	}
-	cat, err := loadCatalog(catalogJSON, nil)
+	cat, err := LoadCatalog(catalogJSON, nil)
 	if err != nil {
 		return nil, fmt.Errorf("bigquery-functions.json: %w", err)
 	}
 	// xf's files name the catalog's value sets, as date_granularity.
-	overrides, err := loadCatalog(overridesJSON, sets.ValueSets)
+	overrides, err := LoadCatalog(overridesJSON, sets.ValueSets)
 	if err != nil {
 		return nil, fmt.Errorf("overrides.json: %w", err)
 	}
-	clauses, err := loadCatalog(clausesJSON, sets.ValueSets)
+	clauses, err := LoadCatalog(clausesJSON, sets.ValueSets)
 	if err != nil {
 		return nil, fmt.Errorf("clauses.json: %w", err)
 	}
@@ -142,6 +144,9 @@ func load() ([]Func, error) {
 		}
 		out[i] = o
 	}
+	for i := range out {
+		out[i].Aggregate = out[i].Aggregate || strings.Contains(out[i].URL, "aggregate_functions")
+	}
 	slices.SortStableFunc(out, func(a, b Func) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
 }
@@ -157,11 +162,12 @@ type catalogFile struct {
 			Params  []catalogParam `json:"params"`
 			Returns string         `json:"returns"`
 		} `json:"signatures"`
-		Window  string   `json:"window"`
-		Over    string   `json:"over"`
-		Notes   []string `json:"notes"`
-		Example *Example `json:"example"`
-		URL     string   `json:"url"`
+		Window    string   `json:"window"`
+		Aggregate bool     `json:"aggregate"`
+		Over      string   `json:"over"`
+		Notes     []string `json:"notes"`
+		Example   *Example `json:"example"`
+		URL       string   `json:"url"`
 	} `json:"functions"`
 }
 
@@ -180,9 +186,10 @@ type catalogParam struct {
 // dropdown of `A|B`.
 var field = regexp.MustCompile(`\{([^{}]*)\}`)
 
-// loadCatalog reads a file in the catalog's format; its params' values may
-// name its own value sets or shared's.
-func loadCatalog(data []byte, shared map[string][]string) ([]Func, error) {
+// LoadCatalog reads a file in the catalog's format; its params' values may
+// name its own value sets or shared's. sparkfuncs' files are in it too.
+// xf adds `aggregate` to the format, for a catalog whose links don't say.
+func LoadCatalog(data []byte, shared map[string][]string) ([]Func, error) {
 	var file catalogFile
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, err
@@ -220,7 +227,7 @@ func loadCatalog(data []byte, shared map[string][]string) ([]Func, error) {
 
 	var out []Func
 	for _, cf := range file.Functions {
-		f := Func{Name: cf.Name, Doc: cf.Doc, Notes: cf.Notes, Example: cf.Example, URL: cf.URL}
+		f := Func{Name: cf.Name, Doc: cf.Doc, Notes: cf.Notes, Example: cf.Example, URL: cf.URL, Aggregate: cf.Aggregate}
 		for _, cs := range cf.Signatures {
 			params := []Param{} // [] in JSON for ROW_NUMBER(), not null
 			for _, cp := range cs.Params {

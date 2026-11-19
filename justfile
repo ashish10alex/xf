@@ -137,3 +137,8 @@ fixtures-local:
 bigquery-functions from="~/vscode-dataform-tools":
     cp {{from}}/snippets/bigquery-functions.json {{from}}/snippets/bigquery.code-snippets.json internal/bqfuncs/
     go test ./internal/bqfuncs/
+
+# Write Databricks' functions from Apache Spark's built-in function reference (a release's)
+spark-functions version="4.3.0":
+    go run ./internal/sparkfuncs/gen -version {{version}}
+    go test ./internal/sparkfuncs/...

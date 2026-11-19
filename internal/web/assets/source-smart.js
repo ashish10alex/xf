@@ -17,7 +17,8 @@
 //   - gd goes to where what is under the cursor is defined, as xf lsp's
 //     go-to-definition does: a ref's action (its file shown in the pane),
 //     an includes name, a require()'s file, a CTE
-//   - in a .sqlx file's SQL, BigQuery's functions as in the Scratch view
+//   - in a .sqlx file's or a dbt model's SQL, the warehouse's functions
+//     (BigQuery's, or Databricks') as in the Scratch view
 //     (scratch-functions.js): completion below the columns, the values an
 //     argument takes, K (or the mouse) on a call shows its card, and the
 //     signature help above a call being written
@@ -30,7 +31,7 @@
 // the pane shows one), and the compile's errors beside them.
 
 import * as cm from './vendor/codemirror.mjs';
-import { S, get, post, redraw, hooks, setFocus, say, onMac } from './state.js';
+import { S, get, post, redraw, hooks, setFocus, say, onMac, tablesSite } from './state.js';
 import { SRC, sourceEditor, goToPlace, isLibraryFile } from './source.js';
 import { wordMarks } from './diff.js';
 import { jumpWithin } from './editor.js';
@@ -63,7 +64,40 @@ const inSpans = (spans, pos) => spans.some(([a, b]) => pos > a && pos <= b);
 
 // sqlOf is the editor's text as SQL, its JavaScript blanked, in a .sqlx
 // file, where BigQuery's functions are offered; null in any other.
-const sqlOf = (state) => (SRC.view && SRC.view.lang === 'sqlx' ? sqlText(state) : null);
+// isDbtModel says the pane shows a dbt model's SQL.
+const isDbtModel = () => !!(SRC.view && SRC.view.lang === 'sql' && S.boot && S.boot.backend === 'dbt');
+
+// JINJA is a dbt model's templates, {{ }}, {% %} and {# #}, one not yet
+// closed running to the end.
+const JINJA = /\{\{[\s\S]*?(?:\}\}|$)|\{%[\s\S]*?(?:%\}|$)|\{#[\s\S]*?(?:#\}|$)/g;
+const jinjaTexts = new WeakMap();
+
+// jinjaBlanked is a dbt model's text with its Jinja blanked, as sqlText
+// blanks a .sqlx file's JavaScript.
+function jinjaBlanked(state) {
+  let out = jinjaTexts.get(state.doc);
+  if (out === undefined) {
+    out = state.doc.toString().replace(JINJA, (m) => m.replace(/[^\n]/g, ' '));
+    jinjaTexts.set(state.doc, out);
+  }
+  return out;
+}
+
+// sqlOf is the SQL of a .sqlx file or a dbt model, the rest blanked; null
+// for any other file.
+const sqlOf = (state) => (SRC.view && SRC.view.lang === 'sqlx' ? sqlText(state) : isDbtModel() ? jinjaBlanked(state) : null);
+
+// inTemplate says pos is in a .sqlx file's JavaScript or a dbt model's
+// Jinja, where no SQL is written.
+function inTemplate(state, pos) {
+  if (!isDbtModel()) return inJavaScript(state, pos);
+  for (const m of state.doc.toString().matchAll(JINJA)) {
+    if (m.index >= pos) break;
+    const closed = /(?:\}\}|%\}|#\})$/.test(m[0]) && m[0].length > 2;
+    if (pos < m.index + m[0].length || (!closed && pos === m.index + m[0].length)) return true;
+  }
+  return false;
+}
 
 // isPy says the pane shows a Python file, which pyrefly knows of.
 const isPy = () => !!(SRC.view && SRC.view.lang === 'python');
@@ -156,7 +190,7 @@ async function refAt(state, pos) {
   if (!hit.hasTable) return { hit, make: withDefer(() => noteDOM(hit, noSchema(hit))) };
   const read = (h && readsProd(h) && prodTable(h)) || hit;
   const card = await tableCard(read, true);
-  if (!card) return { hit, make: withDefer(() => noteDOM(read, 'no schema: the table could not be looked up (is BigQuery signed in?)')) };
+  if (!card) return { hit, make: withDefer(() => noteDOM(read, 'no schema: the table could not be looked up (is ' + (S.caps.warehouse === 'databricks' ? 'Databricks' : 'BigQuery') + ' signed in?)')) };
   return { hit, make: withDefer(() => cardDOM(card)) };
 }
 
@@ -458,13 +492,14 @@ async function columnSource(context) {
   return { from, options, validFor: /^\w*$/ };
 }
 
-// functionPlace is what BigQuery's functions offer at tok, when it is in a
-// .sqlx file's SQL (not in a config { }, js { } or ${ }) and not where a
-// table goes: the values of an argument of fixed values, as DATE_TRUNC's
-// granularity, or else whether functions go there.
+// functionPlace is what the warehouse's functions offer at tok, when it is
+// in a .sqlx file's SQL (not in a config { }, js { } or ${ }) or a dbt
+// model's (not in its Jinja), and not where a table goes: the values of an
+// argument of fixed values, as DATE_TRUNC's granularity, or else whether
+// functions go there.
 function functionPlace(state, tok) {
   const sql = sqlOf(state);
-  if (sql === null || inJavaScript(state, tok.from === tok.to ? tok.from : tok.to)) return null;
+  if (sql === null || inTemplate(state, tok.from === tok.to ? tok.from : tok.to)) return null;
   if (inFromList(blank(sql), tok.from)) return null;
   if (tok.text.includes('.')) return /^safe\.\w*$/i.test(tok.text) ? { from: tok.from + 5 } : null;
   const values = valueOptions(sql.slice(0, tok.from));
@@ -473,14 +508,15 @@ function functionPlace(state, tok) {
 
 // beginsClause is whether text begins PIVOT or UNPIVOT, in any case.
 const beginsClause = (text) => /^\w*$/.test(text) && ['PIVOT', 'UNPIVOT'].some((c) => c.startsWith(text.toUpperCase()));
-const AFTER_REF = new RegExp('\\b(?:from|join)\\s+\\$\\{[^{}]*\\}(?:\\s+(?:as\\s+)?(?!(?:' + [...NOT_ALIAS].join('|') + ')\\b)[A-Za-z_]\\w*)?\\s+$', 'i');
+const AFTER_REF = new RegExp('\\b(?:from|join)\\s+(?:\\$\\{[^{}]*\\}|\\{\\{[^{}]*\\}\\})(?:\\s+(?:as\\s+)?(?!(?:' + [...NOT_ALIAS].join('|') + ')\\b)[A-Za-z_]\\w*)?\\s+$', 'i');
 
 // clauseSpot is whether tok is where PIVOT and UNPIVOT go, after a table in
-// the SQL's FROM or JOIN (a ${ref(…)} too), and begins one of them.
+// the SQL's FROM or JOIN (a ${ref(…)} or {{ ref(…) }} too), and begins one
+// of them.
 function clauseSpot(state, tok) {
   if (!beginsClause(tok.text)) return false;
   const sql = sqlOf(state);
-  if (sql === null || inJavaScript(state, tok.from)) return false;
+  if (sql === null || inTemplate(state, tok.from)) return false;
   return afterTable(blank(sql), tok.from) || AFTER_REF.test(state.doc.sliceString(Math.max(0, tok.from - 400), tok.from));
 }
 
@@ -488,7 +524,7 @@ function clauseSpot(state, tok) {
 // which is all functionSource offers there.
 const pivotAggregate = (state, tok) => !tok.text.includes('.') && inPivotAggregate(sqlOf(state).slice(0, tok.from));
 
-// functionSource offers BigQuery's functions below the columns, as soon as
+// functionSource offers the warehouse's functions below the columns, as soon as
 // they are here: an argument's values alone, as soon as it begins.
 async function functionSource(context) {
   const { state, pos } = context;
@@ -641,7 +677,7 @@ function deferLines(h) {
   if (h.url) {
     const open = document.createElement('button');
     open.className = 'sc-card-link';
-    open.textContent = '↗\u00a0open ' + (prod ? 'prod' : 'dev') + ' in bigquery';
+    open.textContent = '↗\u00a0open ' + (prod ? 'prod' : 'dev') + ' in ' + tablesSite().toLowerCase();
     open.onclick = () => window.open(h.url, '_blank', 'noopener');
     line('sc-card-line', '').append(open);
   }

@@ -53,6 +53,20 @@ test('a PIVOT names a column for each value, as BigQuery does', () => {
   assert.deepEqual(made("SELECT 'pivot(a for b in (1))' -- pivot(a for b in (1))"), []);
 });
 
+const dbx = (sql) => madeColumns(sql, blank(sql), 0, sql.length, true).map((c) => c.name);
+
+test('on Databricks a value names its column, and a second aggregate adds its alias after', () => {
+  assert.deepEqual(dbx("SELECT * FROM t PIVOT(SUM(sales) FOR quarter IN ('Q1', \"Q2\", 'Q3' AS third, 'Q4' fourth))"), ['Q1', 'Q2', 'third', 'fourth']);
+  assert.deepEqual(dbx("SELECT * FROM t PIVOT(SUM(s) FOR y IN (1, -2, TRUE, NULL, DATE '2024-01-31', 1.5))"),
+    ['1', '-2', 'true', 'null', '2024-01-31', '1.5']);
+  // One aggregate's alias names nothing.
+  assert.deepEqual(dbx("SELECT * FROM t PIVOT(SUM(sales) AS total FOR quarter IN ('Q1'))"), ['Q1']);
+  assert.deepEqual(dbx("SELECT * FROM t PIVOT(SUM(sales) AS total, COUNT(*) n FOR quarter IN ('Q1', 'Q2' second))"),
+    ['Q1_total', 'Q1_n', 'second_total', 'second_n']);
+  // An aggregate of several with no alias is named by its SQL: left out.
+  assert.deepEqual(dbx("SELECT * FROM t PIVOT(SUM(sales), COUNT(*) AS n FOR quarter IN ('Q1'))"), ['Q1_n']);
+});
+
 test('an UNPIVOT makes its values and name columns', () => {
   assert.deepEqual(madeColumns('SELECT * FROM t UNPIVOT(sales FOR quarter IN (Q1, Q2))', blank('SELECT * FROM t UNPIVOT(sales FOR quarter IN (Q1, Q2))')),
     [{ name: 'sales', by: 'unpivot' }, { name: 'quarter', by: 'unpivot' }]);

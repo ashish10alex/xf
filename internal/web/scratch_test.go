@@ -390,6 +390,19 @@ func TestScratchFunctions(t *testing.T) {
 	if len(fns) < 200 || trunc == nil || trunc.Snippet == "" || len(trunc.Signatures) == 0 {
 		t.Fatalf("%d functions, DATE_TRUNC = %+v", len(fns), trunc)
 	}
+	// A Databricks project's editors ask for Databricks' functions.
+	var dbx []bqfuncs.Func
+	getJSON(t, c, ts.URL+"/api/scratch/functions?dialect=databricks", &dbx)
+	names := map[string]bqfuncs.Func{}
+	for _, f := range dbx {
+		names[f.Name] = f
+	}
+	if _, ok := names["TIMESTAMPADD"]; !ok || names["DATE_TRUNC"].Snippet != "DATE_TRUNC(${1:'YEAR'}, ${2:ts})" {
+		t.Errorf("databricks: %d functions, DATE_TRUNC = %+v", len(dbx), names["DATE_TRUNC"])
+	}
+	if _, bq := names["SAFE_CAST"]; bq {
+		t.Error("databricks: lists BigQuery's SAFE_CAST")
+	}
 	// A signature of no params is an empty list, which the page reads as one.
 	var raw []map[string]any
 	getJSON(t, c, ts.URL+"/api/scratch/functions", &raw)

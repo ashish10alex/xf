@@ -4,11 +4,14 @@
 // cmd+enter (ctrl+enter elsewhere) runs the selection, else the whole file.
 
 import * as cm from './vendor/codemirror.mjs';
-import { createEditor, bigquerySQL, builtins, isBlock, formatText } from './editor.js';
+import { createEditor, warehouseSQL, builtins, isBlock, formatText } from './editor.js';
 import { completionExtensions, hoverAtCursor } from './scratch-complete.js';
-import { loadFunctions } from './scratch-functions.js';
+import { loadFunctions, dialect } from './scratch-functions.js';
 import { SC, setEditor, refreshMeta, scratchSay, onEdit, scheduleDry, runScratch, flushSave, cancelRun, isRunning } from './scratch.js';
 import { redraw, post } from './state.js';
+
+// sqlOf is the language of the project's warehouse, its functions colored.
+const sqlOf = (functions) => warehouseSQL(dialect() === 'databricks', functions);
 
 // scope is the SQL a run runs: the selection, else the whole file.
 function scopeOf(view) {
@@ -21,7 +24,7 @@ export function mountEditor(parent, onFocus) {
   const run = () => { runScratch(); return true; };
 
   const ed = createEditor(parent, {
-    language: bigquerySQL([]),
+    language: sqlOf([]),
     placeholder: 'SELECT … then cmd+enter runs it',
     extensions: [...completionExtensions()],
     keys: [
@@ -47,7 +50,7 @@ export function mountEditor(parent, onFocus) {
   const view = ed.view;
   function format() { formatText(ed, (text) => post('/api/format', { scratch: true, text }), scratchSay); }
 
-  loadFunctions().then((F) => { if (F) ed.setLanguage(bigquerySQL(builtins(F.list))); });
+  loadFunctions().then((F) => { if (F) ed.setLanguage(sqlOf(builtins(F.list))); });
 
   const handle = {
     doc: ed.doc,
@@ -101,11 +104,11 @@ export function mountEditor(parent, onFocus) {
 // its own). ctrl+w gives the keys back to the results.
 export function mountRunSQL(parent) {
   const ed = createEditor(parent, {
-    language: bigquerySQL([]),
+    language: sqlOf([]),
     readOnly: true,
     say: scratchSay,
     leave: () => { SC.focus = 'results'; redraw(); },
   });
-  loadFunctions().then((F) => { if (F) ed.setLanguage(bigquerySQL(builtins(F.list))); });
+  loadFunctions().then((F) => { if (F) ed.setLanguage(sqlOf(builtins(F.list))); });
   return ed;
 }
