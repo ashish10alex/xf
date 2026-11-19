@@ -94,6 +94,8 @@ type rawGraph struct {
 	Operations []rawAction `json:"operations"`
 	Assertions []rawAction `json:"assertions"`
 	Notebooks  []rawAction `json:"notebooks"`
+	// PropertyGraphs come from definitions/**/graph.yaml.
+	PropertyGraphs []rawAction `json:"propertyGraphs"`
 }
 
 // comparableAction is what of an action is compared: its SQL and the settings
@@ -167,6 +169,9 @@ func runnableActions(data []byte) (map[project.ActionID]comparableAction, error)
 	}
 	for _, n := range g.Notebooks {
 		add(n, "notebook", n.pick("notebookContents"), n.pick("disabled"))
+	}
+	for _, p := range g.PropertyGraphs {
+		add(p, "property graph", p.pick("graphBody"), p.pick("disabled"))
 	}
 	return out, nil
 }

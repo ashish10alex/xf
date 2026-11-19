@@ -260,6 +260,7 @@ var typeNames = []struct{ typ, one, many string }{
 	{"assertion", "assertion", "assertions"},
 	{"test", "test", "tests"},
 	{"notebook", "notebook", "notebooks"},
+	{"property graph", "property graph", "property graphs"},
 }
 
 // ChangesSummary is "16 actions in 8 files: 7 tables, 9 assertions · 16

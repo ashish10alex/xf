@@ -122,6 +122,11 @@ func TestParseCompileJSONKinds(t *testing.T) {
 			wantCore:   "3.0.71",
 		},
 		{
+			fixture:    "property_graph.json",
+			wantGroups: map[project.ActionKind]int{project.KindTable: 3, project.KindView: 1, project.KindPropertyGraph: 1},
+			wantCore:   "3.1.5",
+		},
+		{
 			fixture:    "stdout_logger_prefix.txt",
 			wantGroups: map[project.ActionKind]int{project.KindView: 1},
 			wantCore:   "2.9.0",
@@ -198,6 +203,20 @@ func TestParseCompileJSONFields(t *testing.T) {
 		d := basic.Actions["raw-project.shop.orders"]
 		if d == nil || d.Kind != project.KindDeclaration || d.Runnable() || d.Tags != nil {
 			t.Errorf("got %+v", d)
+		}
+	})
+	t.Run("property graph", func(t *testing.T) {
+		g := loadGraph(t, "property_graph.json")
+		pg := g.Actions["my-gcp-project.dataform.LibraryGraph"]
+		if pg == nil || pg.Kind != project.KindPropertyGraph {
+			t.Fatalf("got %+v", pg)
+		}
+		if pg.FileName != "definitions/graph.yaml" || pg.Description != "Library authorship semantic model" ||
+			!strings.HasPrefix(pg.GraphBody, "NODE TABLES (") || !slices.Equal(pg.Tags, []string{"graph"}) || len(pg.DependencyTargets) != 3 {
+			t.Errorf("got %+v", pg)
+		}
+		if ds := g.Dependents("my-gcp-project.dataform.LibraryGraph"); len(ds) != 1 || ds[0].ID != "my-gcp-project.dataform.author_books" {
+			t.Errorf("dependents = %v, want author_books", ds)
 		}
 	})
 	t.Run("compilation errors", func(t *testing.T) {

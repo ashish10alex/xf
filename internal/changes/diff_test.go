@@ -135,7 +135,7 @@ func TestCompareOperationsAssertionsNotebooksNotDeclarations(t *testing.T) {
 }
 
 func TestCompareRealCompileAgainstItself(t *testing.T) {
-	for _, name := range []string{"basic.json", "incremental.json"} {
+	for _, name := range []string{"basic.json", "incremental.json", "property_graph.json"} {
 		data := readFixture(t, name)
 		if d := compare(t, data, data); len(d.Changed) != 0 || len(d.Deleted) != 0 {
 			t.Errorf("%s: got %+v, want no changes", name, d)
@@ -179,5 +179,32 @@ func TestCompareNamesFilesWithSlashes(t *testing.T) {
 	d := compare(t, base, head)
 	if len(d.Changed) != 1 || d.Changed[0].FileName != "definitions/staging/orders.sqlx" {
 		t.Errorf("changed = %+v", d.Changed)
+	}
+}
+
+func TestComparePropertyGraphs(t *testing.T) {
+	pg := func(body string, disabled bool) map[string]any {
+		return map[string]any{"fileName": "definitions/graph.yaml", "target": target("LibraryGraph"), "graphBody": body, "disabled": disabled,
+			"description": "d", "nodes": []any{map[string]any{"name": "Author"}}}
+	}
+	base := graph(t, map[string][]map[string]any{"propertyGraphs": {pg("NODE TABLES (a)", false)}})
+	if d := compare(t, base, base); len(d.Changed) != 0 {
+		t.Errorf("same graph: changed = %v, want none", d.Changed)
+	}
+	for _, tc := range []struct {
+		name string
+		head map[string]any
+		want Reason
+	}{
+		{"body", pg("NODE TABLES (b)", false), ReasonSQL},
+		{"disabled", pg("NODE TABLES (a)", true), ReasonConfig},
+	} {
+		d := compare(t, base, graph(t, map[string][]map[string]any{"propertyGraphs": {tc.head}}))
+		if len(d.Changed) != 1 || d.Changed[0].Type != "property graph" || !reflect.DeepEqual(d.Changed[0].Reasons, []Reason{tc.want}) {
+			t.Errorf("%s: changed = %+v, want the graph with %s", tc.name, d.Changed, tc.want)
+		}
+	}
+	if d := compare(t, base, graph(t, nil)); len(d.Deleted) != 1 || d.Deleted[0].Type != "property graph" {
+		t.Errorf("removed graph: deleted = %+v, want the graph", d.Deleted)
 	}
 }

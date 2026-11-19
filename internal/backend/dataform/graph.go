@@ -1,6 +1,7 @@
 package dataform
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 
@@ -64,7 +65,7 @@ func newAction(c compiledAction, kind project.ActionKind) *project.Action {
 		HasOutput:          c.HasOutput,
 		NotebookContents:   c.NotebookContents,
 		GraphBody:          c.GraphBody,
-		Description:        c.ActionDescriptor.Description,
+		Description:        cmp.Or(c.ActionDescriptor.Description, c.Description),
 		PartitionBy:        c.Bigquery.PartitionBy,
 		UniqueKey:          c.UniqueKey,
 	}
