@@ -59,6 +59,14 @@ func TestExampleProject(t *testing.T) {
 	if a := get("alex-personal-dev-01.reporting.revenue_report"); a.Kind != project.KindTable {
 		t.Errorf("revenue_report = %+v", a)
 	}
+	pg := get("alex-personal-dev-01.xf_example.commerce_graph")
+	if pg.Kind != project.KindPropertyGraph || pg.FileName != "definitions/graphs/graph.yaml" || len(pg.GraphTables) != 3 ||
+		!strings.Contains(pg.GraphBody, "UPPER(country_code) AS country") || !strings.Contains(pg.GraphBody, "MEASURE(SUM(amount)) AS revenue") {
+		t.Errorf("commerce_graph = %+v", pg)
+	}
+	if ds := g.Dependents("alex-personal-dev-01.xf_example.commerce_graph"); len(ds) != 1 || ds[0].ID != "alex-personal-dev-01.reporting.top_customers_graph" {
+		t.Errorf("commerce_graph's dependents = %v, want top_customers_graph", ds)
+	}
 }
 
 func TestExampleBrokenProject(t *testing.T) {
@@ -91,7 +99,7 @@ func TestE2EExampleProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.HasErrors() || len(g.Actions) != 20 {
-		t.Errorf("%d actions, errors %+v; want 20 and none", len(g.Actions), g.Errors)
+	if g.HasErrors() || len(g.Actions) != 22 {
+		t.Errorf("%d actions, errors %+v; want 22 and none", len(g.Actions), g.Errors)
 	}
 }

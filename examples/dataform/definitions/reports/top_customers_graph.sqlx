@@ -1,0 +1,14 @@
+config {
+  type: "view",
+  schema: "reporting",
+  description: "Each customer's completed orders, read through the property graph."
+}
+
+SELECT customer_id, country, COUNT(*) AS completed_orders, SUM(amount) AS spent
+FROM GRAPH_TABLE(
+  ${ref("commerce_graph")}
+  MATCH (c:Customer)<-[:PlacedBy]-(o:`Order`)
+  WHERE o.status = "completed"
+  COLUMNS (c.customer_id, c.country, o.amount)
+)
+GROUP BY 1, 2

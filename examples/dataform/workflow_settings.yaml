@@ -2,6 +2,6 @@ defaultProject: alex-personal-dev-01
 defaultLocation: EU
 defaultDataset: xf_example
 defaultAssertionDataset: xf_example_assertions
-dataformCoreVersion: 3.0.71
+dataformCoreVersion: 3.1.5
 vars:
   start_date: "2024-01-01"

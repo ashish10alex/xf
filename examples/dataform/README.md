@@ -19,4 +19,8 @@ partitioned and clustered), `fct_orders` (incremental, merged on
 
 Dataform only: JavaScript includes, actions generated with `publish()`,
 JavaScript declarations, a disabled action, a manual assertion, project
-`vars`, and a table that sets its own dataset and name.
+`vars`, a table that sets its own dataset and name, and a BigQuery
+[property graph](https://github.com/dataform-co/dataform/blob/main/docs/property_graphs.md)
+(`definitions/graphs/graph.yaml`, `commerce_graph`) over the marts, which
+`reporting.top_customers_graph` queries with `GRAPH_TABLE`. Property graphs
+need `@dataform/core` 3.1.4 or later, hence `dataformCoreVersion: 3.1.5`.

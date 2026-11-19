@@ -264,6 +264,34 @@
         {
             "type": "view",
             "target": {
+                "schema": "reporting",
+                "name": "top_customers_graph",
+                "database": "alex-personal-dev-01"
+            },
+            "query": "\n\nSELECT customer_id, country, COUNT(*) AS completed_orders, SUM(amount) AS spent\nFROM GRAPH_TABLE(\n  `alex-personal-dev-01.xf_example.commerce_graph`\n  MATCH (c:Customer)<-[:PlacedBy]-(o:`Order`)\n  WHERE o.status = \"completed\"\n  COLUMNS (c.customer_id, c.country, o.amount)\n)\nGROUP BY 1, 2\n",
+            "disabled": false,
+            "fileName": "definitions/reports/top_customers_graph.sqlx",
+            "actionDescriptor": {
+                "description": "Each customer's completed orders, read through the property graph."
+            },
+            "dependencyTargets": [
+                {
+                    "schema": "xf_example",
+                    "name": "commerce_graph",
+                    "database": "alex-personal-dev-01"
+                }
+            ],
+            "hermeticity": "NON_HERMETIC",
+            "canonicalTarget": {
+                "schema": "reporting",
+                "name": "top_customers_graph",
+                "database": "alex-personal-dev-01"
+            },
+            "enumType": "VIEW"
+        },
+        {
+            "type": "view",
+            "target": {
                 "schema": "xf_example",
                 "name": "stg_customers",
                 "database": "alex-personal-dev-01"
@@ -673,8 +701,13 @@
             }
         }
     ],
-    "dataformCoreVersion": "3.0.71",
+    "dataformCoreVersion": "3.1.5",
     "targets": [
+        {
+            "schema": "xf_example",
+            "name": "commerce_graph",
+            "database": "alex-personal-dev-01"
+        },
         {
             "schema": "xf_example_assertions",
             "name": "assert_positive_order_totals",
@@ -731,6 +764,11 @@
             "database": "alex-personal-dev-01"
         },
         {
+            "schema": "reporting",
+            "name": "top_customers_graph",
+            "database": "alex-personal-dev-01"
+        },
+        {
             "schema": "raw",
             "name": "customers",
             "database": "alex-personal-dev-01"
@@ -776,6 +814,185 @@
             "database": "alex-personal-dev-01"
         }
     ],
-    "jitData": {}
+    "jitData": {},
+    "propertyGraphs": [
+        {
+            "target": {
+                "schema": "xf_example",
+                "name": "commerce_graph",
+                "database": "alex-personal-dev-01"
+            },
+            "canonicalTarget": {
+                "schema": "xf_example",
+                "name": "commerce_graph",
+                "database": "alex-personal-dev-01"
+            },
+            "dependencyTargets": [
+                {
+                    "schema": "xf_example",
+                    "name": "dim_customers",
+                    "database": "alex-personal-dev-01"
+                },
+                {
+                    "schema": "xf_example",
+                    "name": "fct_orders",
+                    "database": "alex-personal-dev-01"
+                }
+            ],
+            "fileName": "definitions/graphs/graph.yaml",
+            "description": "Customers and the orders they place.",
+            "nodes": [
+                {
+                    "name": "Customer",
+                    "dataSource": {
+                        "schema": "xf_example",
+                        "name": "dim_customers",
+                        "database": "alex-personal-dev-01"
+                    },
+                    "keys": [
+                        "customer_id"
+                    ],
+                    "labels": [
+                        {
+                            "name": "Customer",
+                            "description": "A customer, with their order history.",
+                            "synonyms": [
+                                "buyer",
+                                "shopper"
+                            ],
+                            "fields": [
+                                {
+                                    "name": "customer_id",
+                                    "expression": "customer_id",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "email",
+                                    "expression": "email",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "country",
+                                    "expression": "UPPER(country_code)",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "first_order_date",
+                                    "expression": "first_order_date",
+                                    "description": "Time dimension."
+                                },
+                                {
+                                    "name": "lifetime_value",
+                                    "expression": "lifetime_value",
+                                    "description": "Lifetime value, in dollars"
+                                }
+                            ],
+                            "importAll": false,
+                            "isDefault": true
+                        }
+                    ]
+                },
+                {
+                    "name": "Order",
+                    "dataSource": {
+                        "schema": "xf_example",
+                        "name": "fct_orders",
+                        "database": "alex-personal-dev-01"
+                    },
+                    "keys": [
+                        "order_id"
+                    ],
+                    "labels": [
+                        {
+                            "name": "Order",
+                            "fields": [
+                                {
+                                    "name": "order_id",
+                                    "expression": "order_id",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "customer_id",
+                                    "expression": "customer_id",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "order_date",
+                                    "expression": "order_date",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "status",
+                                    "expression": "status",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "amount",
+                                    "expression": "amount",
+                                    "description": ""
+                                },
+                                {
+                                    "name": "order_count",
+                                    "expression": "MEASURE(COUNT(order_id))",
+                                    "description": "Number of orders."
+                                },
+                                {
+                                    "name": "revenue",
+                                    "expression": "MEASURE(SUM(amount))",
+                                    "description": "Order totals, in dollars."
+                                }
+                            ],
+                            "importAll": false,
+                            "isDefault": true
+                        }
+                    ]
+                }
+            ],
+            "edges": [
+                {
+                    "name": "PlacedBy",
+                    "dataSource": {
+                        "schema": "xf_example",
+                        "name": "fct_orders",
+                        "database": "alex-personal-dev-01"
+                    },
+                    "keys": [
+                        "order_id"
+                    ],
+                    "source": {
+                        "node": "Order",
+                        "edgeColumns": [
+                            "order_id"
+                        ],
+                        "nodeColumns": [
+                            "order_id"
+                        ]
+                    },
+                    "destination": {
+                        "node": "Customer",
+                        "edgeColumns": [
+                            "customer_id"
+                        ],
+                        "nodeColumns": [
+                            "customer_id"
+                        ]
+                    },
+                    "labels": [
+                        {
+                            "name": "PlacedBy",
+                            "description": "Links an order to the customer who placed it.",
+                            "importAll": false,
+                            "isDefault": true
+                        }
+                    ]
+                }
+            ],
+            "graphBody": "NODE TABLES (\n  `alex-personal-dev-01.xf_example.dim_customers` AS Customer KEY (customer_id) DEFAULT LABEL OPTIONS(description=\"A customer, with their order history.\", synonyms=[\"buyer\", \"shopper\"]) PROPERTIES (customer_id, email, UPPER(country_code) AS country, first_order_date OPTIONS(description=\"Time dimension.\"), lifetime_value OPTIONS(description=\"Lifetime value, in dollars\")),\n  `alex-personal-dev-01.xf_example.fct_orders` AS `Order` KEY (order_id) PROPERTIES (order_id, customer_id, order_date, status, amount, MEASURE(COUNT(order_id)) AS order_count OPTIONS(description=\"Number of orders.\"), MEASURE(SUM(amount)) AS revenue OPTIONS(description=\"Order totals, in dollars.\"))\n)\nEDGE TABLES (\n  `alex-personal-dev-01.xf_example.fct_orders` AS PlacedBy KEY (order_id) SOURCE KEY (order_id) REFERENCES `Order` (order_id) DESTINATION KEY (customer_id) REFERENCES Customer (customer_id) DEFAULT LABEL OPTIONS(description=\"Links an order to the customer who placed it.\") NO PROPERTIES\n)",
+            "disabled": false,
+            "tags": [
+                "graph"
+            ]
+        }
+    ]
 }
 

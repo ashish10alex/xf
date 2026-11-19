@@ -4,11 +4,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ashish10alex/xf/internal/project"
 )
 
-// The example compiled on Windows, where Dataform prints backslash paths,
-// gives the same files as on macOS: every action and compile error names
-// its file with forward slashes.
+// The example compiled on Windows gives the same files as on macOS: every
+// action and compile error names its file with forward slashes, though
+// Dataform CLIs before 3.1 print backslashes there (the broken example's
+// errors still do).
 func TestWindowsCompileOutput(t *testing.T) {
 	for _, f := range []string{"dataform", "dataform-broken"} {
 		t.Run(f, func(t *testing.T) {
@@ -44,5 +47,21 @@ func TestWindowsCompileOutput(t *testing.T) {
 				t.Errorf("error files %q on Windows, %q on macOS", winErrs, macErrs)
 			}
 		})
+	}
+}
+
+// Dataform CLIs before 3.1 print backslash paths on Windows (3.1.2, which
+// compiled dataform-windows.json, prints forward slashes): an action's file
+// reads with forward slashes either way.
+func TestBackslashFileNames(t *testing.T) {
+	g, err := ParseCompileJSON([]byte(`{"tables":[{"type":"view","target":{"database":"p","schema":"s","name":"v"},"fileName":"definitions\\staging\\v.sqlx"}],
+		"propertyGraphs":[{"target":{"database":"p","schema":"s","name":"g"},"fileName":"definitions\\graphs\\graph.yaml"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"p.s.v": "definitions/staging/v.sqlx", "p.s.g": "definitions/graphs/graph.yaml"} {
+		if a := g.Actions[project.ActionID(id)]; a == nil || a.FileName != want {
+			t.Errorf("%s: got %+v, want file %s", id, a, want)
+		}
 	}
 }

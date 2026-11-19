@@ -1,0 +1,56 @@
+# A BigQuery property graph over the marts: customers and the orders they
+# place. Dataform compiles it to CREATE OR REPLACE PROPERTY GRAPH
+# xf_example.commerce_graph; reports/top_customers_graph.sqlx queries it.
+version: 0.2.0.dev0/google
+tags: ["graph"]
+
+semantic_model:
+  - name: "commerce_graph"
+    description: "Customers and the orders they place."
+    entities:
+      - name: "Customer"
+        source:
+          ref: "dim_customers"
+        primary_key: "customer_id"
+        description: "A customer, with their order history."
+        ai_context:
+          synonyms: ["buyer", "shopper"]
+        fields:
+          - "customer_id"
+          - "email"
+          - name: "country"
+            expression: "UPPER(country_code)"
+          - name: "first_order_date"
+            dimension:
+              is_time: true
+          - name: "lifetime_value"
+            label: "Lifetime value, in dollars"
+
+      - name: "Order"
+        source:
+          ref: "fct_orders"
+        primary_key: "order_id"
+        fields:
+          - "order_id"
+          - "customer_id"
+          - "order_date"
+          - "status"
+          - "amount"
+
+    relationships:
+      - name: "PlacedBy"
+        from: "Order"
+        to: "Customer"
+        from_columns: ["customer_id"]
+        to_columns: ["customer_id"]
+        description: "Links an order to the customer who placed it."
+
+    metrics:
+      - name: "order_count"
+        entity: "Order"
+        expression: "COUNT(order_id)"
+        description: "Number of orders."
+      - name: "revenue"
+        entity: "Order"
+        expression: "SUM(amount)"
+        description: "Order totals, in dollars."
