@@ -210,12 +210,13 @@ func (s *Source) Changes(ctx context.Context, req Request, head []byte) (*Result
 		return nil, err
 	}
 	if hasRenameCandidates(d) {
-		// Best effort: without it the renamed stay new and deleted.
-		if renames, err := renamedFiles(ctx, s.Root, b.MergeBase, b.HeadSHA, newFiles(d)); err == nil {
-			pairRenames(&d, renames)
-		} else if ctx.Err() != nil {
+		// Best effort: without git's renames only the actions whose file
+		// kept its path are paired.
+		renames, err := renamedFiles(ctx, s.Root, b.MergeBase, b.HeadSHA, newFiles(d))
+		if err != nil && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		pairRenames(&d, renames)
 	}
 	return &Result{
 		BaseRef: b.BaseRef, MergeBase: b.MergeBase, DefaultBranch: b.DefaultBranch,

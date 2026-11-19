@@ -322,3 +322,19 @@ func TestJobsTableSaysWhichNumbersAreKnown(t *testing.T) {
 		t.Errorf("rows = %+v", rows)
 	}
 }
+
+func TestRenamedFromNamesTheOldActionWhenTheFileKeptItsPath(t *testing.T) {
+	res := &changes.Result{Diff: changes.Diff{Changed: []changes.Changed{
+		{ID: "p.crm.customers", FileName: "definitions/customers.sqlx", Reasons: []changes.Reason{changes.ReasonNew},
+			RenamedFrom: "p.marts.customers", RenamedFromFile: "definitions/customers.sqlx"},
+		{ID: "p.marts.orders_v2", FileName: "definitions/orders_v2.sqlx", Reasons: []changes.Reason{changes.ReasonNew},
+			RenamedFrom: "p.marts.orders", RenamedFromFile: "definitions/orders.sqlx", Similarity: 95},
+	}}}
+	want := map[string]string{
+		"definitions/customers.sqlx": "← marts.customers",
+		"definitions/orders_v2.sqlx": "← orders.sqlx (95%)",
+	}
+	if got := RenamedFrom(res); !reflect.DeepEqual(got, want) {
+		t.Errorf("RenamedFrom = %v, want %v", got, want)
+	}
+}

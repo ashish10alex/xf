@@ -58,7 +58,9 @@ type Changed struct {
 	// RenamedFrom is set on a new action whose file git calls a rename of
 	// RenamedFromFile, the file of RenamedFrom, an action the branch
 	// deletes: the same action under the name of its new file. Similarity
-	// is how alike git says the two files are, in percent.
+	// is how alike git says the two files are, in percent. A file that kept
+	// its path but gives its one action another schema or name is
+	// RenamedFromFile too, with Similarity 0.
 	RenamedFrom     project.ActionID `json:"renamedFrom,omitempty"`
 	RenamedFromFile string           `json:"renamedFromFile,omitempty"`
 	Similarity      int              `json:"similarity,omitempty"`

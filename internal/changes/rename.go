@@ -121,14 +121,14 @@ func indexWith(ctx context.Context, dir string, added []string) (string, func(),
 	return copied, cleanup, nil
 }
 
-// pairRenames marks the actions of d that git calls renamed: when a file
-// renamed since the base has exactly one new action and its old path
+// pairRenames marks the actions of d that were renamed: when a file git
+// calls renamed since the base has exactly one new action and its old path
 // exactly one deleted action, neither generated from another action, the
-// new one was the old one, under the name of its new file.
+// new one was the old one, under the name of its new file. A file that
+// kept its path is paired the same way with itself: its one action is new
+// and its old one deleted when the file gives it another schema or name,
+// which moves the table rather than making another.
 func pairRenames(d *Diff, renames map[string]rename) {
-	if len(renames) == 0 {
-		return
-	}
 	newIn := map[string][]int{}
 	for i, c := range d.Changed {
 		if c.Parent == "" && c.IsNew() {
@@ -141,14 +141,24 @@ func pairRenames(d *Diff, renames map[string]rename) {
 			deletedIn[x.FileName] = append(deletedIn[x.FileName], i)
 		}
 	}
-	for file, r := range renames {
-		added, removed := newIn[file], deletedIn[r.from]
+	pair := func(added, removed []int, score int) {
 		if len(added) != 1 || len(removed) != 1 {
-			continue
+			return
 		}
 		c, x := &d.Changed[added[0]], &d.Deleted[removed[0]]
-		c.RenamedFrom, c.RenamedFromFile, c.Similarity = x.ID, x.FileName, r.score
+		if c.RenamedFrom != "" || x.RenamedTo != "" {
+			return
+		}
+		c.RenamedFrom, c.RenamedFromFile, c.Similarity = x.ID, x.FileName, score
 		x.RenamedTo = c.ID
+	}
+	for file, r := range renames {
+		pair(newIn[file], deletedIn[r.from], r.score)
+	}
+	for file, added := range newIn {
+		if file != "" {
+			pair(added, deletedIn[file], 0)
+		}
 	}
 }
 

@@ -333,11 +333,17 @@ func Removed(res *changes.Result) []changes.Deleted {
 
 // RenamedFrom is "← old.sqlx (95%)" for a file git calls renamed, by the
 // files of res's renamed actions: the old file's name, or its path when
-// it moved to another folder.
+// it moved to another folder. A file that kept its path but moves its
+// action is "← old_schema.old_name", the action it was.
 func RenamedFrom(res *changes.Result) map[string]string {
 	out := map[string]string{}
 	for _, c := range res.Changed {
 		if c.RenamedFrom == "" {
+			continue
+		}
+		if c.RenamedFromFile == c.FileName {
+			schema, name := SplitID(c.RenamedFrom)
+			out[c.FileName] = "← " + strings.TrimPrefix(schema+"."+name, ".")
 			continue
 		}
 		from := c.RenamedFromFile

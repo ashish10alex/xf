@@ -650,6 +650,52 @@ func TestPairRenamesNeedsOneActionEachSide(t *testing.T) {
 	}
 }
 
+func TestPairRenamesPairsAFileThatKeptItsPath(t *testing.T) {
+	d := Diff{
+		Changed: []Changed{
+			{ID: "crm.customers", FileName: "customers.sqlx", Reasons: []Reason{ReasonNew}},
+			{ID: "crm.customers_assertions_uniqueKey_0", FileName: "customers.sqlx", Reasons: []Reason{ReasonNew}, Parent: "crm.customers"},
+			{ID: "ds.a1", FileName: "a.js", Reasons: []Reason{ReasonNew}},
+			{ID: "ds.a2", FileName: "a.js", Reasons: []Reason{ReasonNew}},
+			{ID: "ds.orders", FileName: "orders.sqlx", Reasons: []Reason{ReasonSQL}},
+		},
+		Deleted: []Deleted{
+			{ID: "marts.customers", FileName: "customers.sqlx"},
+			{ID: "marts.customers_assertions_uniqueKey_0", FileName: "customers.sqlx", Parent: "marts.customers"},
+			{ID: "ds.a", FileName: "a.js"},
+		},
+	}
+	pairRenames(&d, nil) // as when the renamed files couldn't be read
+	c := d.Changed[0]
+	if c.RenamedFrom != "marts.customers" || c.RenamedFromFile != "customers.sqlx" || c.Similarity != 0 || d.Deleted[0].RenamedTo != "crm.customers" {
+		t.Errorf("customers %+v, deleted %+v: a schema move is a rename", c, d.Deleted[0])
+	}
+	for _, i := range []int{1, 2, 3, 4} {
+		if d.Changed[i].RenamedFrom != "" {
+			t.Errorf("%s renamed from %q: only one action each side, none generated", d.Changed[i].ID, d.Changed[i].RenamedFrom)
+		}
+	}
+	if d.Deleted[1].RenamedTo != "" || d.Deleted[2].RenamedTo != "" {
+		t.Errorf("deleted %+v", d.Deleted)
+	}
+}
+
+// A renamed file pairs with its old path, not with a new action that now
+// sits at that old path.
+func TestPairRenamesPrefersARenamedFile(t *testing.T) {
+	d := Diff{
+		Changed: []Changed{
+			{ID: "ds.b", FileName: "b_new.sqlx", Reasons: []Reason{ReasonNew}},
+			{ID: "ds.other", FileName: "b.sqlx", Reasons: []Reason{ReasonNew}},
+		},
+		Deleted: []Deleted{{ID: "ds.b_old", FileName: "b.sqlx"}},
+	}
+	pairRenames(&d, parseRenames("R090\x00b.sqlx\x00b_new.sqlx\x00"))
+	if d.Changed[0].RenamedFrom != "ds.b_old" || d.Changed[1].RenamedFrom != "" || d.Deleted[0].RenamedTo != "ds.b" {
+		t.Errorf("diff = %+v", d)
+	}
+}
+
 // Looking for renames in the working tree leaves .git/index alone, even
 // when a saved file would have git diff refresh it: the index.lock that
 // takes can stop a Dataform compile copying the project.
