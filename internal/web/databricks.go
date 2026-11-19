@@ -39,8 +39,26 @@ type Databricks struct {
 	Choose     func(id string) (file string, err error)
 	// Chosen says a SQL warehouse is chosen; nil says one is.
 	Chosen func() bool
+	// WarehouseID returns the currently chosen SQL warehouse ID, "" for none.
+	WarehouseID func() string
+	// Profiles lists available ~/.databrickscfg profiles and returns the
+	// active profile name; nil when profile switching isn't offered (dbt
+	// projects follow profiles.yml).
+	Profiles func() (profiles []DatabricksProfile, current string)
+	// ChooseProfile switches the active ~/.databrickscfg profile for
+	// standalone Databricks scratch.
+	ChooseProfile func(name string) (message string, err error)
+	// SaveNote explains where a chosen SQL warehouse is saved, shown in the
+	// warehouse picker; "" uses the default project-config note.
+	SaveNote string
 	// AuthHint says how to sign in, for a check without credentials.
 	AuthHint string
+}
+
+// DatabricksProfile is a ~/.databrickscfg profile listed by the profile picker.
+type DatabricksProfile struct {
+	Name string `json:"name"`
+	Host string `json:"host,omitempty"`
 }
 
 // SQLWarehouse is a SQL warehouse the form lists.
@@ -304,10 +322,16 @@ func (p *projectState) databricksWarehouses(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
 	list, err := p.dbx.Warehouses(ctx)
+	cur := ""
+	if p.dbx.WarehouseID != nil {
+		cur = p.dbx.WarehouseID()
+	}
 	v := struct {
 		Warehouses []SQLWarehouse `json:"warehouses"`
+		Current    string         `json:"current,omitempty"`
+		SaveNote   string         `json:"saveNote,omitempty"`
 		Error      string         `json:"error,omitempty"`
-	}{Warehouses: nonNil(list)}
+	}{Warehouses: nonNil(list), Current: cur, SaveNote: p.dbx.SaveNote}
 	if err != nil {
 		v.Error = err.Error()
 		if errors.Is(err, warehouse.ErrAuth) {
@@ -343,5 +367,94 @@ func (p *projectState) chooseDatabricksWarehouse(w http.ResponseWriter, r *http.
 	}
 	p.mu.Unlock()
 	p.hub.send("detail", nil)
-	writeJSON(w, okView{OK: true, Message: "databricksWarehouse saved to " + file})
+	if p.standalone {
+		p.hub.send("databricks", map[string]any{"warehouse": req.ID})
+	}
+	msg := "databricksWarehouse saved to " + file
+	if p.standalone {
+		msg = "SQL warehouse saved to " + file
+	}
+	writeJSON(w, okView{OK: true, Message: msg})
+}
+
+// databricksProfiles lists the ~/.databrickscfg profiles available to
+// standalone Databricks scratch and reports the current connection state.
+func (p *projectState) databricksProfiles(w http.ResponseWriter, r *http.Request) {
+	if p.dbx == nil || p.dbx.Profiles == nil {
+		http.Error(w, "profile switching is only available for standalone Databricks scratch", http.StatusNotFound)
+		return
+	}
+	profiles, current := p.dbx.Profiles()
+	host, wh := "", ""
+	if p.dbx.Host != nil {
+		host = p.dbx.Host()
+	}
+	if p.dbx.WarehouseID != nil {
+		wh = p.dbx.WarehouseID()
+	}
+	writeJSON(w, struct {
+		Profiles     []DatabricksProfile `json:"profiles"`
+		Current      string              `json:"current,omitempty"`
+		Host         string              `json:"host,omitempty"`
+		Warehouse    string              `json:"warehouse,omitempty"`
+		NeedsProfile bool                `json:"needsProfile,omitempty"`
+		AuthHint     string              `json:"authHint,omitempty"`
+	}{
+		Profiles:     nonNil(profiles),
+		Current:      current,
+		Host:         host,
+		Warehouse:    wh,
+		NeedsProfile: host == "",
+		AuthHint:     p.dbx.AuthHint,
+	})
+}
+
+// chooseDatabricksProfile switches the active ~/.databrickscfg profile for
+// standalone Databricks scratch, clearing cached metadata from the previous
+// workspace.
+func (p *projectState) chooseDatabricksProfile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if p.dbx == nil || p.dbx.ChooseProfile == nil || req.Name == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	msg, err := p.dbx.ChooseProfile(req.Name)
+	if err != nil {
+		writeJSON(w, okView{Message: err.Error()})
+		return
+	}
+	p.meta.clear()
+	p.mu.Lock()
+	clear(p.dry)
+	p.mu.Unlock()
+	host, wh := "", ""
+	if p.dbx.Host != nil {
+		host = p.dbx.Host()
+	}
+	if p.dbx.WarehouseID != nil {
+		wh = p.dbx.WarehouseID()
+	}
+	chosen := wh != ""
+	if p.dbx.Chosen != nil {
+		chosen = p.dbx.Chosen()
+	}
+	p.hub.send("databricks", map[string]any{
+		"profile":      req.Name,
+		"host":         host,
+		"warehouse":    wh,
+		"needsProfile": host == "",
+	})
+	writeJSON(w, struct {
+		OK        bool   `json:"ok"`
+		Message   string `json:"message,omitempty"`
+		Current   string `json:"current,omitempty"`
+		Host      string `json:"host,omitempty"`
+		Warehouse string `json:"warehouse,omitempty"`
+		Chosen    bool   `json:"chosen"`
+	}{OK: true, Message: msg, Current: req.Name, Host: host, Warehouse: wh, Chosen: chosen})
 }

@@ -167,7 +167,10 @@ Hover a table name for its description, columns, partitioning, size and when it 
 The project and location a scratch runs in sit in its toolbar, and change the first line of the file.
 
 `xf scratch` opens xf web on a new empty scratch (its file is made when you first type).
-In a project it works as above; anywhere else it is the editor alone, billed to `--project` and `--location`, else your credentials' quota project, and its scratches are in `tmp` in xf's user config folder (`~/.config/xf`, or `%AppData%\xf` on Windows).
+In a project it works as above (pass `--warehouse bigquery|databricks` to open a standalone scratch instead).
+Outside any project, `xf web`'s project picker (and the `⇄ projects` switcher) has a **Scratch** button (`ctrl+s`) that lets you choose **BigQuery** or **Databricks**; bare `xf scratch` outside a project opens directly on that chooser, while `--warehouse` (or `--project`/`--location` for BigQuery, `--databricks-profile`/`--databricks-warehouse` for Databricks) jumps straight in.
+BigQuery scratches live in `tmp` in xf's user config folder (`~/.config/xf`, or `%AppData%\xf` on Windows) and Databricks scratches in `tmp/databricks` (with standalone Databricks profile and SQL warehouse picks saved in `tmp/databricks/connection.json`, leaving dbt projects' `profiles.yml` untouched).
+Inside a standalone scratch, the top bar lets you switch directly between BigQuery and Databricks, open `⇄ projects`, or press `ctrl+q` to close the scratch session and return to the picker.
 
 **The dependency inspector (xf web only).**
 To follow one key (an order id, a date) through every table a model reads, and find where its rows go missing or wrong, `>` *Dependency inspector* in the palette opens a page on the selected model, as the Dataform Tools extension's Dependency Inspector does, for dbt projects too.

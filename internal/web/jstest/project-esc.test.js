@@ -139,8 +139,44 @@ test('ctrl+q leaves the Scratch view and not the project', async () => {
   assert.equal(closed, 0);
 });
 
-test('ctrl+q in a standalone Scratch does nothing', () => {
-  Object.assign(SC, { open: true, standalone: true });
-  assert.equal(exitKey(), false);
-  assert.equal(SC.open, true);
+test('ctrl+q in a standalone Scratch closes the standalone session', async () => {
+  Object.assign(SC, { open: true, standalone: true, run: null });
+  assert.equal(exitKey(), true);
+  await tick();
+  await tick();
+  assert.equal(closed, 1);
+});
+
+test('ctrl+q in a standalone Scratch with a running query asks first, then cancels and closes', async () => {
+  let cancelled = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).includes('/api/scratch/cancel')) { cancelled++; return { ok: true, status: 200, text: async () => '{"ok":true}', json: async () => ({ ok: true }) }; }
+    return origFetch(url, opts);
+  };
+  try {
+    Object.assign(SC, { open: true, standalone: true, run: { phase: 'running', job: { project: 'p', id: 'j1' } } });
+    assert.equal(exitKey(), true);
+    await tick();
+    await tick();
+    assert.equal(S.overlay, 'confirmQuit');
+    assert.equal(S.quitScratch, true);
+    assert.equal(closed, 0);
+    // Second ctrl+q confirms, cancels the running query, and closes.
+    assert.equal(exitKey(), true);
+    await tick();
+    await tick();
+    assert.equal(cancelled, 1);
+    assert.equal(closed, 1);
+  } finally {
+    SC.run = null;
+    globalThis.fetch = origFetch;
+  }
+});
+
+test('ctrl+q on the picker closes the scratch warehouse chooser', () => {
+  S.mode = 'picker';
+  S.scratchPick = { cursor: 0, opening: false };
+  assert.equal(exitKey(), true);
+  assert.equal(S.scratchPick, null);
 });

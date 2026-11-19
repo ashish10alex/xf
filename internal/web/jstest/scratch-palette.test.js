@@ -8,10 +8,11 @@ import { SC } from '../assets/scratch.js';
 
 beforeEach(() => {
   Object.assign(SC, {
-    open: true, standalone: false, focus: 'results', cur: { id: 'scratch_1', project: 'p', location: 'EU', sql: 'SELECT 1' },
+    open: true, standalone: false, dbx: null, focus: 'results', cur: { id: 'scratch_1', project: 'p', location: 'EU', sql: 'SELECT 1' },
     run: null, sel: null, filters: {}, sort: null, recent: [], listOpen: false, hideResults: false,
-    leaveAsk: '', confirm: null, delAsk: '', recentOpen: '',
+    leaveAsk: '', confirm: null, delAsk: '', recentOpen: '', whOpen: false,
   });
+  S.caps = { scratch: true, warehouse: 'bigquery' };
   S.overlay = null;
   S.view = null; S.sel = null;
 });
@@ -60,13 +61,26 @@ test('the commands follow what the view shows', () => {
   for (const t of ['Results: clear filters', 'Copy: cell', 'Copy: row as JSON', 'View: results', 'Results: open the job in BigQuery']) assert.ok(all.includes(t), t);
 });
 
-test('standalone, nothing goes back to a project', () => {
+test('standalone lists project switch, warehouse switch, and close to projects', () => {
   SC.standalone = true;
+  S.scratchWarehouses = [{ id: 'bigquery', name: 'BigQuery' }, { id: 'databricks', name: 'Databricks' }];
   openScratchPalette();
   const all = titles();
-  assert.ok(!all.includes('Project: switch or add'));
+  assert.ok(all.includes('Project: switch or add'));
+  assert.ok(all.includes('Scratch: switch warehouse'));
+  assert.ok(all.includes('Close scratch: back to the projects'));
   assert.ok(!all.includes('Close scratch: back to the project'));
   assert.ok(all.includes('Scratch: new empty query'));
+});
+
+test('standalone Databricks includes profile and SQL warehouse commands', () => {
+  SC.standalone = true;
+  S.caps = { scratch: true, warehouse: 'databricks' };
+  SC.dbx = { profile: 'dev', host: 'https://dbc.cloud.databricks.com', warehouse: 'wh1', hasProfiles: true, needsProfile: false };
+  openScratchPalette();
+  const all = titles();
+  assert.ok(all.includes('Databricks: choose profile (~/.databrickscfg)'));
+  assert.ok(all.includes('Databricks: choose the SQL warehouse queries run on'));
 });
 
 test('a pick runs the command and closes the palette', () => {

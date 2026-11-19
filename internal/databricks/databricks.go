@@ -76,8 +76,9 @@ func New(c Config) *Client {
 
 // The Client is a warehouse whose SQL warehouse is started by what it runs.
 var (
-	_ warehouse.Warehouse = (*Client)(nil)
-	_ warehouse.Waker     = (*Client)(nil)
+	_ warehouse.Warehouse     = (*Client)(nil)
+	_ warehouse.Waker         = (*Client)(nil)
+	_ warehouse.ProjectLister = (*Client)(nil)
 )
 
 // NormalizeHost is host as a URL with no trailing slash: https:// when it
@@ -140,7 +141,7 @@ func authErr(why error) error { return fmt.Errorf("%w: %v", ErrAuth, why) }
 // and any other error status a *warehouse.APIError with the API's message.
 func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
 	if c.host == "" {
-		return nil, errors.New("no Databricks workspace: the dbt target names no host")
+		return nil, errors.New("no Databricks workspace: set the dbt target's host, choose a Databricks profile, or set DATABRICKS_HOST")
 	}
 	var r io.Reader
 	if body != nil {

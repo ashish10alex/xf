@@ -74,6 +74,13 @@ type Config struct {
 	// closes it and goes back to the picker; without it, q quits.
 	Projects func() []session.Project
 	Open     func(p session.Project) (*Project, error)
+	// OpenScratch opens a standalone scratch workspace for warehouse
+	// ("bigquery" or "databricks"), outside any project. nil hides the
+	// picker's Scratch launcher.
+	OpenScratch func(warehouse string) (*Project, error)
+	// StartScratchPicker opens the picker landing page with the standalone
+	// scratch warehouse chooser up (bare `xf scratch` outside a project).
+	StartScratchPicker bool
 	// Add remembers the project at root as tool's for the picker to
 	// list, not opened yet, as xf search does (session.Add): added is
 	// false for one xf knows already. nil leaves the picker's folder
@@ -252,6 +259,9 @@ type Server struct {
 	open map[string]*openProject
 	// startKey is the key of the project xf web started in, "" for none.
 	startKey string
+	// startScratchPicker opens the Scratch warehouse chooser on the first
+	// picker boot, then clears.
+	startScratchPicker bool
 	// tabs are what each tab said of its unsaved files (unsaved.go).
 	tabs map[string]*tabRecord
 	// summaryTimer sends the projects' summaries soon, and summarySent
@@ -281,7 +291,7 @@ func New(cfg Config) (*Server, error) {
 		}
 		token = hex.EncodeToString(b[:])
 	}
-	s := &Server{cfg: cfg, token: token, hub: newHub(), open: map[string]*openProject{}, pageLog: pageLog{path: cfg.PageLog}}
+	s := &Server{cfg: cfg, token: token, hub: newHub(), open: map[string]*openProject{}, pageLog: pageLog{path: cfg.PageLog}, startScratchPicker: cfg.StartScratchPicker}
 	s.exit = newAutoExit(cfg.AutoExit, s.busy, cfg.Quit, cfg.Log)
 	if cfg.Credentials != nil {
 		s.credsGen = cfg.Credentials()
@@ -424,6 +434,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /themes.css", themesCSS)
 	mux.HandleFunc("POST /api/theme", s.setTheme)
 	mux.HandleFunc("POST /api/pick", s.pick)
+	mux.HandleFunc("POST /api/scratch/open", s.openScratch)
 	mux.HandleFunc("POST /api/forget", s.forget)
 	mux.HandleFunc("GET /api/picker/branches", s.pickerBranches)
 	mux.HandleFunc("GET /api/picker/info", s.pickerInfo)
@@ -592,6 +603,28 @@ type bootView struct {
 	// Find says the picker can search a folder for projects and add
 	// them (Config.Add).
 	Find bool `json:"find,omitempty"`
+	// ScratchWarehouses are the warehouses standalone scratch queries can
+	// run against, when Config.OpenScratch is set.
+	ScratchWarehouses []ScratchWarehouse `json:"scratchWarehouses,omitempty"`
+	// StartScratchPicker opens the picker's Scratch warehouse chooser on
+	// first load (bare `xf scratch` outside a project).
+	StartScratchPicker bool `json:"startScratchPicker,omitempty"`
+}
+
+// ScratchWarehouse is a warehouse standalone scratch queries can run against.
+type ScratchWarehouse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (s *Server) scratchWarehouses() []ScratchWarehouse {
+	if s.cfg.OpenScratch == nil {
+		return nil
+	}
+	return []ScratchWarehouse{
+		{ID: project.BigQuery, Name: "BigQuery"},
+		{ID: project.Databricks, Name: "Databricks"},
+	}
 }
 
 type pickerProject struct {
@@ -614,26 +647,32 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 	theme := s.theme("")
 	openIn := s.openIn()
 	missing := ""
+	sw := s.scratchWarehouses()
 	if key := r.URL.Query().Get("project"); key != "" {
 		op, err := s.ensure(key)
 		if err == nil {
 			s.touch(op)
-			writeJSON(w, bootView{Project: op.p.boot(), Key: op.key, Theme: s.theme(op.p.deps.Root), ThemeOwn: themeOwn(op.p.deps.Root), Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil})
+			writeJSON(w, bootView{Project: op.p.boot(), Key: op.key, Theme: s.theme(op.p.deps.Root), ThemeOwn: themeOwn(op.p.deps.Root), Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw})
 			return
 		}
 		missing = err.Error()
 	}
 	projects := s.projects()
+	q := r.URL.Query().Get("q")
 	s.mu.Lock()
 	open := s.openRootsLocked()
+	startPick := false
+	if q == "" && !frontend.IsPathQuery(q) {
+		startPick = s.startScratchPicker
+		s.startScratchPicker = false
+	}
 	s.mu.Unlock()
 	// ?q filters the projects as the TUI's picker does, or is a path.
-	q := r.URL.Query().Get("q")
 	out := []pickerProject{}
 	now := time.Now()
 	home, _ := os.UserHomeDir()
 	if frontend.IsPathQuery(q) {
-		writeJSON(w, bootView{Picker: out, Paths: frontend.PathRows(home, q, projects), Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil})
+		writeJSON(w, bootView{Picker: out, Paths: frontend.PathRows(home, q, projects), Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw})
 		return
 	}
 	isOpen := map[string]bool{}
@@ -654,7 +693,7 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 			When: frontend.RelTime(now, pr.LastVisited), Key: s.keyOf(pr.Root, projects, open), Open: isOpen[project.RealPath(pr.Root)],
 			Unsaved: s.unsavedOf(pr.Root, ""), worktreeOf: wv})
 	}
-	writeJSON(w, bootView{Picker: out, Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil})
+	writeJSON(w, bootView{Picker: out, Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw, StartScratchPicker: startPick && q == ""})
 }
 
 // openIn is where a project picked from a project's page opens:
@@ -752,6 +791,31 @@ func (s *Server) projects() []session.Project {
 	return s.cfg.Projects()
 }
 
+// openScratch opens a standalone scratch workspace for req.Warehouse
+// ("bigquery" or "databricks"), unless already open, and answers with its
+// key.
+func (s *Server) openScratch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Warehouse string `json:"warehouse"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if s.cfg.OpenScratch == nil {
+		http.Error(w, "standalone scratch is not enabled", http.StatusNotFound)
+		return
+	}
+	op, err := s.ensureScratch(req.Warehouse)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, struct {
+		OK  bool   `json:"ok"`
+		Key string `json:"key"`
+	}{true, op.key})
+}
+
 // closeOpen closes a project for every page on it: q in it, or del on it
 // in the projects list, which names its key. A local run of it is
 // cancelled, a run in GCP carries on there, and its session is saved.
@@ -759,7 +823,7 @@ func (s *Server) projects() []session.Project {
 // closing page to go to. Without a way to open another project, it quits
 // instead.
 func (s *Server) closeOpen(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.Open == nil {
+	if s.cfg.Open == nil && s.cfg.OpenScratch == nil {
 		s.quit(w, r)
 		return
 	}

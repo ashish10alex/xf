@@ -47,6 +47,40 @@ type Connection struct {
 	TokenFrom string
 }
 
+// ProfileInfo is a named workspace section in ~/.databrickscfg.
+type ProfileInfo struct {
+	Name string
+	Host string
+}
+
+// configFile is the Databricks CLI's config path: file when set, else
+// $DATABRICKS_CONFIG_FILE, else ~/.databrickscfg.
+func configFile(file string, getenv func(string) string) string {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if file = cmp.Or(file, getenv("DATABRICKS_CONFIG_FILE")); file != "" {
+		return file
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".databrickscfg")
+	}
+	return ""
+}
+
+// ListProfiles returns the profiles in ~/.databrickscfg that name a host,
+// in file order. An empty [DEFAULT] (as `databricks auth login` leaves) is
+// skipped because it names no workspace to connect to.
+func ListProfiles(file string, getenv func(string) string) []ProfileInfo {
+	var out []ProfileInfo
+	for _, p := range readProfiles(configFile(file, getenv)) {
+		if h := NormalizeHost(p.values["host"]); h != "" {
+			out = append(out, ProfileInfo{Name: p.name, Host: h})
+		}
+	}
+	return out
+}
+
 // Resolve works out the connection s describes. The workspace is the dbt
 // target's host, else the profile's, else $DATABRICKS_HOST. The warehouse
 // is the setting's, else the dbt target's http_path. The token is
@@ -59,13 +93,7 @@ func Resolve(s Setup) Connection {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	file := cmp.Or(s.ConfigFile, getenv("DATABRICKS_CONFIG_FILE"))
-	if file == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			file = filepath.Join(home, ".databrickscfg")
-		}
-	}
-	profiles := readProfiles(file)
+	profiles := readProfiles(configFile(s.ConfigFile, getenv))
 	host := plain(s.Host)
 	name := s.Profile
 	// The profile is the one for the target's host, else $DATABRICKS_HOST's:

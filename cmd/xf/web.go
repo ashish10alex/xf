@@ -50,20 +50,22 @@ func serveWeb(scratch bool, args []string) error {
 	noOpen := fs.Bool("no-open", false, "print the URL without opening a browser")
 	app := fs.Bool("app", false, "open the page in an app window of Chrome, Edge or Chromium, where ctrl+n moves as in the TUI instead of opening a browser window: --web-browser app for this run")
 	allowHost := fs.String("allow-host", "", "also answer requests to these comma-separated `names`, such as a tailscale serve's; every request then needs the token the printed URL carries")
-	var project, location *string
+	var projectFlag, locationFlag, warehouseFlag *string
 	if scratch {
-		project = fs.String("project", "", "the BigQuery `project` a new scratch is billed to (default: the project's default, else your credentials' quota project)")
-		location = fs.String("location", "", "the `location` a new scratch runs in (default: the project's default, else BigQuery picks it from the tables)")
+		warehouseFlag = fs.String("warehouse", "", "the `warehouse` a standalone scratch runs against: bigquery or databricks (default: the project's warehouse, or ask in the browser outside a project)")
+		projectFlag = fs.String("project", "", "the BigQuery `project` a new scratch is billed to (default: the project's default, else your credentials' quota project)")
+		locationFlag = fs.String("location", "", "the `location` a new scratch runs in (default: the project's default, else BigQuery picks it from the tables)")
 		commandUsage(fs, "xf scratch [flags]",
 			"Open xf in a browser on a new empty scratch query: a SQL editor that runs in\n"+
-				"BigQuery, with completion and documentation for tables and columns. In a\n"+
-				"Dataform or dbt project (or --dir) it keeps the scratch in .xf/tmp and knows the\n"+
-				"project's models; anywhere else it is only the editor, and keeps scratches in\n"+
-				"xf's user config folder, in tmp. It listens on 127.0.0.1 only and answers only\n"+
-				"its own page (with --allow-host, the URL it prints carries a token every request\n"+
-				"needs). ctrl+c here quits, and so does closing every browser window for 45s\n"+
-				"(--web-auto-exit-seconds; 0 is off, as it is by default with --allow-host). A\n"+
-				"run going holds that off until it ends.")
+				"BigQuery or Databricks, with completion and documentation for tables and columns.\n"+
+				"In a Dataform or dbt project (or --dir) it keeps the scratch in .xf/tmp and knows\n"+
+				"the project's models; pass --warehouse to open a standalone scratch instead.\n"+
+				"Outside any project, --warehouse chooses BigQuery or Databricks (or omit it to\n"+
+				"pick in the browser), keeping scratches in xf's user config folder, in tmp.\n"+
+				"It listens on 127.0.0.1 only and answers only its own page (with --allow-host,\n"+
+				"the URL it prints carries a token every request needs). ctrl+c here quits, and so\n"+
+				"does closing every browser window for 45s (--web-auto-exit-seconds; 0 is off, as\n"+
+				"it is by default with --allow-host). A run going holds that off until it ends.")
 	} else {
 		commandUsage(fs, "xf web [flags]",
 			"Open xf in a browser: the TUI's panes and keys, for the project in the working\n"+
@@ -90,7 +92,14 @@ func serveWeb(scratch bool, args []string) error {
 	}
 	o := webStart{cmdName: cmdName, port: *port, noOpen: *noOpen, app: *app, scratch: scratch}
 	if scratch {
-		o.project, o.location = *project, *location
+		wh, err := normalizeScratchWarehouse(*warehouseFlag)
+		if err != nil {
+			return err
+		}
+		if wh != "" && *pf.dir != "" {
+			return errors.New("--warehouse opens a standalone scratch and cannot be combined with --dir")
+		}
+		o.warehouse, o.project, o.location = wh, *projectFlag, *locationFlag
 	}
 	for _, h := range strings.Split(*allowHost, ",") {
 		if h = strings.TrimSpace(h); h != "" {
@@ -106,9 +115,10 @@ type webStart struct {
 	port        int
 	noOpen, app bool
 	hosts       []string
-	// scratch opens a new empty scratch query, in project and location.
-	scratch           bool
-	project, location string
+	// scratch opens a new empty scratch query, in project and location, or
+	// standalone against warehouse ("bigquery" or "databricks").
+	scratch                      bool
+	warehouse, project, location string
 	// check opens the Checks page on that tab ("impact").
 	check string
 }
@@ -122,8 +132,9 @@ func startWeb(pf projectFlags, sf *settingFlags, o webStart) error {
 	// picker opens one by its path when none is remembered yet.
 	cfg := web.Config{
 		TermEnv:  nvimTermEnv,
-		Projects: rememberedProjects,
-		Open:     func(p session.Project) (*web.Project, error) { return openWebProject(sf, p.Root, p.Backend) },
+		Projects:    rememberedProjects,
+		Open:        func(p session.Project) (*web.Project, error) { return openWebProject(sf, p.Root, p.Backend) },
+		OpenScratch: func(wh string) (*web.Project, error) { return standaloneScratch(sf, wh, o.project, o.location, false) },
 		Add: func(root, tool string) (bool, error) {
 			dir := sessionDir()
 			if dir == "" {
@@ -154,29 +165,41 @@ func startWeb(pf projectFlags, sf *settingFlags, o webStart) error {
 		// Beside the sessions: ~/.local/state/xf/web-page.log.
 		cfg.PageLog = filepath.Join(filepath.Dir(dir), "web-page.log")
 	}
-	root, name, err := pf.find()
-	switch {
-	case errors.Is(err, backend.ErrNoProject) && *pf.dir == "" && *pf.backend == "" && o.check == "":
-		if o.scratch { // no project: the editor alone
-			p, err := standaloneScratch(sf, o.project, o.location)
-			if err != nil {
-				return err
-			}
-			cfg.Project = p
-		}
-	case err != nil:
-		return err
-	default:
-		p, err := openWebProject(sf, root, name)
+	if o.scratch && o.warehouse != "" {
+		p, err := standaloneScratch(sf, o.warehouse, o.project, o.location, true)
 		if err != nil {
 			return err
 		}
-		if o.scratch {
-			p.StartScratch = true
-			p.ScratchProject, p.ScratchLocation = o.project, o.location
-		}
-		p.StartCheck = o.check
 		cfg.Project = p
+	} else {
+		root, name, err := pf.find()
+		switch {
+		case errors.Is(err, backend.ErrNoProject) && *pf.dir == "" && *pf.backend == "" && o.check == "":
+			if o.scratch {
+				if wh := inferScratchWarehouse(sf, o.project, o.location); wh != "" {
+					p, err := standaloneScratch(sf, wh, o.project, o.location, true)
+					if err != nil {
+						return err
+					}
+					cfg.Project = p
+				} else {
+					cfg.StartScratchPicker = true
+				}
+			}
+		case err != nil:
+			return err
+		default:
+			p, err := openWebProject(sf, root, name)
+			if err != nil {
+				return err
+			}
+			if o.scratch {
+				p.StartScratch = true
+				p.ScratchProject, p.ScratchLocation = o.project, o.location
+			}
+			p.StartCheck = o.check
+			cfg.Project = p
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

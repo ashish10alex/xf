@@ -605,7 +605,7 @@ func (p *projectState) boot() *projectBoot {
 		Run:              p.runViewLocked(true),
 		History:          p.historyViewLocked(),
 		EditorFile:       p.editorViewLocked(),
-		Scratch:          scratchBoot{Standalone: p.standalone, Start: p.startScratch},
+		Scratch:          p.scratchBootLocked(),
 		Check:            p.startCheck,
 		CommandUses:      d.CommandUses.Load(),
 		SourceAutosaveMs: autosaveMs(p.sourceAutosaveMs),
@@ -706,6 +706,8 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 	route("POST /api/check", (*projectState).checkAction)
 	route("GET /api/databricks/warehouses", (*projectState).databricksWarehouses)
 	route("POST /api/databricks/warehouse", (*projectState).chooseDatabricksWarehouse)
+	route("GET /api/databricks/profiles", (*projectState).databricksProfiles)
+	route("POST /api/databricks/profile", (*projectState).chooseDatabricksProfile)
 	route("POST /api/inspector/run", (*projectState).inspectorRun)
 	route("POST /api/inspector/cancel", (*projectState).inspectorCancel)
 	route("GET /api/inspector/presets", (*projectState).inspectorPresets)
@@ -729,6 +731,7 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 	route("GET /api/scratch/runs", (*projectState).scratchRunsList)
 	route("POST /api/scratch/runs", (*projectState).scratchRunsAdd)
 	route("GET /api/scratch/meta/models", (*projectState).scratchModels)
+	route("GET /api/scratch/meta/projects", (*projectState).scratchProjects)
 	route("GET /api/scratch/meta/datasets", (*projectState).scratchDatasets)
 	route("GET /api/scratch/meta/tables", (*projectState).scratchTables)
 	route("GET /api/scratch/meta/table", (*projectState).scratchTable)

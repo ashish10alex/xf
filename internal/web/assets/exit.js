@@ -8,7 +8,7 @@
 
 import { S, redraw, hooks, leaveOverlay, askQuit, closeProject } from './state.js';
 import { SET, closeSettings } from './settings.js';
-import { SC, closeScratchView } from './scratch.js';
+import { SC, closeScratchView, closeWarehouseMenu } from './scratch.js';
 import { closeChecks } from './checks.js';
 import { T, closeThemePicker } from './theme.js';
 
@@ -22,9 +22,14 @@ export function exitKey() {
     redraw();
     return true;
   }
+  if (S.mode === 'picker' && S.scratchPick) { S.scratchPick = null; redraw(); return true; }
   if (S.mode !== 'project') return false;
   if (SC.open) {
-    if (SC.standalone) return false; // there is no project page to go back to
+    if (SC.whOpen) { closeWarehouseMenu(); return true; }
+    if (SC.standalone) {
+      Promise.resolve(hooks.scratchFlush && hooks.scratchFlush()).then(() => askQuit());
+      return true;
+    }
     closeScratchView();
     return true;
   }

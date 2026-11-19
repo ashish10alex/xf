@@ -36,10 +36,19 @@ type metaEntry struct {
 	v  any
 }
 
-// metaCache keeps what BigQuery said of datasets and tables, by key.
+// metaCache keeps what BigQuery or Databricks said of projects, datasets and
+// tables, by key. gen advances on clear() so an in-flight lookup from before a
+// clear (e.g. a Databricks profile switch) never caches stale results after it.
 type metaCache struct {
-	mu sync.Mutex
-	m  map[string]metaEntry
+	mu  sync.Mutex
+	gen uint64
+	m   map[string]metaEntry
+}
+
+func (c *metaCache) generation() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen
 }
 
 func (c *metaCache) get(key string, now time.Time) (any, bool) {
@@ -52,9 +61,12 @@ func (c *metaCache) get(key string, now time.Time) (any, bool) {
 	return e.v, true
 }
 
-func (c *metaCache) put(key string, v any, now time.Time) {
+func (c *metaCache) put(key string, v any, now time.Time, gen uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.gen != gen {
+		return
+	}
 	if c.m == nil {
 		c.m = map[string]metaEntry{}
 	}
@@ -64,6 +76,7 @@ func (c *metaCache) put(key string, v any, now time.Time) {
 func (c *metaCache) clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.gen++
 	c.m = nil
 }
 
@@ -124,7 +137,39 @@ func (p *projectState) scratchModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// ---- datasets and tables ----
+// ---- projects / catalogs, datasets and tables ----
+
+func (p *projectState) scratchProjects(w http.ResponseWriter, r *http.Request) {
+	const key = "projects"
+	if v, ok := p.meta.get(key, p.deps.Now()); ok {
+		writeJSON(w, v)
+		return
+	}
+	gen := p.meta.generation()
+	c, err := p.bq(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	lister, ok := c.(warehouse.ProjectLister)
+	if !ok {
+		writeJSON(w, []string{})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), metaTimeout)
+	defer cancel()
+	ps, err := lister.ListProjects(ctx)
+	if err != nil {
+		writeError(w, queryError(err))
+		return
+	}
+	if ps == nil {
+		ps = []string{}
+	}
+	slices.Sort(ps)
+	p.meta.put(key, ps, p.deps.Now(), gen)
+	writeJSON(w, ps)
+}
 
 func (p *projectState) scratchDatasets(w http.ResponseWriter, r *http.Request) {
 	proj := r.URL.Query().Get("project")
@@ -137,6 +182,7 @@ func (p *projectState) scratchDatasets(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, v)
 		return
 	}
+	gen := p.meta.generation()
 	c, err := p.bq(r.Context())
 	if err != nil {
 		writeError(w, err)
@@ -152,7 +198,7 @@ func (p *projectState) scratchDatasets(w http.ResponseWriter, r *http.Request) {
 	if ds == nil {
 		ds = []string{}
 	}
-	p.meta.put(key, ds, p.deps.Now())
+	p.meta.put(key, ds, p.deps.Now(), gen)
 	writeJSON(w, ds)
 }
 
@@ -167,6 +213,7 @@ func (p *projectState) scratchTables(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, v)
 		return
 	}
+	gen := p.meta.generation()
 	c, err := p.bq(r.Context())
 	if err != nil {
 		writeError(w, err)
@@ -182,7 +229,7 @@ func (p *projectState) scratchTables(w http.ResponseWriter, r *http.Request) {
 	if ts == nil {
 		ts = []warehouse.TableListing{}
 	}
-	p.meta.put(key, ts, p.deps.Now())
+	p.meta.put(key, ts, p.deps.Now(), gen)
 	writeJSON(w, ts)
 }
 
@@ -249,6 +296,7 @@ func (p *projectState) scratchTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	gen := p.meta.generation()
 	card := &tableCard{Project: proj, Dataset: ds, Table: table, Model: p.modelOf(proj, ds, table),
 		URL: p.tableURL(project.Target{Database: proj, Schema: ds, Name: table})}
 	c, err := p.bq(r.Context())
@@ -273,7 +321,7 @@ func (p *projectState) scratchTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	p.meta.put(key, card, p.deps.Now())
+	p.meta.put(key, card, p.deps.Now(), gen)
 	writeJSON(w, card)
 }
 

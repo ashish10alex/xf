@@ -25,6 +25,31 @@ import (
 // projectHeader is the header a page's requests name its project in.
 const projectHeader = "X-Xf-Project"
 
+// Standalone scratch workspace keys: one per warehouse, so BigQuery and
+// Databricks scratches stay open side by side with separate folders and
+// recent runs. "scratch" aliases ScratchKeyBigQuery for old URLs.
+const (
+	ScratchKeyBigQuery   = "scratch-bigquery"
+	ScratchKeyDatabricks = "scratch-databricks"
+)
+
+func scratchKeyFor(wh string) string {
+	if wh == project.Databricks {
+		return ScratchKeyDatabricks
+	}
+	return ScratchKeyBigQuery
+}
+
+func scratchWarehouseOfKey(key string) (string, bool) {
+	switch key {
+	case "scratch", ScratchKeyBigQuery:
+		return project.BigQuery, true
+	case ScratchKeyDatabricks:
+		return project.Databricks, true
+	}
+	return "", false
+}
+
 // openProject is a project the server holds open.
 type openProject struct {
 	p *projectState
@@ -108,6 +133,9 @@ func pathOfKey(key string) string {
 // openByKeyLocked is the open project key names: by the key it opened
 // with, or a path to it; s.mu is held.
 func (s *Server) openByKeyLocked(key string) *openProject {
+	if key == "scratch" {
+		key = ScratchKeyBigQuery
+	}
 	for _, op := range s.open {
 		if op.key == key {
 			return op
@@ -196,6 +224,9 @@ func (s *Server) projectOf(r *http.Request) *openProject {
 // on a project that closed opens it again, as does a link to one.
 // Opening one is serialised, so two tabs opening it at once share it.
 func (s *Server) ensure(key string) (*openProject, error) {
+	if wh, ok := scratchWarehouseOfKey(key); ok {
+		return s.ensureScratch(wh)
+	}
 	s.mu.Lock()
 	op := s.openByKeyLocked(key)
 	s.mu.Unlock()
@@ -217,6 +248,37 @@ func (s *Server) ensure(key string) (*openProject, error) {
 		return nil, errors.New("xf has no project " + key)
 	}
 	return s.openLocked(pr)
+}
+
+// ensureScratch returns the open standalone scratch workspace for wh
+// ("bigquery" or "databricks"), opening it when it isn't open yet.
+func (s *Server) ensureScratch(wh string) (*openProject, error) {
+	if wh != project.BigQuery && wh != project.Databricks {
+		return nil, errors.New("unknown warehouse: " + wh + " (want bigquery or databricks)")
+	}
+	key := scratchKeyFor(wh)
+	s.mu.Lock()
+	op := s.openByKeyLocked(key)
+	s.mu.Unlock()
+	if op != nil {
+		return op, nil
+	}
+	s.opening.Lock()
+	defer s.opening.Unlock()
+	s.mu.Lock()
+	op = s.openByKeyLocked(key)
+	s.mu.Unlock()
+	if op != nil {
+		return op, nil
+	}
+	if s.cfg.OpenScratch == nil {
+		return nil, errors.New("xf has no project " + key)
+	}
+	opened, err := s.cfg.OpenScratch(wh)
+	if err != nil {
+		return nil, err
+	}
+	return s.adoptWithKey(opened, key), nil
 }
 
 // openRoot is the project at pr.Root, opened when it isn't open yet.
@@ -250,6 +312,11 @@ func (s *Server) openLocked(pr session.Project) (*openProject, error) {
 
 // adopt holds opened open.
 func (s *Server) adopt(opened *Project) *openProject {
+	return s.adoptWithKey(opened, "")
+}
+
+// adoptWithKey holds opened open, pinning its key to forcedKey when non-empty.
+func (s *Server) adoptWithKey(opened *Project, forcedKey string) *openProject {
 	remembered := s.projects()
 	h := newHub()
 	// What a project's events change, the summaries other tabs show do.
@@ -259,22 +326,38 @@ func (s *Server) adopt(opened *Project) *openProject {
 		}
 	}
 	p := newProjectState(opened.Deps, h, opened.SaveSession)
+	p.mu.Lock()
 	p.name, p.worktree = projectName(p.deps.Root), worktreeView(p.deps.Root)
 	p.editor = opened.Editor
 	p.install = opened.InstallCLI
 	p.forgeCfg = s.cfg.Forge
 	p.setScratch(opened)
+	if p.standalone {
+		p.tool = "scratch"
+		if forcedKey == ScratchKeyDatabricks || (forcedKey == "" && p.onDbx.Load()) {
+			p.name = "Scratch · Databricks"
+		} else {
+			p.name = "Scratch · BigQuery"
+		}
+	}
 	if s.cfg.Settings != nil {
 		p.openedWith = reopenValues(s.cfg.Settings.View(p.deps.Root, p.tool))
 	}
+	p.mu.Unlock()
 	op := &openProject{p: p, close: opened.Close, active: time.Now()}
 	p.runEnded = s.exit.runEnded
 	p.credsCheck = s.credsChecked
 	p.termEnv = s.cfg.TermEnv
 	s.mu.Lock()
 	op.key = cmp.Or(s.keyOf(p.deps.Root, remembered, s.openRootsLocked()), "project")
-	if p.standalone {
-		op.key = "scratch"
+	if forcedKey != "" {
+		op.key = forcedKey
+	} else if p.standalone {
+		if p.onDbx.Load() {
+			op.key = ScratchKeyDatabricks
+		} else {
+			op.key = ScratchKeyBigQuery
+		}
 	}
 	s.open[p.deps.Root] = op
 	s.mu.Unlock()

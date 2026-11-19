@@ -81,6 +81,13 @@ func (f *fakeWorkspace) handler(t *testing.T) http.Handler {
 			{"name":"day","type_text":"date","nullable":true,"position":1,"partition_index":0},
 			{"name":"lines","type_text":"array<struct<sku:string,qty:int>>","comment":"what was bought","nullable":true,"position":2}]}`)
 	})
+	mux.HandleFunc("GET /api/2.1/unity-catalog/catalogs", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page_token") == "" {
+			_, _ = io.WriteString(w, `{"catalogs":[{"name":"main"}],"next_page_token":"p2"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"catalogs":[{"name":"samples"}]}`)
+	})
 	mux.HandleFunc("GET /api/2.1/unity-catalog/schemas", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("page_token") == "" {
 			_, _ = io.WriteString(w, `{"schemas":[{"name":"a"}],"next_page_token":"p2"}`)
@@ -339,5 +346,27 @@ func TestCLIFailureIsErrAuth(t *testing.T) {
 	}
 	if c.TokenFrom != "databricks auth token --host https://dbc-1" {
 		t.Errorf("token from %q", c.TokenFrom)
+	}
+}
+
+func TestListProfiles(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "databrickscfg")
+	body := "[DEFAULT]\n\n[dev]\nhost = dbc-dev.cloud.databricks.com/\n\n[prod]\nhost = https://dbc-prod.cloud.databricks.com\n"
+	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := ListProfiles(cfg, func(string) string { return "" })
+	if len(got) != 2 || got[0] != (ProfileInfo{Name: "dev", Host: "https://dbc-dev.cloud.databricks.com"}) ||
+		got[1] != (ProfileInfo{Name: "prod", Host: "https://dbc-prod.cloud.databricks.com"}) {
+		t.Fatalf("ListProfiles = %+v", got)
+	}
+}
+
+func TestListProjectsCatalogs(t *testing.T) {
+	c := newTestClient(t, &fakeWorkspace{})
+	cats, err := c.ListProjects(context.Background())
+	if err != nil || len(cats) != 2 || cats[0] != "main" || cats[1] != "samples" {
+		t.Fatalf("ListProjects = %v, %v", cats, err)
 	}
 }

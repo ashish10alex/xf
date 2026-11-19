@@ -72,10 +72,11 @@ func NewClientWithHTTP(httpClient *http.Client, baseURL, quotaProject string) *C
 // The Client is a warehouse that prices queries by the bytes they scan,
 // holds Proxy Views for defer to prod, and lists its jobs.
 var (
-	_ warehouse.Warehouse  = (*Client)(nil)
-	_ warehouse.Coster     = (*Client)(nil)
-	_ warehouse.ViewWriter = (*Client)(nil)
-	_ warehouse.JobLister  = (*Client)(nil)
+	_ warehouse.Warehouse     = (*Client)(nil)
+	_ warehouse.Coster        = (*Client)(nil)
+	_ warehouse.ViewWriter    = (*Client)(nil)
+	_ warehouse.JobLister     = (*Client)(nil)
+	_ warehouse.ProjectLister = (*Client)(nil)
 )
 
 // DefaultProject is QuotaProject.

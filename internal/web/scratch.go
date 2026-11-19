@@ -96,6 +96,30 @@ type scratchBoot struct {
 	// page opens on a new empty scratch.
 	Standalone bool `json:"standalone"`
 	Start      bool `json:"start"`
+	// Standalone Databricks connection details, when on Databricks.
+	Profile      string `json:"profile,omitempty"`
+	Host         string `json:"host,omitempty"`
+	Warehouse    string `json:"warehouse,omitempty"`
+	HasProfiles  bool   `json:"hasProfiles,omitempty"`
+	NeedsProfile bool   `json:"needsProfile,omitempty"`
+}
+
+func (p *projectState) scratchBootLocked() scratchBoot {
+	b := scratchBoot{Standalone: p.standalone, Start: p.startScratch}
+	if p.standalone && p.databricksLocked() && p.dbx != nil {
+		if p.dbx.Host != nil {
+			b.Host = p.dbx.Host()
+		}
+		if p.dbx.WarehouseID != nil {
+			b.Warehouse = p.dbx.WarehouseID()
+		}
+		if p.dbx.Profiles != nil {
+			b.HasProfiles = true
+			_, b.Profile = p.dbx.Profiles()
+			b.NeedsProfile = b.Host == ""
+		}
+	}
+	return b
 }
 
 func newScratchID() string {
@@ -689,7 +713,7 @@ func (p *projectState) scratchRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proj, ok := p.scratchProject(r.Context(), f.Project)
-	if !ok {
+	if !ok && !p.onDbx.Load() {
 		writeError(w, errors.New("no project to run in: set project=… in the first line of the scratch"))
 		return
 	}

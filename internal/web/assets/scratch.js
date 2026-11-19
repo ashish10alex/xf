@@ -2,7 +2,7 @@
 // dry run of the SQL being edited, and the query job with its pages of
 // rows. The view itself is scratch-view.js; the editor is scratch-editor.js.
 
-import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects, openWarehousePicker } from './state.js';
+import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects, openWarehousePicker, openProfilePicker, openScratchWarehouse, askQuit } from './state.js';
 import { openThemePicker, themeLabel } from './theme.js';
 import { part } from './workspace.js';
 import { vimOn } from './vim-mode.js';
@@ -29,6 +29,10 @@ export const SC = {
   hideResults: false,  // cmd+j hides the results as a terminal panel hides
   defaults: null,      // the project and location a scratch with no model runs in
   standalone: false,   // no project behind the page: Scratch is all of it
+  dbx: null,           // standalone Databricks connection: { profile, host, warehouse, hasProfiles, needsProfile }
+  projects: null,      // BigQuery projects or Databricks catalogs for the target box's datalist
+  whOpen: false,       // standalone warehouse switcher menu
+  whCursor: 0,
   filters: {},         // the results' column filters: column index -> text
   sort: null,          // the results' sort: { c: column index, desc }
   recent: [],          // the last runs that returned rows, newest first (scratchruns.go)
@@ -224,8 +228,29 @@ export async function setTarget(project, location) {
   redraw();
 }
 
+// loadProjects lists BigQuery projects or Databricks catalogs for the toolbar
+// target box's datalist, once per session (cleared on refresh or profile switch).
+let projectsSeq = 0;
+let projectsLoading = false;
+export async function loadProjects() {
+  if (SC.projects || projectsLoading) return;
+  projectsLoading = true;
+  const seq = ++projectsSeq;
+  try {
+    const list = await get('/api/scratch/meta/projects');
+    if (seq === projectsSeq) {
+      SC.projects = Array.isArray(list) ? list : [];
+      redraw();
+    }
+  } catch { /* ignore */ }
+  if (seq === projectsSeq) projectsLoading = false;
+}
+
 // refreshMeta forgets what is known of datasets and tables, here and in xf.
 export async function refreshMeta() {
+  projectsSeq++;
+  projectsLoading = false;
+  SC.projects = null;
   clearMeta();
   try { await post('/api/scratch/meta/refresh'); } catch (e) { say(e.message); return; }
   say('table metadata refreshed');
@@ -531,7 +556,8 @@ export async function runScratch(force) {
   } catch (e) {
     run.phase = 'failed'; run.error = e.message; run.ended = Date.now();
     // A Databricks project with no SQL warehouse yet: pick one, then run.
-    if (onDbx() && /^no SQL warehouse chosen/.test(e.message)) openWarehousePicker(() => runScratch(true));
+    if (onDbx() && /^no Databricks workspace/.test(e.message) && SC.dbx && SC.dbx.hasProfiles) openProfilePicker(() => runScratch(true));
+    else if (onDbx() && /^no SQL warehouse chosen/.test(e.message)) openWarehousePicker(() => runScratch(true));
     redraw();
     return;
   }
@@ -898,6 +924,7 @@ export function scratchKey(k) {
     return true;
   }
   if (SC.recentOpen) { recentKey(k); return true; }
+  if (SC.whOpen) { warehouseMenuKey(k); return true; }
   SC.flash = '';
   switch (k) {
     case 'ctrl+c': if (isRunning()) cancelRun(); return true;
@@ -934,7 +961,10 @@ export function scratchCommands() {
     toResults();
     setTimeout(() => { const el = document.querySelector('.sc-target-in'); if (el) { el.focus(); el.select(); } }, 0);
   }, [cur.project, cur.location].filter(Boolean).join(' · '));
-  if (onDbx()) add('Databricks: choose the SQL warehouse queries run on', '', () => openWarehousePicker(() => {}));
+  if (onDbx() && SC.dbx && SC.dbx.hasProfiles) {
+    add('Databricks: choose profile (~/.databrickscfg)', '', () => openProfilePicker(), SC.dbx.profile || '');
+  }
+  if (onDbx()) add('Databricks: choose the SQL warehouse queries run on', '', () => openWarehousePicker(() => {}), SC.dbx && SC.dbx.warehouse ? SC.dbx.warehouse : '');
   if (cur && ed && ed.format) add('Format: query with sqlfluff', vimOn() ? ':format' : '', () => ed.format());
   add('Tables: refresh what is known of tables and columns', ':refresh', refreshMeta);
   if (SC.recent.length) add('Results: recent results', 'h', toggleRecent, SC.recent.length + ' kept');
@@ -953,7 +983,13 @@ export function scratchCommands() {
   if (hooks.openSettings) add('View: settings', 'ctrl+,', () => { flushSave().then(() => { hooks.openSettings(); redraw(); }); });
   if (cur) add('Go to: editor', 'i', focusEditor);
   if (run && !SC.hideResults) add('Go to: results', 'ctrl+w', toResults);
-  if (!SC.standalone) {
+  if (SC.standalone) {
+    if (S.scratchWarehouses && S.scratchWarehouses.length > 1) {
+      add('Scratch: switch warehouse', '', toggleWarehouseMenu, site());
+    }
+    add('Project: switch or add', '', openProjects);
+    add('Close scratch: back to the projects', 'ctrl+q', () => { flushSave().then(() => askQuit()); });
+  } else {
     add('Project: switch or add', '', openProjects);
     add('Close scratch: back to the project', 'esc', closeScratchView, S.boot && S.boot.name);
   }
@@ -1025,12 +1061,77 @@ part('scratch', (light) => {
 });
 
 hooks.scratchFlush = () => (SC.open ? flushSave() : Promise.resolve());
+hooks.scratchRunning = () => SC.open && isRunning();
+hooks.scratchCancel = () => cancelRun();
 
 hooks.startScratch = (standalone) => {
   SC.standalone = !!standalone;
+  SC.whOpen = false;
+  const sb = S.boot && S.boot.scratch;
+  SC.dbx = sb && onDbx()
+    ? { profile: sb.profile || '', host: sb.host || '', warehouse: sb.warehouse || '', hasProfiles: !!sb.hasProfiles, needsProfile: !!sb.needsProfile }
+    : null;
   S.overlay = null;
-  openScratchView(null, { draft: true });
+  openScratchView(null, { draft: true }).then(() => {
+    if (SC.standalone && onDbx() && SC.dbx && SC.dbx.needsProfile) openProfilePicker();
+  });
 };
+hooks.dbxUpdated = (u) => {
+  if (!u) return;
+  const workspaceChanged = u.profile !== undefined || u.host !== undefined;
+  if (!SC.dbx) SC.dbx = { profile: '', host: '', warehouse: '', hasProfiles: false, needsProfile: false };
+  if (u.profile !== undefined) SC.dbx.profile = u.profile;
+  if (u.host !== undefined) SC.dbx.host = u.host;
+  if (u.warehouse !== undefined) SC.dbx.warehouse = u.warehouse;
+  if (u.needsProfile !== undefined) SC.dbx.needsProfile = u.needsProfile;
+  if (workspaceChanged) {
+    projectsSeq++;
+    projectsLoading = false;
+    SC.projects = null;
+    clearMeta();
+    if (!isRunning()) {
+      SC.run = null;
+      SC.sel = null;
+      SC.filters = {};
+      SC.sort = null;
+    }
+    loadRecent();
+  }
+  redraw();
+};
+
+export function toggleWarehouseMenu() {
+  if (!SC.standalone || !S.scratchWarehouses || S.scratchWarehouses.length < 2) return;
+  SC.whOpen = !SC.whOpen;
+  if (SC.whOpen) {
+    const cur = onDbx() ? 'databricks' : 'bigquery';
+    SC.whCursor = Math.max(0, S.scratchWarehouses.findIndex((w) => w.id !== cur));
+    if (ed) ed.blur();
+  }
+  redraw();
+}
+
+export function closeWarehouseMenu() {
+  SC.whOpen = false;
+  redraw();
+}
+
+export function switchStandaloneWarehouse(id, flip) {
+  SC.whOpen = false;
+  flushSave().then(() => openScratchWarehouse(id, flip));
+}
+
+function warehouseMenuKey(k) {
+  const list = S.scratchWarehouses || [];
+  switch (k) {
+    case 'esc': case 'q': closeWarehouseMenu(); break;
+    case 'j': case 'down': SC.whCursor = Math.min(SC.whCursor + 1, Math.max(list.length - 1, 0)); break;
+    case 'k': case 'up': SC.whCursor = Math.max(SC.whCursor - 1, 0); break;
+    case 'enter': if (list[SC.whCursor]) switchStandaloneWarehouse(list[SC.whCursor].id, false); break;
+    case '1': case 'b': switchStandaloneWarehouse('bigquery', false); break;
+    case '2': case 'd': switchStandaloneWarehouse('databricks', false); break;
+  }
+}
 hooks.openScratch = openScratchView;
 hooks.openLastScratch = openLastScratch;
 hooks.askNew = askNew;

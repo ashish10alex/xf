@@ -262,7 +262,7 @@ window.addEventListener('keydown', (e) => {
   const inEditor = document.activeElement instanceof HTMLElement && document.activeElement.closest('.cm-editor');
   if ((SET.open || SC.open) && inEditor) return;
   e.preventDefault();
-  if (S.mode !== 'project' || SET.open || SC.open || S.overlay === 'sourceConflict') return;
+  if (S.mode !== 'project' || SET.open || SC.open || S.overlay === 'sourceConflict' || S.overlay === 'projects') return;
   e.stopPropagation();
   saveAndCompile().then(redraw);
 }, true);
@@ -412,7 +412,8 @@ window.addEventListener('keydown', (e) => {
   // An input handles its own keys; esc and the arrows it hands on are
   // handled where it is.
   if (typing && !(t.readOnly && S.overlay)) return;
-  const k = keyName(e);
+  let k = keyName(e);
+  if (k === 'enter' && e.shiftKey && (S.mode === 'picker' || S.overlay === 'projects')) k = 'shift+enter';
   if (k === 'Shift' || k === 'Control' || k === 'Meta' || k === 'Alt') return;
   const used = handleKey(k);
   keyUsed(e, used);
