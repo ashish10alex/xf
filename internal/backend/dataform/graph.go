@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/ashish10alex/xf/internal/project"
 )
@@ -82,7 +83,30 @@ func newAction(c compiledAction, kind project.ActionKind) *project.Action {
 		p := toTarget(*c.ParentAction)
 		a.ParentAction = &p
 	}
+	for _, n := range c.Nodes {
+		a.GraphTables = append(a.GraphTables, graphTable(n, false))
+	}
+	for _, e := range c.Edges {
+		a.GraphTables = append(a.GraphTables, graphTable(e, true))
+	}
 	return a
+}
+
+func graphTable(c compiledGraphTable, edge bool) project.GraphTable {
+	t := project.GraphTable{Name: c.Name, Edge: edge, Source: toTarget(c.DataSource), Columns: slices.Clone(c.Keys)}
+	for _, end := range []*compiledGraphEnd{c.Source, c.Destination} {
+		if end != nil {
+			t.Columns = append(t.Columns, end.EdgeColumns...)
+		}
+	}
+	t.AllColumns = !edge && len(c.Labels) == 0
+	for _, l := range c.Labels {
+		t.AllColumns = t.AllColumns || l.ImportAll
+		for _, f := range l.Fields {
+			t.Properties = append(t.Properties, project.GraphProperty{Name: f.Name, Expression: f.Expression})
+		}
+	}
+	return t
 }
 
 func toTarget(c compiledTarget) project.Target {

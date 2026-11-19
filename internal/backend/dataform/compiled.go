@@ -32,7 +32,10 @@ type compiledAction struct {
 	UniqueKey          []string         `json:"uniqueKey"`
 	// Description is a property graph's; other actions keep theirs in
 	// ActionDescriptor.
-	Description      string `json:"description"`
+	Description string `json:"description"`
+	// Nodes and Edges are a property graph's tables.
+	Nodes            []compiledGraphTable `json:"nodes"`
+	Edges            []compiledGraphTable `json:"edges"`
 	ActionDescriptor struct {
 		Description string `json:"description"`
 		Columns     []struct {
@@ -43,6 +46,30 @@ type compiledAction struct {
 	Bigquery struct {
 		PartitionBy string `json:"partitionBy"`
 	} `json:"bigquery"`
+}
+
+// compiledGraphTable is a property graph's node or edge table. A node with
+// no labels has PROPERTIES ALL COLUMNS; an edge has NO PROPERTIES.
+type compiledGraphTable struct {
+	Name       string         `json:"name"`
+	DataSource compiledTarget `json:"dataSource"`
+	Keys       []string       `json:"keys"`
+	Labels     []struct {
+		Fields []struct {
+			Name       string `json:"name"`
+			Expression string `json:"expression"`
+		} `json:"fields"`
+		ImportAll bool `json:"importAll"`
+	} `json:"labels"`
+	Source      *compiledGraphEnd `json:"source"`
+	Destination *compiledGraphEnd `json:"destination"`
+}
+
+// compiledGraphEnd is the node an edge starts or ends at, and the edge
+// table's columns that point at it.
+type compiledGraphEnd struct {
+	Node        string   `json:"node"`
+	EdgeColumns []string `json:"edgeColumns"`
 }
 
 type compiledJSON struct {

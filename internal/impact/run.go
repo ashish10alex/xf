@@ -148,9 +148,11 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 				links, err := src.TableReaders(ctx, c.target())
 				if err != nil {
 					entry.ReadersError = err.Error()
-					return
 				}
-				entry.Readers = ImpactReaders(links, entry.Table, name, rctx)
+				links = append(links, rctx.projectReaders(entry.Table, "")...)
+				if len(links) > 0 || err == nil {
+					entry.Readers = ImpactReaders(links, entry.Table, name, rctx)
+				}
 			})
 			continue
 		}
@@ -195,9 +197,11 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 				links, err := columnReaders(ctx, src, c.target(), col.Column)
 				if err != nil {
 					col.ReadersError = err.Error()
-					return
 				}
-				col.Readers = ImpactReaders(links, entry.Table, col.Column, rctx)
+				links = append(links, rctx.projectReaders(entry.Table, col.Column)...)
+				if len(links) > 0 || err == nil {
+					col.Readers = ImpactReaders(links, entry.Table, col.Column, rctx)
+				}
 			})
 		}
 	}
@@ -299,6 +303,9 @@ var tableTypes = map[string]bool{"table": true, "view": true, "incremental": tru
 func actionSQL(a *project.Action) string {
 	parts := slices.Concat(a.PreOps, []string{a.Query}, a.PostOps,
 		a.IncrementalPreOps, []string{a.IncrementalQuery}, a.IncrementalPostOps, a.Queries)
+	if a.GraphBody != "" {
+		parts = append(parts, a.GraphBody) // left out when empty, so Signature stays as it was
+	}
 	return strings.Join(parts, "\n")
 }
 
@@ -426,6 +433,9 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 	}
 	rctx := ReaderContext{
 		Renamed: renamed,
+		ProjectReaders: func(table, column string) []lineage.ColumnLink {
+			return GraphReaders(g, table, column)
+		},
 		ResolveFile: func(table string) string {
 			if a := g.Actions[project.ActionID(table)]; a != nil {
 				return a.FileName
@@ -456,6 +466,7 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 	for i := range result.New {
 		result.New[i].ReadBy = readBy(g, result.New[i].Table)
 	}
+	markGraphs(result.AtRisk, g)
 	verifyReaders(ctx, result.AtRisk, g, deps, func(done, total int) {
 		progress(Progress{Phase: "Dry running readers", Done: done, Total: total})
 	})
@@ -486,6 +497,23 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		toProdTables(report, deps.ProdTarget)
 	}
 	return report, nil
+}
+
+// markGraphs sets Graph on the readers that are property graphs of g.
+func markGraphs(tables []Table, g *project.Graph) {
+	mark := func(rs []Reader) {
+		for i := range rs {
+			if a := g.Actions[project.ActionID(rs[i].Table)]; a != nil && a.Kind == project.KindPropertyGraph {
+				rs[i].Graph = true
+			}
+		}
+	}
+	for i := range tables {
+		mark(tables[i].Readers)
+		for j := range tables[i].Columns {
+			mark(tables[i].Columns[j].Readers)
+		}
+	}
 }
 
 // readBy is the actions of g that read table, assertions aside.

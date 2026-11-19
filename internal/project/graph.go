@@ -118,6 +118,27 @@ func (k ActionKind) HasTable() bool {
 	return true
 }
 
+// GraphTable is a node or edge table of a Dataform property graph.
+type GraphTable struct {
+	// Name is its label: Author, Wrote.
+	Name   string
+	Edge   bool
+	Source Target
+	// Columns are the source table's columns the graph names outside its
+	// properties: the key, and an edge's source and destination columns.
+	Columns []string
+	// Properties are what a node exposes, metrics included; none with
+	// AllColumns, whose node exposes every column of its table.
+	Properties []GraphProperty
+	AllColumns bool
+}
+
+// GraphProperty is a property of a node table: Expression AS Name.
+type GraphProperty struct {
+	Name       string
+	Expression string
+}
+
 // Action is one node of the compiled graph.
 type Action struct {
 	ID     ActionID
@@ -141,7 +162,11 @@ type Action struct {
 	// HasOutput is set on an operation that creates the table it names.
 	HasOutput        bool
 	NotebookContents string
-	GraphBody        string
+	// GraphBody is a property graph's NODE TABLES and EDGE TABLES, as
+	// CREATE PROPERTY GRAPH takes them; GraphTables are the same tables,
+	// each with what it reads of its source table.
+	GraphBody   string
+	GraphTables []GraphTable
 
 	// Description, Columns and PartitionBy come from the action's config.
 	Description string

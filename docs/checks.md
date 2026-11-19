@@ -4,6 +4,7 @@
 
 `I` shows the column impact of the same changed actions, as the Markdown report a pull request gets; `y` copies it.
 Every changed table, view and incremental table is dry run and compared with its table in BigQuery, and Dataplex Data Lineage is asked who reads the columns it drops or retypes, and the tables it deletes.
+Lineage doesn't record what a Dataform [property graph](https://github.com/dataform-co/dataform/blob/main/docs/property_graphs.md) reads, so xf finds those readers in the compile: a graph reads a column its keys, edge columns or property expressions name, or one its node exposes with `PROPERTIES ALL COLUMNS`, and a table any of its node or edge tables come from.
 A dbt project on Databricks is checked there instead, on its SQL warehouse and with Unity Catalog's lineage, and its report names the warehouse ([Databricks](dbt.md#databricks)).
 
 The report is a ledger.
@@ -38,7 +39,7 @@ When your branch takes the column out of a `uniqueKey` that names it on the base
 When only your branch's `uniqueKey` names it, every run failing is your branch's to fix.
 When the merge-base's version can't be dry run, the change stays your branch's.
 
-The report started as the extension's "Column Impact of Branch Changes" and now goes its own way in layout; which readers it finds, and how it ranks them, still match the extension.
+The report started as the extension's "Column Impact of Branch Changes" and now goes its own way in layout; which readers it finds (property graphs aside), and how it ranks them, still match the extension.
 
 Dataplex also records lineage from dev runs, so a reader may be your own dev build of a project table.
 To fold those into the actions they run, as the extension does, set `devCompilerOptions` to the compiler options you develop with, in your personal `~/.config/xf/config.json` (or `--dev-compiler-options`):

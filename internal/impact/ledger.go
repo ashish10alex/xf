@@ -643,6 +643,9 @@ func BuildLedger(r *Report) Ledger {
 		l.Notes = append(l.Notes, "Readers come from Dataplex lineage of prod runs in the last 30 days, about 2 h behind. "+
 			"A changed reader that still names a dropped column is dry run against the branch's table: a pass means it no longer reads it.")
 	}
+	if readsGraphs(r) {
+		l.Notes = append(l.Notes, "Property graphs come from the compile, as lineage doesn't record what one reads.")
+	}
 	if note := OnBaseNote(r); note != "" {
 		l.Notes = append(l.Notes, note)
 	}
@@ -650,6 +653,18 @@ func BuildLedger(r *Report) Ledger {
 		l.Notes = append(l.Notes, hint)
 	}
 	return l
+}
+
+// readsGraphs says whether a property graph reads something r drops,
+// retypes or deletes.
+func readsGraphs(r *Report) bool {
+	graph := func(rs []Reader) bool { return slices.ContainsFunc(rs, func(x Reader) bool { return x.Graph }) }
+	for _, t := range r.AtRisk {
+		if graph(t.Readers) || slices.ContainsFunc(t.Columns, func(c Column) bool { return graph(c.Readers) }) {
+			return true
+		}
+	}
+	return false
 }
 
 // setReaders lists every reader, capped at MarkdownReaderList.

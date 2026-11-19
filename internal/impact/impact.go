@@ -16,10 +16,11 @@
 // The extension lists an action the base doesn't have as new, and says when
 // it compared with the default targets because prodCompilerOptions isn't
 // set (Report.Unset), as xf does: the parity test covers both. xf goes
-// further in one place: a change the base branch already made, which the
+// further in two places: a change the base branch already made, which the
 // table in BigQuery is behind on, is marked as the base's and counts as low
-// (ColumnChange.OnBase). A report with no such change reads as the
-// extension's.
+// (ColumnChange.OnBase); and Dataform property graphs, whose reads lineage
+// doesn't record, are readers found in the compile (GraphReaders). A report
+// with neither reads as the extension's.
 package impact
 
 import (
@@ -161,6 +162,9 @@ type Reader struct {
 	// RenamedFrom is set on a reader this branch renames: Table is its new
 	// name, and it is judged by its new SQL.
 	RenamedFrom string `json:"renamedFrom,omitempty"`
+	// Graph: a Dataform property graph, found in the compile, as lineage
+	// doesn't record what one reads (see GraphReaders).
+	Graph bool `json:"graph,omitempty"`
 	// Checked is what a dry run of a changed reader that still names a
 	// dropped column found, reading the changed table as the branch builds
 	// it: CheckedClear or CheckedReads; "" when it wasn't dry run or there
@@ -317,6 +321,18 @@ type ReaderContext struct {
 	// Renamed are the new tables of the deleted ones this branch renames,
 	// by the old.
 	Renamed map[string]string
+	// ProjectReaders is the readers of a table's column, or of the table
+	// when column is "", that the project's compile knows and lineage may
+	// not: its property graphs (see GraphReaders). nil means none.
+	ProjectReaders func(table, column string) []lineage.ColumnLink
+}
+
+// projectReaders is ctx.ProjectReaders of table and column, or nil.
+func (ctx ReaderContext) projectReaders(table, column string) []lineage.ColumnLink {
+	if ctx.ProjectReaders == nil {
+		return nil
+	}
+	return ctx.ProjectReaders(table, column)
 }
 
 func isIdentChar(b byte) bool {

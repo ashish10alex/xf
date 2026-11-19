@@ -156,6 +156,41 @@
           },
           "keys": [
             "id"
+          ],
+          "labels": [
+            {
+              "name": "Author",
+              "description": "Library author",
+              "fields": [
+                {
+                  "name": "id",
+                  "expression": "id",
+                  "description": ""
+                },
+                {
+                  "name": "name",
+                  "expression": "name",
+                  "description": "Author Name"
+                },
+                {
+                  "name": "upper_name",
+                  "expression": "UPPER(name)",
+                  "description": ""
+                },
+                {
+                  "name": "joined_date",
+                  "expression": "joined_date",
+                  "description": "Time dimension."
+                },
+                {
+                  "name": "country",
+                  "expression": "address.country",
+                  "description": ""
+                }
+              ],
+              "importAll": false,
+              "isDefault": true
+            }
           ]
         },
         {
@@ -191,6 +226,11 @@
                   "name": "book_count",
                   "expression": "MEASURE(COUNT(id))",
                   "description": ""
+                },
+                {
+                  "name": "total_pages",
+                  "expression": "MEASURE(SUM(pages))",
+                  "description": ""
                 }
               ],
               "importAll": false,
@@ -208,6 +248,17 @@
           "keys": [
             "author_id",
             "book_id"
+          ]
+        },
+        {
+          "name": "Shelf",
+          "dataSource": {
+            "schema": "raw",
+            "name": "shelves",
+            "database": "my-gcp-project"
+          },
+          "keys": [
+            "shelf_id"
           ]
         }
       ],
@@ -242,7 +293,15 @@
             "nodeColumns": [
               "id"
             ]
-          }
+          },
+          "labels": [
+            {
+              "name": "Wrote",
+              "description": "Links an authorship record to its author",
+              "importAll": false,
+              "isDefault": true
+            }
+          ]
         },
         {
           "name": "WroteBook",
@@ -277,7 +336,7 @@
           }
         }
       ],
-      "graphBody": "NODE TABLES (\n  `my-gcp-project.dataform.authors` AS Author KEY (id) PROPERTIES ALL COLUMNS,\n  `my-gcp-project.dataform.books` AS Book KEY (id) PROPERTIES (id, title, pages, MEASURE(COUNT(id)) AS book_count),\n  `my-gcp-project.dataform.wrote` AS Authorship KEY (author_id, book_id) PROPERTIES ALL COLUMNS\n)\nEDGE TABLES (\n  `my-gcp-project.dataform.wrote` AS Wrote KEY (author_id, book_id) SOURCE KEY (author_id, book_id) REFERENCES Authorship (author_id, book_id) DESTINATION KEY (author_id) REFERENCES Author (id) NO PROPERTIES,\n  `my-gcp-project.dataform.wrote` AS WroteBook KEY (author_id, book_id) SOURCE KEY (author_id, book_id) REFERENCES Authorship (author_id, book_id) DESTINATION KEY (book_id) REFERENCES Book (id) NO PROPERTIES\n)",
+      "graphBody": "NODE TABLES (\n  `my-gcp-project.dataform.authors` AS Author KEY (id) DEFAULT LABEL OPTIONS(description=\"Library author\") PROPERTIES (id, name OPTIONS(description=\"Author Name\"), UPPER(name) AS upper_name, joined_date OPTIONS(description=\"Time dimension.\"), address.country AS country),\n  `my-gcp-project.dataform.books` AS Book KEY (id) PROPERTIES (id, title, pages, MEASURE(COUNT(id)) AS book_count, MEASURE(SUM(pages)) AS total_pages),\n  `my-gcp-project.dataform.wrote` AS Authorship KEY (author_id, book_id) PROPERTIES ALL COLUMNS,\n  `my-gcp-project.raw.shelves` AS Shelf KEY (shelf_id) PROPERTIES ALL COLUMNS\n)\nEDGE TABLES (\n  `my-gcp-project.dataform.wrote` AS Wrote KEY (author_id, book_id) SOURCE KEY (author_id, book_id) REFERENCES Authorship (author_id, book_id) DESTINATION KEY (author_id) REFERENCES Author (id) DEFAULT LABEL OPTIONS(description=\"Links an authorship record to its author\") NO PROPERTIES,\n  `my-gcp-project.dataform.wrote` AS WroteBook KEY (author_id, book_id) SOURCE KEY (author_id, book_id) REFERENCES Authorship (author_id, book_id) DESTINATION KEY (book_id) REFERENCES Book (id) NO PROPERTIES\n)",
       "disabled": false,
       "tags": [
         "graph"
