@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -146,7 +147,17 @@ func TestStandaloneScratchLoadsUserEditorSettings(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(`{"vimMode": true, "wrapLines": true, "vimNextHunk": "]c", "sqlfluffBin": "/custom/sqlfluff"}`), 0o644); err != nil {
+	wantBin := filepath.Join(home, "custom", "sqlfluff")
+	rawCfg, err := json.Marshal(map[string]any{
+		"vimMode":     true,
+		"wrapLines":   true,
+		"vimNextHunk": "]c",
+		"sqlfluffBin": wantBin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, rawCfg, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fs := flag.NewFlagSet("xf scratch", flag.ContinueOnError)
@@ -156,8 +167,8 @@ func TestStandaloneScratchLoadsUserEditorSettings(t *testing.T) {
 		if err != nil {
 			t.Fatalf("standaloneScratch(%s): %v", wh, err)
 		}
-		if !p.VimMode || !p.WrapLines || p.SqlfluffBin != "/custom/sqlfluff" || p.VimKeys[config.KeyVimNextHunk] != "]c" {
-			t.Errorf("standaloneScratch(%s): VimMode=%v WrapLines=%v Sqlfluff=%q VimKeys=%v", wh, p.VimMode, p.WrapLines, p.SqlfluffBin, p.VimKeys)
+		if !p.VimMode || !p.WrapLines || p.SqlfluffBin != wantBin || p.VimKeys[config.KeyVimNextHunk] != "]c" {
+			t.Errorf("standaloneScratch(%s): VimMode=%v WrapLines=%v Sqlfluff=%q (want %q) VimKeys=%v", wh, p.VimMode, p.WrapLines, p.SqlfluffBin, wantBin, p.VimKeys)
 		}
 	}
 }
