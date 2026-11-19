@@ -93,7 +93,13 @@ func checkReader(ctx context.Context, reader, column string, changed *project.Ac
 	if len(queries) == 0 || project == "" {
 		return ""
 	}
-	sql, ok := swapTable(queries[0].SQL, changed.Target, changed.Query)
+	reads := queries[0].SQL
+	if !a.RawOps && callsProcedure(a.PreOps) {
+		// A pass would prove nothing of the query that reads changed: it is
+		// dry run alone
+		reads = a.Query
+	}
+	sql, ok := swapTable(reads, changed.Target, changed.Query)
 	if !ok {
 		return ""
 	}
@@ -107,9 +113,81 @@ func checkReader(ctx context.Context, reader, column string, changed *project.Ac
 	return ""
 }
 
+// codeOnly is sql with its comments and string literals blanked out, so
+// that what is left is code at the same byte positions: --, # and block
+// comments, and quoted strings, triple-quoted ones included. Backticked
+// names are kept.
+func codeOnly(sql string) string {
+	out := []byte(sql)
+	blank := func(from, to int) {
+		for i := from; i < to; i++ {
+			if out[i] != '\n' {
+				out[i] = ' '
+			}
+		}
+	}
+	for i := 0; i < len(sql); {
+		switch {
+		case strings.HasPrefix(sql[i:], "--") || sql[i] == '#':
+			to := len(sql)
+			if j := strings.IndexByte(sql[i:], '\n'); j >= 0 {
+				to = i + j
+			}
+			blank(i, to)
+			i = to
+		case strings.HasPrefix(sql[i:], "/*"):
+			to := len(sql)
+			if j := strings.Index(sql[i+2:], "*/"); j >= 0 {
+				to = i + 2 + j + 2
+			}
+			blank(i, to)
+			i = to
+		case sql[i] == '\'' || sql[i] == '"':
+			quote := sql[i : i+1]
+			if strings.HasPrefix(sql[i:], strings.Repeat(quote, 3)) {
+				quote = strings.Repeat(quote, 3)
+			}
+			j := i + len(quote)
+			for j < len(sql) && !strings.HasPrefix(sql[j:], quote) {
+				if sql[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			to := min(len(sql), j+len(quote))
+			blank(i, to)
+			i = to
+		case sql[i] == '`':
+			if j := strings.IndexByte(sql[i+1:], '`'); j >= 0 {
+				i += j + 2
+			} else {
+				i = len(sql)
+			}
+		default:
+			i++
+		}
+	}
+	return string(out)
+}
+
+// notAliases are words that may follow a table in FROM without being its
+// alias.
+var notAliases = map[string]bool{
+	"where": true, "join": true, "inner": true, "left": true, "right": true, "full": true, "cross": true, "outer": true,
+	"on": true, "using": true, "group": true, "order": true, "limit": true, "union": true, "except": true, "intersect": true,
+	"window": true, "qualify": true, "having": true, "for": true, "tablesample": true, "pivot": true, "unpivot": true,
+	"with": true, "when": true, "then": true, "select": true, "natural": true, "lateral": true,
+}
+
+var aliasAfter = regexp.MustCompile("(?i)^\\s+(as\\s+)?([A-Za-z_][A-Za-z0-9_]*|`[^`]+`)")
+
 // swapTable replaces every reference to target in sql, as Dataform
 // compiles them (`project.dataset.table`, or each part quoted on its own),
-// with query as a subquery; false when sql has none.
+// with query as a subquery; false when there is no telling. A reference in
+// a comment or a string isn't one, and a reference written another way
+// (unquoted, or without its project) would still read the table, so none
+// may be left. A subquery has no implicit alias, so one without an alias is
+// given the table's name.
 func swapTable(sql string, target project.Target, query string) (string, bool) {
 	parts := []string{target.Database, target.Schema, target.Name}
 	if target.Database == "" {
@@ -122,11 +200,43 @@ func swapTable(sql string, target project.Target, query string) (string, bool) {
 	whole := "`" + strings.Join(quoted, `\.`) + "`"
 	each := "`" + strings.Join(quoted, "`\\.`") + "`"
 	re := regexp.MustCompile(`(?i)` + whole + `|` + each)
-	if !re.MatchString(sql) {
+	code := codeOnly(sql)
+	matches := re.FindAllStringIndex(code, -1)
+	if len(matches) == 0 {
 		return "", false
 	}
 	sub := "(\n" + strings.TrimRight(strings.TrimSpace(query), ";") + "\n)"
-	return re.ReplaceAllLiteralString(sql, sub), true
+	var swapped, left strings.Builder
+	from := 0
+	for _, m := range matches {
+		swapped.WriteString(sql[from:m[0]])
+		swapped.WriteString(sub)
+		if a := aliasAfter.FindStringSubmatch(code[m[1]:]); a == nil || a[1] == "" && notAliases[strings.ToLower(a[2])] {
+			swapped.WriteString(" AS `" + target.Name + "`")
+		}
+		left.WriteString(code[from:m[0]])
+		left.WriteString(strings.Repeat(" ", m[1]-m[0]))
+		from = m[1]
+	}
+	swapped.WriteString(sql[from:])
+	left.WriteString(code[from:])
+	if Mentions(left.String(), target.Schema+"."+target.Name) {
+		return "", false
+	}
+	return swapped.String(), true
+}
+
+var callStatement = regexp.MustCompile(`(?i)\bCALL\b`)
+
+// callsProcedure says whether any of stmts CALLs a procedure: BigQuery
+// doesn't check what follows a CALL in a script it dry runs.
+func callsProcedure(stmts []string) bool {
+	for _, s := range stmts {
+		if callStatement.MatchString(codeOnly(s)) {
+			return true
+		}
+	}
+	return false
 }
 
 // missingColumn says whether a BigQuery error is about column not being

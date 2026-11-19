@@ -74,9 +74,14 @@ type ColumnChange struct {
 }
 
 // keyedHere says the change is the base branch's but the run break isn't:
-// this branch's uniqueKey names the dropped column and the base's doesn't.
+// the action at the merge-base didn't break its run (it wasn't an
+// incremental table, say), or this branch's uniqueKey names the dropped
+// column and the base's doesn't.
 func (c ColumnChange) keyedHere() bool {
-	return c.OnBase && c.BreaksRun == BreaksRunUniqueKey && c.BaseBreaksRun != BreaksRunUniqueKey
+	if !c.OnBase || c.BreaksRun == "" {
+		return false
+	}
+	return c.BaseBreaksRun == "" || c.BreaksRun == BreaksRunUniqueKey && c.BaseBreaksRun != BreaksRunUniqueKey
 }
 
 // Why a dropped column breaks a Dataform incremental table's own run.
@@ -379,8 +384,9 @@ func TablePath(id string) string {
 
 // AnnotateReader is a reader as the report shows it. name is what the
 // reader would have to stop naming: the column for a dropped or retyped
-// column, the table path (see TablePath) for a deleted table.
-func AnnotateReader(link lineage.ColumnLink, name string, ctx ReaderContext) Reader {
+// column, the table path (see TablePath) for a deleted table; also are
+// other names it may name it by, and it still names it when it names any.
+func AnnotateReader(link lineage.ColumnLink, name string, ctx ReaderContext, also ...string) Reader {
 	table := link.Table
 	if ctx.ToProd != nil {
 		table = ctx.ToProd(table)
@@ -397,7 +403,7 @@ func AnnotateReader(link lineage.ColumnLink, name string, ctx ReaderContext) Rea
 	if ctx.Changed[table] {
 		r.ChangedOnBranch = true
 		if sql, ok := ctx.SQLOf(table); ok {
-			if Mentions(sql, name) {
+			if slices.ContainsFunc(append([]string{name}, also...), func(n string) bool { return Mentions(sql, n) }) {
 				r.StillNamed = true
 			} else {
 				r.ProbablyUpdated = true
@@ -409,11 +415,12 @@ func AnnotateReader(link lineage.ColumnLink, name string, ctx ReaderContext) Rea
 
 // ImpactReaders is the readers of table as the report shows them: dev runs
 // folded into their action, the table itself left out, and assertions left
-// out unless this branch deletes them.
-func ImpactReaders(links []lineage.ColumnLink, table, name string, ctx ReaderContext) []Reader {
+// out unless this branch deletes them. name and also are as for
+// AnnotateReader.
+func ImpactReaders(links []lineage.ColumnLink, table, name string, ctx ReaderContext, also ...string) []Reader {
 	var readers []Reader
 	for _, l := range links {
-		r := AnnotateReader(l, name, ctx)
+		r := AnnotateReader(l, name, ctx, also...)
 		assertion := l.Assertion || ctx.IsAssertion != nil && ctx.IsAssertion(r.Table)
 		// An incremental table reads itself, under its old name too when
 		// renamed.

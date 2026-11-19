@@ -23,6 +23,69 @@ func TestSwapTable(t *testing.T) {
 	}
 }
 
+// A subquery has no implicit alias, so a reference without one gets the
+// table's name.
+func TestSwapTableKeepsTheImplicitAlias(t *testing.T) {
+	target := project.Target{Database: "p", Schema: "marts", Name: "orders"}
+	for _, c := range []struct{ sql, want string }{
+		{"SELECT orders.id FROM `p.marts.orders` WHERE orders.id > 0", "SELECT orders.id FROM (\nSELECT 1 AS id\n) AS `orders` WHERE orders.id > 0"},
+		{"SELECT x.id FROM `p.marts.orders` AS x", "SELECT x.id FROM (\nSELECT 1 AS id\n) AS x"},
+		{"SELECT * FROM `p.marts.orders`\nJOIN y USING (id)", "SELECT * FROM (\nSELECT 1 AS id\n) AS `orders`\nJOIN y USING (id)"},
+	} {
+		if got, ok := swapTable(c.sql, target, "SELECT 1 AS id"); !ok || got != c.want {
+			t.Errorf("swapTable(%q) = %q, %v\nwant %q", c.sql, got, ok, c.want)
+		}
+	}
+}
+
+// A reference in a comment or a string isn't swapped, and while one written
+// another way is left there is no telling.
+func TestSwapTableSwapsCodeOnly(t *testing.T) {
+	target := project.Target{Database: "p", Schema: "marts", Name: "orders"}
+	if got, ok := swapTable("/* `p.marts.orders` */ SELECT discount FROM p.marts.orders", target, "SELECT 1 AS a"); ok {
+		t.Errorf("swapped %q: the table read is unquoted", got)
+	}
+	sql := "SELECT '`p.marts.orders`' AS t, discount FROM `p.marts.orders` o -- `p.marts.orders`"
+	want := "SELECT '`p.marts.orders`' AS t, discount FROM (\nSELECT 1 AS a\n) o -- `p.marts.orders`"
+	if got, ok := swapTable(sql, target, "SELECT 1 AS a"); !ok || got != want {
+		t.Errorf("got %q, %v\nwant %q", got, ok, want)
+	}
+	if got, ok := swapTable("SELECT * FROM `p.marts.orders` a JOIN marts.orders b USING (id)", target, "SELECT 1 AS id"); ok {
+		t.Errorf("swapped %q: marts.orders is still read", got)
+	}
+	in := "a -- b\nc /* d */ e 'f\\'g' \"\"\"h\"\"\" `i` # j"
+	if got, want := codeOnly(in), "a     \nc"+strings.Repeat(" ", 9)+"e"+strings.Repeat(" ", 16)+"`i`"+strings.Repeat(" ", 4); got != want {
+		t.Errorf("codeOnly = %q, want %q", got, want)
+	}
+}
+
+// BigQuery doesn't check what follows a CALL in a script it dry runs, so a
+// reader that CALLs a procedure first is dry run by its query alone.
+func TestCheckReaderDryRunsTheQueryAloneAfterACall(t *testing.T) {
+	g := graph(t, "SELECT order_id FROM src", "SELECT discount FROM `p.marts.orders`")
+	daily := g.Actions["p.marts.daily"]
+	for _, c := range []struct {
+		preOps []string
+		call   bool
+	}{
+		{[]string{"CALL `p.marts.refresh`()"}, true},
+		{[]string{"DECLARE x INT64 DEFAULT 1", "-- CALL nothing"}, false},
+	} {
+		daily.PreOps = c.preOps
+		var ran []string
+		deps := Deps{DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
+			ran = append(ran, sql)
+			return &warehouse.Check{}, nil
+		}}
+		if got := checkReader(context.Background(), "p.marts.daily", "discount", g.Actions["p.marts.orders"], g, deps); got != CheckedClear {
+			t.Errorf("%v: checked %q", c.preOps, got)
+		}
+		if len(ran) != 1 || strings.Contains(ran[0], c.preOps[0]) == c.call {
+			t.Errorf("%v: dry ran %q, want the pre-operations in it %v", c.preOps, ran, !c.call)
+		}
+	}
+}
+
 // On a warehouse that bills its checks (Databricks), a changed model is
 // checked by its query alone, without its hooks, and its readers aren't dry
 // run; the report says which warehouse was used, and where readers came

@@ -302,6 +302,48 @@ func TestBuildSettlesAReaderOfATableMovedToAnotherDataset(t *testing.T) {
 	}
 }
 
+// Compiled with a schema suffix, the deleted table's ID isn't its prod
+// table: a reader that names either still reads it.
+func TestBuildMatchesBothNamesOfADeletedTable(t *testing.T) {
+	src := &fakeSource{tableLinks: map[string][]lineage.ColumnLink{
+		"p.marts.customers": {{Table: "p.marts.revenue", DependencyType: lineage.TableOnly}},
+	}}
+	for _, sql := range []string{"SELECT amount AS net FROM `dev.marts_ashish.customers`", "SELECT amount AS net FROM `p.marts.customers`"} {
+		res, err := Build(context.Background(), []Candidate{
+			{Table: "dev.marts_ashish.customers", Target: "p.marts.customers", Type: "table", Deleted: true},
+		}, src, readerContext([]string{"p.marts.revenue"}, map[string]string{"p.marts.revenue": sql}), func(int, int) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r := res.AtRisk[0].Readers; len(r) != 1 || !r[0].StillNamed {
+			t.Errorf("%s: readers %+v, want it still naming customers", sql, r)
+		}
+	}
+}
+
+// A drop the base branch made that breaks a run the base's action didn't
+// have, as when this branch makes the table incremental, is this branch's.
+func TestImpactSeverityOfARunBreakTheBaseDidNotHave(t *testing.T) {
+	for _, c := range []struct {
+		change ColumnChange
+		want   Severity
+	}{
+		{ColumnChange{Kind: Dropped, OnBase: true, BreaksRun: BreaksRunTable}, SeverityCritical},
+		{ColumnChange{Kind: Dropped, OnBase: true, BreaksRun: BreaksRunTable, BaseBreaksRun: BreaksRunTable}, SeverityLow},
+		{ColumnChange{Kind: Dropped, OnBase: true, BreaksRun: BreaksRunTable, BaseBreaksRun: BreaksRunUniqueKey}, SeverityLow},
+		{ColumnChange{Kind: Dropped, OnBase: true, BreaksRun: BreaksRunUniqueKey, BaseBreaksRun: BreaksRunTable}, SeverityCritical},
+		{ColumnChange{Kind: Dropped, OnBase: true}, SeverityLow},
+	} {
+		if got := ImpactSeverity(c.change, nil, ""); got != c.want {
+			t.Errorf("%+v: severity %v, want %v", c.change, got, c.want)
+		}
+	}
+	lines := ownRun(Table{Columns: []Column{{Column: "note", Change: ColumnChange{Kind: Dropped, OnBase: true, BreaksRun: BreaksRunTable}}}}, "main")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "**its own incremental run · fails:") {
+		t.Errorf("ledger lines %q, want this branch's break, in bold", lines)
+	}
+}
+
 func TestBuildSettlesADeletedTableReadOnlyByAnAssertionTheBranchDeletes(t *testing.T) {
 	src := &fakeSource{tableLinks: map[string][]lineage.ColumnLink{
 		"p.marts.snap": {

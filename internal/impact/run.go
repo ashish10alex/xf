@@ -143,7 +143,9 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 		if c.Deleted {
 			entry := &Table{Table: c.Table, FileName: c.FileName, Type: c.Type, Deleted: true, Columns: []Column{}, RenamedTo: c.RenamedTo}
 			atRisk = append(atRisk, entry)
-			name := TablePath(c.Table)
+			// As the compile names it, and as a reader that names its prod
+			// table outright does
+			name, prod := TablePath(c.Table), TablePath(c.target())
 			lookups = append(lookups, func() {
 				links, err := src.TableReaders(ctx, c.target())
 				if err != nil {
@@ -151,7 +153,7 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 				}
 				links = append(links, rctx.projectReaders(entry.Table, "")...)
 				if len(links) > 0 || err == nil {
-					entry.Readers = ImpactReaders(links, entry.Table, name, rctx)
+					entry.Readers = ImpactReaders(links, entry.Table, name, rctx, prod)
 				}
 			})
 			continue
