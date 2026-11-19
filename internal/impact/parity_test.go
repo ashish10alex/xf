@@ -45,7 +45,11 @@ func TestMatchesExtension(t *testing.T) {
 	var cases []kase
 	for range 300 * scale {
 		table := pick(rng, tablePool)
-		cases = append(cases, kase{Kind: "readers", Links: randomLinks(rng), Table: table, Name: pick(rng, columnPool), Context: randomContext(rng)})
+		name := pick(rng, columnPool)
+		if rng.IntN(4) == 0 { // a deleted table: its readers have to stop naming dataset.table
+			name = TablePath(pick(rng, tablePool))
+		}
+		cases = append(cases, kase{Kind: "readers", Links: randomLinks(rng), Table: table, Name: name, Context: randomContext(rng)})
 	}
 	for range 200 * scale {
 		cases = append(cases, kase{Kind: "sort", Tables: randomReport(rng).AtRisk})
@@ -255,6 +259,9 @@ type parityContext struct {
 	ToProd     map[string]string `json:"toProd"`
 	Deleted    []string          `json:"deleted"`
 	Assertions []string          `json:"assertions"`
+	// Renamed are the new tables of deleted ones the branch renames, by
+	// the old.
+	Renamed map[string]string `json:"renamed"`
 }
 
 func randomContext(rng *rand.Rand) *parityContext {
@@ -276,6 +283,12 @@ func randomContext(rng *rand.Rand) *parityContext {
 			c.Deleted = append(c.Deleted, t)
 		case 2:
 			c.Assertions = append(c.Assertions, t)
+		}
+	}
+	c.Renamed = map[string]string{}
+	for _, d := range c.Deleted {
+		if len(c.Changed) > 0 && rng.IntN(2) == 0 {
+			c.Renamed[d] = pick(rng, c.Changed)
 		}
 	}
 	return c
@@ -300,5 +313,6 @@ func (c *parityContext) readerContext() ReaderContext {
 		ToProd:      ToProdFunc(c.ToProd),
 		Deleted:     set(c.Deleted),
 		IsAssertion: func(t string) bool { return assertions[t] },
+		Renamed:     c.Renamed,
 	}
 }

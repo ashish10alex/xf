@@ -34,6 +34,7 @@ process.stdin.on('end', () => {
                     toProd: (t: string) => x.toProd[t] ?? t,
                     deleted: new Set(x.deleted ?? []),
                     isAssertion: (t: string) => (x.assertions ?? []).includes(t),
+                    renamed: new Map(Object.entries(x.renamed ?? {})),
                 };
                 return impactReaders(c.links ?? [], c.table, c.name, ctx);
             }

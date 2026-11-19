@@ -15,12 +15,16 @@
 //
 // The extension lists an action the base doesn't have as new, and says when
 // it compared with the default targets because prodCompilerOptions isn't
-// set (Report.Unset), as xf does: the parity test covers both. xf goes
-// further in two places: a change the base branch already made, which the
-// table in BigQuery is behind on, is marked as the base's and counts as low
-// (ColumnChange.OnBase); and Dataform property graphs, whose reads lineage
-// doesn't record, are readers found in the compile (GraphReaders). A report
-// with neither reads as the extension's.
+// set (Report.Unset), as xf does: the parity test covers both. The
+// extension has since taken xf's own additions, in its own words: renamed
+// actions, a table moved to another schema included (Table.RenamedFrom);
+// a deleted table's readers judged by dataset.table (TablePath); a change
+// the base branch already made (ColumnChange.OnBase) and a drop that breaks
+// an incremental table's own run (ColumnChange.BreaksRun); changed readers
+// dry run (verifyReaders); property graphs as readers (GraphReaders); and
+// what reads a new table (Table.ReadBy). The parity test covers the
+// readers, renamed ones included, and the order. The Markdown is xf's own
+// ledger, so it isn't compared.
 package impact
 
 import (
