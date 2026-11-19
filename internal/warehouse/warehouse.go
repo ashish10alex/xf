@@ -93,3 +93,9 @@ type JobLister interface {
 	// ChildJobs lists the statements a script job ran, in the order they ran.
 	ChildJobs(ctx context.Context, ref JobRef) ([]ChildJob, error)
 }
+
+// ProjectLister is a warehouse that lists the projects (or catalogs, on
+// Databricks) the caller can query, for SQL completion without a CLI call.
+type ProjectLister interface {
+	ListProjects(ctx context.Context) ([]string, error)
+}

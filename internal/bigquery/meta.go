@@ -4,6 +4,7 @@ package bigquery
 // datasets of a project, the tables of a dataset, and one table in full.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,44 @@ const (
 	listPages    = 5
 	listPageSize = 1000
 )
+
+// ListProjects lists the IDs of the BigQuery projects the caller can see.
+func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
+	var out []string
+	token := ""
+	for range listPages {
+		q := url.Values{"maxResults": {fmt.Sprint(listPageSize)}, "fields": {"nextPageToken,projects(id,projectReference/projectId)"}}
+		if token != "" {
+			q.Set("pageToken", token)
+		}
+		body, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/bigquery/v2/projects?%s", c.baseURL, q.Encode()), nil)
+		if err != nil {
+			return nil, err
+		}
+		var raw struct {
+			NextPageToken string `json:"nextPageToken"`
+			Projects      []struct {
+				ID               string `json:"id"`
+				ProjectReference struct {
+					ProjectID string `json:"projectId"`
+				} `json:"projectReference"`
+			} `json:"projects"`
+		}
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return nil, fmt.Errorf("decode projects: %w", err)
+		}
+		for _, p := range raw.Projects {
+			if id := cmp.Or(p.ProjectReference.ProjectID, p.ID); id != "" {
+				out = append(out, id)
+			}
+		}
+		if raw.NextPageToken == "" {
+			break
+		}
+		token = raw.NextPageToken
+	}
+	return out, nil
+}
 
 // ListDatasets lists the ids of the datasets of project.
 func (c *Client) ListDatasets(ctx context.Context, project string) ([]string, error) {

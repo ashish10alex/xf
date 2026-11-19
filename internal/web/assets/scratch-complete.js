@@ -32,6 +32,7 @@ onClearMeta(clearMetaCache);
 
 const q = (o) => new URLSearchParams(o).toString();
 const models = () => cached('/api/scratch/meta/models');
+const projects = () => cached('/api/scratch/meta/projects');
 const datasets = (project) => cached('/api/scratch/meta/datasets?' + q({ project }));
 const tables = (project, dataset) => cached('/api/scratch/meta/tables?' + q({ project, dataset }));
 // tableCard is a table's card. Completion reads it on every keystroke and
@@ -248,14 +249,16 @@ function applyAt(start, text, then) {
   };
 }
 
-async function tableOptions(tok, tokStart, clean) {
+export async function tableOptions(tok, tokStart, clean) {
   const raw = unquote(tok);
   const parts = raw.split('.');
   const ticked = tok.startsWith('`');
   const lead = ticked ? '`' : '';
   const proj = defaultProject();
   const options = [];
-  const from = tokStart + (ticked ? 1 : 0) + raw.length - parts[parts.length - 1].length;
+  const lastDot = tok.lastIndexOf('.');
+  const tailStart = lastDot < 0 ? 0 : lastDot + 1;
+  const from = tokStart + tailStart + (tok[tailStart] === '`' ? 1 : 0);
   const addTables = async (project, dataset) => {
     const ts = await tables(project, dataset);
     for (const t of ts || []) {
@@ -265,23 +268,33 @@ async function tableOptions(tok, tokStart, clean) {
     return !!ts;
   };
   if (parts.length === 1) {
+    const dbx = onDbx();
+    const [ms, ds, ps] = await Promise.all([models(), proj ? datasets(proj) : null, projects()]);
     for (const n of cteNames(clean)) options.push({ label: n, detail: 'cte', type: 'class', boost: 5, apply: applyAt(tokStart, quoteIdent(n)) });
-    for (const m of (await models()) || []) {
+    for (const m of ms || []) {
       options.push({ label: m.dataset + '.' + m.name, detail: m.kind, type: 'class', boost: 3, info: m.description || undefined,
         apply: applyAt(tokStart, refText({ project: m.project, dataset: m.dataset, table: m.name })) });
     }
-    for (const d of (proj && (await datasets(proj))) || []) {
-      options.push({ label: d, detail: 'dataset', type: 'namespace', boost: 1, apply: applyAt(tokStart, lead + d + '.', true) });
+    const projBoost = dbx || ticked ? 2 : 1;
+    for (const p of ps || []) {
+      const insert = dbx ? quoteIdent(p) + '.' : (ticked || !PLAIN.test(p) ? '`' + p + '.' : p + '.');
+      options.push({ label: p, detail: dbx ? 'catalog' : 'project', type: 'namespace', boost: projBoost, apply: applyAt(tokStart, insert, true) });
+    }
+    for (const d of ds || []) {
+      const insert = dbx ? quoteIdent(d) + '.' : lead + d + '.';
+      options.push({ label: d, detail: dbx ? 'schema' : 'dataset', type: 'namespace', boost: 1, apply: applyAt(tokStart, insert, true) });
     }
     return { from, options };
   }
   if (parts.length === 2) {
+    const dbx = onDbx();
     const ds = (proj && (await datasets(proj))) || [];
     if (ds.includes(parts[0])) {
       await addTables(proj, parts[0]);
-    } else { // the first part is a project
+    } else { // the first part is a project or catalog
       for (const d of (await datasets(parts[0])) || []) {
-        options.push({ label: d, detail: 'dataset', type: 'namespace', apply: applyAt(tokStart, lead + parts[0] + '.' + d + '.', true) });
+        const insert = dbx ? quoteIdent(parts[0]) + '.' + quoteIdent(d) + '.' : lead + parts[0] + '.' + d + '.';
+        options.push({ label: d, detail: dbx ? 'schema' : 'dataset', type: 'namespace', apply: applyAt(tokStart, insert, true) });
       }
     }
     return { from, options };
@@ -573,15 +586,22 @@ async function columnOptions(tok, tokStart, sql, pos) {
   return { from, options };
 }
 
+// tableToken extracts the dotted identifier ending at pos, allowing either
+// GoogleSQL whole-path backticks (`proj.ds.tbl) or Databricks per-part
+// backticks (`my-cat`.`my-sch`.tbl).
+export function tableToken(clean, pos) {
+  const m = /(?:`[^`\n]*`?|[\w\-]*)(?:\.(?:`[^`\n]*`?|[\w\-]*))*$/.exec(clean.slice(0, pos));
+  const tok = m ? m[0].replace(/`$/, '') : '';
+  return { tok, tokStart: pos - (m ? m[0].length : 0) };
+}
+
 async function source(context) {
   const { state, pos } = context;
   const sql = state.doc.toString();
   const clean = blank(sql);
   // Not in a comment or string.
   if (clean[pos - 1] === ' ' && sql[pos - 1] !== ' ' && sql[pos - 1] !== undefined) return null;
-  const m = /`?[\w.\-]*`?$/.exec(clean.slice(0, pos));
-  const tok = m ? m[0].replace(/`$/, '') : '';
-  const tokStart = pos - (m ? m[0].length : 0);
+  const { tok, tokStart } = tableToken(clean, pos);
   const fromList = inFromList(clean, tokStart);
   // An argument of fixed values, as DATE_TRUNC's granularity, offers them
   // and nothing else, as soon as the argument begins.

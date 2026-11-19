@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/ashish10alex/xf/internal/warehouse"
@@ -108,6 +109,30 @@ func (c *Client) Describe(ctx context.Context, catalog, schema, table string) (*
 		NumRows: -1, NumBytes: -1, Created: millis(t.Created), Modified: millis(t.Updated)}, nil
 }
 
+// ListProjects lists the catalogs in Unity Catalog without waking a SQL
+// warehouse.
+func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
+	var out []string
+	err := c.pages(ctx, "/api/2.1/unity-catalog/catalogs", func(body []byte) (string, error) {
+		var page struct {
+			Catalogs []struct {
+				Name string `json:"name"`
+			} `json:"catalogs"`
+			Next string `json:"next_page_token"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return "", fmt.Errorf("decode catalogs: %w", err)
+		}
+		for _, cat := range page.Catalogs {
+			if cat.Name != "" {
+				out = append(out, cat.Name)
+			}
+		}
+		return page.Next, nil
+	})
+	return out, err
+}
+
 // ListDatasets lists the schemas of catalog.
 func (c *Client) ListDatasets(ctx context.Context, catalog string) ([]string, error) {
 	var out []string
@@ -158,7 +183,11 @@ func (c *Client) pages(ctx context.Context, path string, read func(body []byte) 
 	for range 100 {
 		p := path
 		if token != "" {
-			p += "&page_token=" + url.QueryEscape(token)
+			sep := "&"
+			if !strings.Contains(p, "?") {
+				sep = "?"
+			}
+			p += sep + "page_token=" + url.QueryEscape(token)
 		}
 		body, err := c.do(ctx, http.MethodGet, p, nil)
 		if err != nil {

@@ -1055,6 +1055,15 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .swatch .s-focus { background: var(--focus); }
 .swatch.auto { align-items: center; justify-content: center; color: var(--dim); font-size: 11px; line-height: 1; }
 .picker h1 .spacer { flex: 1; }
+.scratch-pick-btn { border: 1px solid var(--rule); background: var(--panel); color: var(--fg); font: 500 12px/1 var(--chrome); padding: 4px 8px; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; margin-right: 6px; }
+.scratch-pick-btn:hover { border-color: var(--focus); background: var(--sel); }
+.scratch-pick-row { grid-template-columns: 2ch 3ch 14ch minmax(0,1fr) auto; align-items: center; }
+.sc-wh-btn { font-weight: 600; }
+.sc-wh-menu { min-width: 190px; }
+.sc-dbx-conn { display: inline-flex; align-items: center; gap: 4px; padding-right: 6px; border-right: 1px solid var(--rule); }
+.sc-dbx-chip { border: 1px solid var(--rule); background: var(--bg); color: var(--dim); font: 11px/18px var(--mono); padding: 0 6px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+.sc-dbx-chip:hover { color: var(--fg); border-color: var(--focus); }
+.sc-dbx-chip.warn { color: var(--amber); border-color: var(--amber); }
 
 /* ---- Scratch view ---- */
 .scratch-app { display: flex; flex-direction: column; height: 100vh; }

@@ -1218,7 +1218,7 @@ function helpSections() {
   if (c.branches) global.push(['B', 'switch branch']);
   if (c.follow) global.push(['F', 'follow editor on/off']);
   if (c.open) global.push(['o', 'open in editor']);
-  global.push(['?', 'help'], ['ctrl+q', 'go back one level: close the page, else the project (asks only if something would be lost)'], ['ctrl+c', 'cancel run']);
+  global.push(['?', 'help'], ['ctrl+q', 'go back one level: close the page, else the project or standalone scratch (asks if something would be lost)'], ['ctrl+s in projects', 'open a standalone scratch query (BigQuery or Databricks)'], ['ctrl+c', 'cancel run']);
   const run = [];
   if (c.run) run.push(['r', 'run']);
   if (c.changed) run.push(['R', 'run changed actions']);
@@ -1908,6 +1908,7 @@ function Confirm() {
       <p class="warn">${ask}</p>
       ${others && html`<p>It is open in ${others} too: ${others.includes(',') || others.includes(' and ') ? 'they go' : 'it goes'} to the project shown before.</p>`}
       ${S.quitUnsaved.length > 0 && html`<p class="warn">${unsavedWords(S.quitUnsaved)}</p>`}
+      ${S.quitScratch && html`<p class="warn">a scratch query is running: closing cancels it.</p>`}
       ${S.quitTerm && html`<p class="warn">${S.quitTerm === 'a command' ? 'a command' : html`<code>${S.quitTerm}</code>`} is running in the terminal: closing stops it.</p>`}
       <p class="dim">This tab goes to the project it showed before, or the projects. xf web keeps running: ctrl+c in its terminal, or in the projects page, stops it.</p>
       <div class="buttons"><button class="run-btn" onClick=${() => st.closeProject()}><kbd>y</kbd>/<kbd>ctrl+q</kbd> close</button>
@@ -2225,6 +2226,9 @@ function Picker({ overlay }) {
         <span class="dim pick-root" title=${p.root}>${underline(p.path, words)}</span></span><span class="dim pick-when"><${Badges} p=${p} />${p.when}</span></div>`)}`}
       </div>`;
   const f = S.find;
+  const sp = S.scratchPick;
+  const canScratch = !!(S.scratchWarehouses && S.scratchWarehouses.length);
+  const scKey = canScratch ? [['ctrl+s', 'scratch']] : [];
   // shift+del removes a worktree (ADR 0032).
   const cur = S.picker[S.pickerCursor];
   const rm = cur && cur.worktree ? [['shift+del', 'remove worktree']] : [];
@@ -2235,12 +2239,17 @@ function Picker({ overlay }) {
   const keys = f
     ? (f.searching ? [['enter', 'add those found so far'], ['space', 'tick'], ['↑/↓', 'move'], ['esc', 'stop searching']]
       : [['enter', 'add the ticked'], ['space', 'tick'], ['ctrl+a', 'all or none'], ['↑/↓', 'move'], ['esc', 'back']])
+    : sp
+    ? (overlay
+      ? [['enter', where(newTab)], ['shift+enter', where(!newTab)], ['↑/↓', 'move'], ['esc', 'back']]
+      : [['enter', 'open'], ['shift+enter', 'new tab'], ['↑/↓', 'move'], ['esc', 'back']])
     : overlay
-    ? (S.paths ? [...pathOpen(where(newTab), where(!newTab)), ['tab', 'complete'], ['ctrl+y', 'copy path'], ['esc', 'close']]
-      : [['enter', where(newTab)], ['shift+enter', where(!newTab)], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['del', delWord()], ...rm, ['esc', 'close']])
-    : S.paths ? [...pathOpen('open', 'new tab'), ['tab', 'complete'], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['esc', 'clear'], ['ctrl+c', 'quit']]
-      : [['enter', 'open'], ['shift+enter', 'new tab'], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['del', delWord()], ...rm, ['esc', 'clear search'], ['ctrl+c', 'quit']];
-  const body = f ? html`<${FindList} />` : list;
+    ? (S.paths ? [...pathOpen(where(newTab), where(!newTab)), ['tab', 'complete'], ['ctrl+y', 'copy path'], ...scKey, ['esc', 'close']]
+      : [['enter', where(newTab)], ['shift+enter', where(!newTab)], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['del', delWord()], ...rm, ...scKey, ['esc', 'close']])
+    : S.paths ? [...pathOpen('open', 'new tab'), ['tab', 'complete'], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ...scKey, ['esc', 'clear'], ['ctrl+c', 'quit']]
+      : [['enter', 'open'], ['shift+enter', 'new tab'], ['↑/↓', 'move'], ['ctrl+y', 'copy path'], ['del', delWord()], ...rm, ...scKey, ['esc', 'clear search'], ['ctrl+c', 'quit']];
+  const body = f ? html`<${FindList} />` : sp ? html`<${ScratchPick} />` : list;
+  const scratchBtn = canScratch && !sp && html`<button class="tool scratch-pick-btn" onMouseDown=${(e) => { e.preventDefault(); st.openScratchPicker(); redraw(); }} title="Open a standalone scratch query (ctrl+s)">Scratch <kbd>ctrl+s</kbd></button>`;
   const sure = S.pickerConfirm;
   const footer = sure && sure.remove && sure.dirty
     ? html`<div class="footer warn">the worktree ${sure.name}: ${sure.dirty}. <kbd>y</kbd> removes it anyway, losing them; any other key keeps it</div>`
@@ -2250,18 +2259,20 @@ function Picker({ overlay }) {
     ? html`<div class="footer warn">close ${sure.name}?${alsoOpenIn(sure.key) ? ' it is open in ' + alsoOpenIn(sure.key) + '.' : ''}${sure.unsaved.length ? ' ' + unsavedWords(sure.unsaved) : ''} <kbd>y</kbd> closes, any other key keeps it</div>`
     : S.flash ? html`<div class="footer warn">${S.flash}</div>` : html`<div class="footer"><${Keys} list=${keys} /></div>`;
   if (overlay) {
-    return html`<div class="overlay-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) { S.overlay = null; redraw(); } }}>
+    return html`<div class="overlay-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) { S.scratchPick = null; S.overlay = null; redraw(); } }}>
       <div class="picker picker-over">
-        <h1>switch or add a project<span class="dim">${'\u00a0· ' + (newTab ? 'in a new tab' : 'in this tab')}</span></h1>
+        <h1>switch or add a project<span class="dim">${'\u00a0· ' + (newTab ? 'in a new tab' : 'in this tab')}</span><span class="spacer"></span>${scratchBtn}</h1>
         ${body}${footer}
       </div>
     </div>`;
   }
   return html`<div class="app picker-page">
     <div class="picker">
-      <h1><span class="badge">XF</span> pick a project<span class="spacer"></span><${WindowsPill} /><${ThemeButton} /><${GearButton} /></h1>
+      <h1><span class="badge">XF</span> pick a project<span class="spacer"></span>${scratchBtn}<${WindowsPill} /><${ThemeButton} /><${GearButton} /></h1>
       <p class="dim">${f
         ? html`Ticked projects join this list, ready to open; xf doesn't open them yet.`
+        : sp
+        ? html`Run ad-hoc SQL outside any project. Pick a warehouse below, or press <kbd>esc</kbd> to go back to projects.`
         : S.pickerTotal && S.canFind
         ? html`These are the projects xf has opened or found. Type a path (<code>~/…</code> or <code>/…</code>) to open another, or <${FindButton} link=${true} />.`
         : S.pickerTotal
@@ -2431,8 +2442,42 @@ function FindList() {
     </div>`;
 }
 
+// ScratchPick is the picker while choosing a warehouse for a standalone
+// scratch query (BigQuery or Databricks).
+function ScratchPick() {
+  const sp = S.scratchPick;
+  const list = S.scratchWarehouses || [];
+  const desc = {
+    bigquery: 'GoogleSQL · dry runs and cost estimates',
+    databricks: 'Databricks SQL · SQL warehouse and Unity Catalog',
+  };
+  return html`<div class="picker-list scratch-pick-list">
+    <div class="query">
+      <span class="prompt">></span>
+      <span class="find-title"><b>scratch query</b><span class="dim"> · choose a warehouse</span></span>
+    </div>
+    ${list.map((w, i) => {
+      const key = 'scratch-' + w.id;
+      const isOpen = S.open.some((o) => o.key === key);
+      return html`<div class=${'pick-row scratch-pick-row' + (i === sp.cursor ? ' sel' : '')}
+        onMouseMove=${() => { if (sp.cursor !== i) { sp.cursor = i; redraw(); } }}
+        onClick=${(e) => st.pickScratchWarehouse(i, e.shiftKey)}>
+        <span class="lead">${i === sp.cursor ? '▸' : ''}</span>
+        <kbd>${i + 1}</kbd>
+        <span class="pick-name">${w.name}</span>
+        <span class="dim pick-root">${desc[w.id] || ''}</span>
+        <span class="dim pick-when">${isOpen ? html`<span class="pick-open">${openWord(key)}</span>` : ''}</span>
+      </div>`;
+    })}
+    <div class="find-actions">
+      <button class="plain" onMouseDown=${(e) => { e.preventDefault(); st.closeScratchPicker(); redraw(); }}>Back</button>
+    </div>
+  </div>`;
+}
+
 st.hooks.projectsOverlay = () => html`<${Picker} overlay=${true} />`;
 st.hooks.paletteOverlay = () => html`<${Palette} />`;
+st.hooks.quitOverlay = () => html`<${Confirm} />`;
 
 export function App() {
   return html`<${Page} /><${ThemePicker} /><${WindowsList} />`;

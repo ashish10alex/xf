@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ashish10alex/xf/internal/bigquery"
 	"github.com/ashish10alex/xf/internal/bqfuncs"
@@ -567,5 +568,291 @@ func TestStandaloneScratchFolder(t *testing.T) {
 	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
 	if !boot.Scratch.Standalone || !boot.Scratch.Start || !boot.Caps.Scratch {
 		t.Errorf("boot scratch = %+v caps %+v", boot.Scratch, boot.Caps)
+	}
+}
+
+type fakeDbxScratch struct {
+	warehouse.Warehouse
+	ranSQL     string
+	ranCatalog string
+}
+
+func (f *fakeDbxScratch) StartQuery(_ context.Context, o warehouse.QueryOptions) (warehouse.JobRef, error) {
+	f.ranSQL, f.ranCatalog = o.SQL, o.Project
+	return warehouse.JobRef{Project: "databricks", ID: "stmt-1"}, nil
+}
+func (f *fakeDbxScratch) DefaultProject() string { return "" }
+func (f *fakeDbxScratch) ListProjects(context.Context) ([]string, error) {
+	return []string{"samples", "main"}, nil
+}
+
+func TestStandaloneScratchMultiWarehouse(t *testing.T) {
+	bq, _ := fakeScratchBQ(t)
+	dbx := &fakeDbxScratch{}
+	base := t.TempDir()
+
+	curProfile := "dev"
+	curHost := "https://dbc-dev.cloud.databricks.com"
+	curWH := "wh-dev"
+
+	srv, err := New(Config{
+		StartScratchPicker: true,
+		OpenScratch: func(wh string) (*Project, error) {
+			if wh == project.Databricks {
+				dir := filepath.Join(base, "tmp", "databricks")
+				return &Project{
+					Deps: frontend.Deps{Root: dir, Engine: newFakeEngine(project.NewGraph(nil))},
+					Databricks: &Databricks{
+						TargetType:  project.Databricks,
+						Client:      func(context.Context) (warehouse.Warehouse, error) { return dbx, nil },
+						Host:        func() string { return curHost },
+						Chosen:      func() bool { return curWH != "" },
+						WarehouseID: func() string { return curWH },
+						Profiles: func() ([]DatabricksProfile, string) {
+							return []DatabricksProfile{
+								{Name: "dev", Host: "https://dbc-dev.cloud.databricks.com"},
+								{Name: "prod", Host: "https://dbc-prod.cloud.databricks.com"},
+							}, curProfile
+						},
+						ChooseProfile: func(name string) (string, error) {
+							curProfile = name
+							if name == "prod" {
+								curHost, curWH = "https://dbc-prod.cloud.databricks.com", ""
+							} else {
+								curHost, curWH = "https://dbc-dev.cloud.databricks.com", "wh-dev"
+							}
+							return "switched to " + name, nil
+						},
+					},
+					ScratchDir: dir, Standalone: true, StartScratch: true,
+				}, nil
+			}
+			dir := filepath.Join(base, "tmp")
+			return &Project{
+				Deps:       frontend.Deps{Root: dir, Engine: newFakeEngine(project.NewGraph(nil)), DryRun: bq.Check},
+				Warehouse:  func(context.Context) (warehouse.Warehouse, error) { return bq, nil },
+				ScratchDir: dir, Standalone: true, StartScratch: true,
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	c := ts.Client()
+
+	// First picker boot lists both warehouses and pops StartScratchPicker once.
+	var b1, b2 bootView
+	getJSON(t, c, ts.URL+"/api/boot", &b1)
+	if len(b1.ScratchWarehouses) != 2 || !b1.StartScratchPicker {
+		t.Fatalf("first boot = %+v", b1)
+	}
+	getJSON(t, c, ts.URL+"/api/boot", &b2)
+	if b2.StartScratchPicker {
+		t.Fatalf("second boot should not re-open scratch picker")
+	}
+
+	// Open both BigQuery and Databricks standalone workspaces simultaneously.
+	var openBQ, openDbx struct {
+		OK  bool   `json:"ok"`
+		Key string `json:"key"`
+	}
+	postJSON(t, c, ts.URL+"/api/scratch/open", map[string]string{"warehouse": "bigquery"}, &openBQ)
+	postJSON(t, c, ts.URL+"/api/scratch/open", map[string]string{"warehouse": "databricks"}, &openDbx)
+	if openBQ.Key != ScratchKeyBigQuery || openDbx.Key != ScratchKeyDatabricks {
+		t.Fatalf("keys = %q, %q", openBQ.Key, openDbx.Key)
+	}
+
+	// Both are open in /api/projects, and ?project=scratch aliases BigQuery.
+	var sums []projectSummary
+	getJSON(t, c, ts.URL+"/api/projects", &sums)
+	if len(sums) != 2 {
+		t.Fatalf("open projects = %+v, want 2", sums)
+	}
+	var alias bootView
+	getJSON(t, c, ts.URL+"/api/boot?project=scratch", &alias)
+	if alias.Key != ScratchKeyBigQuery || alias.Project == nil || alias.Project.Caps.Warehouse != project.BigQuery {
+		t.Fatalf("scratch alias boot = %+v", alias)
+	}
+
+	// Boot Databricks standalone scratch and run a query with an empty catalog.
+	var dbxBoot bootView
+	getJSON(t, c, ts.URL+"/api/boot?project="+ScratchKeyDatabricks, &dbxBoot)
+	if dbxBoot.Project == nil || dbxBoot.Project.Caps.Warehouse != project.Databricks || !dbxBoot.Project.Scratch.HasProfiles || dbxBoot.Project.Scratch.Profile != "dev" {
+		t.Fatalf("dbx boot = %+v", dbxBoot.Project)
+	}
+	doWithKey := func(method, path string, body any, out any) {
+		t.Helper()
+		var r io.Reader
+		if body != nil {
+			raw, _ := json.Marshal(body)
+			r = strings.NewReader(string(raw))
+		}
+		req, _ := http.NewRequest(method, ts.URL+path, r)
+		req.Header.Set(projectHeader, ScratchKeyDatabricks)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		res, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = res.Body.Close() }()
+		if res.StatusCode != http.StatusOK {
+			msg, _ := io.ReadAll(io.LimitReader(res.Body, 500))
+			t.Fatalf("%s %s: %s: %s", method, path, res.Status, strings.TrimSpace(string(msg)))
+		}
+		if out != nil {
+			if err := json.NewDecoder(res.Body).Decode(out); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var created scratchFile
+	doWithKey(http.MethodPost, "/api/scratch/create", map[string]any{"form": "empty"}, &created)
+	var job warehouse.JobRef
+	doWithKey(http.MethodPost, "/api/scratch/run", map[string]any{"id": created.ID, "sql": "SELECT 1"}, &job)
+	if job.ID != "stmt-1" || dbx.ranSQL != "SELECT 1" || dbx.ranCatalog != "" {
+		t.Fatalf("databricks empty-catalog run: job=%+v sql=%q catalog=%q", job, dbx.ranSQL, dbx.ranCatalog)
+	}
+
+	// List Databricks catalogs via /api/scratch/meta/projects (sorted).
+	var cats []string
+	doWithKey(http.MethodGet, "/api/scratch/meta/projects", nil, &cats)
+	if len(cats) != 2 || cats[0] != "main" || cats[1] != "samples" {
+		t.Fatalf("meta/projects = %v, want [main samples]", cats)
+	}
+
+	// List and switch Databricks profile.
+	var profs struct {
+		Profiles []DatabricksProfile `json:"profiles"`
+		Current  string              `json:"current"`
+	}
+	doWithKey(http.MethodGet, "/api/databricks/profiles", nil, &profs)
+	if len(profs.Profiles) != 2 || profs.Current != "dev" {
+		t.Fatalf("profiles = %+v", profs)
+	}
+	var switched struct {
+		OK      bool   `json:"ok"`
+		Current string `json:"current"`
+		Host    string `json:"host"`
+		Chosen  bool   `json:"chosen"`
+	}
+	doWithKey(http.MethodPost, "/api/databricks/profile", map[string]string{"name": "prod"}, &switched)
+	if !switched.OK || switched.Current != "prod" || switched.Host != "https://dbc-prod.cloud.databricks.com" || switched.Chosen {
+		t.Fatalf("profile switch = %+v", switched)
+	}
+
+	// Close Databricks scratch; BigQuery scratch stays open.
+	var closed struct {
+		OK   bool     `json:"ok"`
+		Open []string `json:"open"`
+	}
+	doWithKey(http.MethodPost, "/api/close", map[string]string{}, &closed)
+	if !closed.OK || len(closed.Open) != 1 || closed.Open[0] != ScratchKeyBigQuery {
+		t.Fatalf("close = %+v", closed)
+	}
+
+	// X-Xf-Project: scratch header aliases scratch-bigquery.
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/scratch/defaults", nil)
+	req.Header.Set(projectHeader, "scratch")
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("X-Xf-Project: scratch status = %d, want 200", res.StatusCode)
+	}
+
+	// Concurrent ensureScratch opens return the same workspace key.
+	done := make(chan string, 4)
+	for range 4 {
+		go func() {
+			op, err := srv.ensureScratch(project.Databricks)
+			if err != nil {
+				done <- "err:" + err.Error()
+				return
+			}
+			done <- op.key
+		}()
+	}
+	for range 4 {
+		if got := <-done; got != ScratchKeyDatabricks {
+			t.Fatalf("concurrent ensureScratch = %q, want %q", got, ScratchKeyDatabricks)
+		}
+	}
+}
+
+func TestMetaCacheGenerationGuardsClear(t *testing.T) {
+	var mc metaCache
+	now := time.Now()
+	gen := mc.generation()
+	mc.clear()
+	mc.put("projects", []string{"stale"}, now, gen)
+	if _, ok := mc.get("projects", now); ok {
+		t.Fatal("stale put after clear() should be ignored")
+	}
+	gen2 := mc.generation()
+	mc.put("projects", []string{"fresh"}, now, gen2)
+	if v, ok := mc.get("projects", now); !ok || len(v.([]string)) != 1 || v.([]string)[0] != "fresh" {
+		t.Fatalf("fresh put = %v, %v", v, ok)
+	}
+}
+
+func TestScratchRunsFilteredByDatabricksHost(t *testing.T) {
+	host := "https://dbc-dev.cloud.databricks.com"
+	dir := filepath.Join(t.TempDir(), "dbx")
+	_, ts, c := newTestProject(t, &Project{
+		Deps: frontend.Deps{Root: dir, Engine: newFakeEngine(project.NewGraph(nil))},
+		Databricks: &Databricks{
+			TargetType: project.Databricks,
+			Client:     func(context.Context) (warehouse.Warehouse, error) { return &fakeDbxScratch{}, nil },
+			Host:       func() string { return host },
+		},
+		ScratchDir: dir, Standalone: true, StartScratch: true,
+	})
+	var f scratchFile
+	postJSON(t, c, ts.URL+"/api/scratch/create", map[string]any{"form": "empty"}, &f)
+	var runs []scratchRun
+	postJSON(t, c, ts.URL+"/api/scratch/runs", map[string]any{
+		"scratch": f.ID, "job": map[string]string{"project": "databricks", "id": "stmt-dev"}, "sql": "SELECT 1", "rows": 1,
+	}, &runs)
+	if len(runs) != 1 || runs[0].Host != host {
+		t.Fatalf("dev runs = %+v", runs)
+	}
+	// Switching workspace hides runs belonging to the previous host.
+	host = "https://dbc-prod.cloud.databricks.com"
+	getJSON(t, c, ts.URL+"/api/scratch/runs", &runs)
+	if len(runs) != 0 {
+		t.Fatalf("prod runs = %+v, want empty", runs)
+	}
+}
+
+func TestDbtProjectHasNoDatabricksProfilesEndpoint(t *testing.T) {
+	_, ts, c := newTestProject(t, &Project{
+		Deps: frontend.Deps{Root: t.TempDir(), Engine: newFakeEngine(project.NewGraph(nil))},
+		Databricks: &Databricks{
+			TargetType: project.Databricks,
+			Client:     func(context.Context) (warehouse.Warehouse, error) { return &fakeDbxScratch{}, nil },
+			Warehouses: func(context.Context) ([]SQLWarehouse, error) { return []SQLWarehouse{{ID: "wh1", Name: "W"}}, nil },
+		},
+	})
+	res, err := c.Get(ts.URL + "/api/databricks/profiles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("dbt /api/databricks/profiles = %d, want 404", res.StatusCode)
+	}
+	var wh struct {
+		SaveNote string `json:"saveNote"`
+	}
+	getJSON(t, c, ts.URL+"/api/databricks/warehouses", &wh)
+	if wh.SaveNote != "" {
+		t.Fatalf("dbt saveNote = %q, want empty (default project note)", wh.SaveNote)
 	}
 }

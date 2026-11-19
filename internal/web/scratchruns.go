@@ -40,6 +40,10 @@ type scratchRun struct {
 	Ended         time.Time `json:"ended"`
 	Rows          int64     `json:"rows"`
 	StatementType string    `json:"statementType,omitempty"`
+	// Host is the Databricks workspace URL the run executed against, so
+	// switching profiles doesn't try to read one workspace's statement ID on
+	// another.
+	Host string `json:"host,omitempty"`
 }
 
 func (p *projectState) runsPath() string { return filepath.Join(p.scratchFolder(), scratchRunsFile) }
@@ -78,11 +82,32 @@ func (p *projectState) writeRuns(runs []scratchRun) error {
 	return os.Rename(tmp, p.runsPath())
 }
 
+func (p *projectState) currentDbxHost() string {
+	if p.onDbx.Load() && p.dbx != nil && p.dbx.Host != nil {
+		return p.dbx.Host()
+	}
+	return ""
+}
+
+func (p *projectState) filterRunsForHost(runs []scratchRun) []scratchRun {
+	host := p.currentDbxHost()
+	if host == "" {
+		return runs
+	}
+	out := make([]scratchRun, 0, len(runs))
+	for _, r := range runs {
+		if r.Host == "" || r.Host == host {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func (p *projectState) scratchRunsList(w http.ResponseWriter, r *http.Request) {
 	scratchRunsMu.Lock()
 	runs := p.readRuns()
 	scratchRunsMu.Unlock()
-	writeJSON(w, runs)
+	writeJSON(w, p.filterRunsForHost(runs))
 }
 
 // scratchRunsAdd keeps a run that returned rows, dropping the oldest past
@@ -104,16 +129,19 @@ func (p *projectState) scratchRunsAdd(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("a scratch holds 1 MiB of SQL at most"))
 		return
 	}
+	if host := p.currentDbxHost(); host != "" {
+		run.Host = host
+	}
 	scratchRunsMu.Lock()
 	defer scratchRunsMu.Unlock()
-	runs := slices.DeleteFunc(p.readRuns(), func(x scratchRun) bool { return x.Job == run.Job })
+	runs := slices.DeleteFunc(p.readRuns(), func(x scratchRun) bool { return x.Job == run.Job && x.Host == run.Host })
 	runs = append([]scratchRun{run}, runs...)
 	runs = runs[:min(len(runs), maxScratchRuns)]
 	if err := p.writeRuns(runs); err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, runs)
+	writeJSON(w, p.filterRunsForHost(runs))
 }
 
 // dropScratchRuns forgets the runs of a deleted scratch.

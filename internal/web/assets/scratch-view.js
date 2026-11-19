@@ -4,7 +4,7 @@
 import { h } from './vendor/preact.mjs';
 import { useEffect, useRef, useState } from './vendor/hooks.mjs';
 import htm from './vendor/htm.mjs';
-import { S, redraw, hooks, openProjects, commandsKey } from './state.js';
+import { S, redraw, hooks, openProjects, openWarehousePicker, openProfilePicker, commandsKey } from './state.js';
 import { ThemeButton } from './theme-view.js';
 import { WindowsPill } from './windows-view.js';
 import * as sc from './scratch.js';
@@ -558,13 +558,38 @@ function ConfirmBox() {
 function fieldSize(v, placeholder) { return (v || placeholder).length + 1; }
 function growField(e) { const el = e.currentTarget; el.size = fieldSize(el.value, el.placeholder); }
 
+function WarehouseMenu() {
+  if (!SC.whOpen || !SC.standalone) return null;
+  const list = S.scratchWarehouses || [];
+  const cur = sc.onDbx() ? 'databricks' : 'bigquery';
+  return html`<div class="overlay-back win-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) sc.closeWarehouseMenu(); }}>
+    <div class="ctx-menu sc-wh-menu" role="menu">
+      <div class="sc-recent-head dim">scratch warehouse</div>
+      ${list.map((w, i) => html`<div class=${'ctx-row' + (i === SC.whCursor ? ' cur' : '')} role="menuitem"
+        onMouseEnter=${() => { SC.whCursor = i; redraw(); }}
+        onClick=${(e) => sc.switchStandaloneWarehouse(w.id, e.shiftKey)}>
+        <span class="ctx-key">${i + 1}</span>
+        <span class="ctx-label"><b>${w.name}</b>${w.id === cur ? html` <span class="ok small">current</span>` : ''}</span>
+      </div>`)}
+    </div>
+  </div>`;
+}
+
 export function ScratchPage() {
-  useEffect(() => { document.title = 'xf · scratch'; return () => { document.title = 'xf · ' + S.boot.name; }; }, []);
+  useEffect(() => {
+    document.title = SC.standalone ? 'xf · ' + sc.site() + ' scratch' : 'xf · scratch';
+    return () => { document.title = 'xf · ' + S.boot.name; };
+  }, [SC.standalone, S.caps && S.caps.warehouse]);
   const k = (list) => list.map(([a, b]) => html`<span class="key"><kbd>${a}</kbd> ${b}</span>`);
   const focus = SC.focus;
+  const canSwitchWh = SC.standalone && S.scratchWarehouses && S.scratchWarehouses.length > 1;
   return html`<div class="app scratch-app">
     <div class="status">
-      ${SC.standalone ? html`<span class="badge">XF</span>` : html`<button class="link" onClick=${() => sc.closeScratchView()} title="Back to the project (ctrl+q)">← ${S.boot.name}</button><span class="dim"> · </span><button class="link" onClick=${() => { openProjects(); redraw(); }} title="Switch or add a project">⇄ projects</button><span class="dim"> · </span>`}<button class="link" onClick=${() => sc.toggleList()} title="Show or hide the scratch list (cmd+b)">☰ scratches</button>
+      ${SC.standalone
+        ? html`<span class="badge">XF</span><span class="dim"> · </span>${canSwitchWh
+            ? html`<button class="link sc-wh-btn" onClick=${() => sc.toggleWarehouseMenu()} title="Switch standalone scratch warehouse">${sc.site()} ▾</button>`
+            : html`<span>${sc.site()}</span>`}<span class="dim"> · </span><button class="link" onClick=${() => { openProjects(); redraw(); }} title="Switch or add a project">⇄ projects</button><span class="dim"> · </span>`
+        : html`<button class="link" onClick=${() => sc.closeScratchView()} title="Back to the project (ctrl+q)">← ${S.boot.name}</button><span class="dim"> · </span><button class="link" onClick=${() => { openProjects(); redraw(); }} title="Switch or add a project">⇄ projects</button><span class="dim"> · </span>`}<button class="link" onClick=${() => sc.toggleList()} title="Show or hide the scratch list (cmd+b)">☰ scratches</button>
       <span class="dim"> · </span><span title="The scratch file">${SC.cur && SC.cur.id ? SC.cur.id + '.sql' : SC.cur ? 'new scratch' : 'scratch'}</span>
       ${SC.cur && SC.cur.from && html`<span class="dim"> · from ${SC.cur.from}</span>`}
       <span class="spacer"></span>
@@ -572,7 +597,9 @@ export function ScratchPage() {
     </div>
     ${S.overlay === 'projects' && hooks.projectsOverlay && hooks.projectsOverlay()}
     ${S.overlay === 'palette' && hooks.paletteOverlay && hooks.paletteOverlay()}
+    ${S.overlay === 'confirmQuit' && hooks.quitOverlay && hooks.quitOverlay()}
     ${S.overlay === 'dbxWarehouse' && hooks.dbxOverlay && hooks.dbxOverlay()}
+    ${S.overlay === 'dbxProfile' && hooks.dbxProfileOverlay && hooks.dbxProfileOverlay()}
     <div class=${'sc-body' + (SC.listOpen ? '' : ' no-list')} style=${SC.listOpen && SC.size.list ? `grid-template-columns:${SC.size.list}px minmax(0,1fr)` : ''}>
       ${SC.listOpen && html`<${List} />`}
       <main class="sc-main">
@@ -582,14 +609,19 @@ export function ScratchPage() {
             <button class="run-btn" onClick=${() => sc.runScratch()} disabled=${sc.isRunning() || !SC.cur}>▶ run <kbd>${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘↵' : 'ctrl+↵'}</kbd></button>
             <${DryChip} />
             <span class="spacer"></span>
-            ${SC.cur && sc.onDbx() && html`<span class="sc-target" title="The catalog the query's unqualified names are in, kept in the scratch's first line; it runs on the project's SQL warehouse">
-              <input class="sc-target-in" value=${SC.cur.project || ''} placeholder="catalog" size=${fieldSize(SC.cur.project, 'catalog')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+            ${SC.standalone && sc.onDbx() && SC.dbx && html`<span class="sc-dbx-conn">
+              ${SC.dbx.hasProfiles && html`<button class=${'tool sc-dbx-chip' + (!SC.dbx.host ? ' warn' : '')} onClick=${() => openProfilePicker()} title=${SC.dbx.host ? 'Databricks profile (' + SC.dbx.host + ') — click to switch' : 'Pick a Databricks profile from ~/.databrickscfg'}>${SC.dbx.profile || (SC.dbx.host ? 'env host' : 'pick profile')}</button>`}
+              <button class=${'tool sc-dbx-chip' + (!SC.dbx.warehouse ? ' warn' : '')} onClick=${() => openWarehousePicker(() => {})} title=${SC.dbx.warehouse ? 'SQL warehouse ' + SC.dbx.warehouse + ' — click to switch' : 'Pick a Databricks SQL warehouse'}>${SC.dbx.warehouse ? 'wh:' + SC.dbx.warehouse : 'pick warehouse'}</button>
+            </span>`}
+            ${SC.cur && sc.onDbx() && html`<span class="sc-target" title="The catalog the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen SQL warehouse">
+              <input class="sc-target-in" list="sc-projects" value=${SC.cur.project || ''} placeholder="catalog" size=${fieldSize(SC.cur.project, 'catalog')} spellcheck="false" autocomplete="off" onFocus=${() => sc.loadProjects()} onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
             </span>`}
             ${SC.cur && !sc.onDbx() && html`<span class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
-              <input class="sc-target-in" value=${SC.cur.project || ''} placeholder="project" size=${fieldSize(SC.cur.project, 'project')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), SC.cur.location || '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+              <input class="sc-target-in" list="sc-projects" value=${SC.cur.project || ''} placeholder="project" size=${fieldSize(SC.cur.project, 'project')} spellcheck="false" autocomplete="off" onFocus=${() => sc.loadProjects()} onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), SC.cur.location || '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
               <span class="dim">·</span>
               <input class="sc-target-in" value=${SC.cur.location || ''} placeholder="location" size=${fieldSize(SC.cur.location, 'location')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(SC.cur.project || '', e.currentTarget.value.trim())} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
             </span>`}
+            ${SC.projects && SC.projects.length > 0 && html`<datalist id="sc-projects">${SC.projects.map((p) => html`<option value=${p} />`)}</datalist>`}
             <span class="sc-tools">
               ${SC.recent.length > 0 && html`<button class="tool" onClick=${() => sc.toggleRecent()} title="The last ${SC.recent.length} results, to open again (h)">◷ recent</button>`}
               <button class="tool" onClick=${() => sc.refreshMeta()} title="Forget what is known of tables and columns, for completion and hover (:refresh)">↻</button>
@@ -603,10 +635,11 @@ export function ScratchPage() {
     </div>
     ${SC.flash ? html`<div class="footer warn">${SC.flash}</div>`
       : html`<div class="footer">${focus === 'editor'
-        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [savesWith(), 'save'], ['⌘J', 'results'], ['⌘B', 'scratches'], ...(SC.standalone ? [] : [['ctrl+q', 'back']])])
-        : k([[commandsKey, 'commands'], ['i', 'edit'], ['⌘↵/r', 'run'], ['ctrl+c', 'cancel run'], ['j/k', 'switch scratch'], ['h', 'recent results'], ['⌘J', 'results'], ['⌘B/b', 'scratches'], ['n', 'new'], ['d', 'delete'], ['y/Y', 'copy cell/row'], ...(SC.standalone ? [] : [['ctrl+q', 'back']])])}</div>`}
+        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [savesWith(), 'save'], ['⌘J', 'results'], ['⌘B', 'scratches'], ['ctrl+q', SC.standalone ? 'close' : 'back']])
+        : k([[commandsKey, 'commands'], ['i', 'edit'], ['⌘↵/r', 'run'], ['ctrl+c', 'cancel run'], ['j/k', 'switch scratch'], ['h', 'recent results'], ['⌘J', 'results'], ['⌘B/b', 'scratches'], ['n', 'new'], ['d', 'delete'], ['y/Y', 'copy cell/row'], ['ctrl+q', SC.standalone ? 'close' : 'back']])}</div>`}
     <${NewBox} />
     <${ConfirmBox} />
     <${RecentMenu} />
+    <${WarehouseMenu} />
   </div>`;
 }

@@ -45,3 +45,21 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("detail = %+v", d)
 	}
 }
+
+func TestListProjectsPages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bigquery/v2/projects" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.URL.Query().Get("pageToken") == "" {
+			_, _ = w.Write([]byte(`{"nextPageToken":"p2","projects":[{"id":"proj-a","projectReference":{"projectId":"proj-a"}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"projects":[{"id":"proj-b"}]}`))
+	}))
+	defer srv.Close()
+	ps, err := NewClientWithHTTP(srv.Client(), srv.URL, "").ListProjects(context.Background())
+	if err != nil || len(ps) != 2 || ps[0] != "proj-a" || ps[1] != "proj-b" {
+		t.Fatalf("projects = %v, %v", ps, err)
+	}
+}

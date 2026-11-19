@@ -248,8 +248,9 @@ func (w *projectWarehouse) webDatabricks() *web.Databricks {
 			}
 			return file, err
 		},
-		Chosen:   func() bool { return w.databricks().Warehouse() != "" },
-		AuthHint: databricks.AuthHint,
+		Chosen:      func() bool { return w.databricks().Warehouse() != "" },
+		WarehouseID: func() string { return w.databricks().Warehouse() },
+		AuthHint:    databricks.AuthHint,
 	}
 }
 

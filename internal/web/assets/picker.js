@@ -16,6 +16,7 @@ export function pickerKey(k) {
     return true;
   }
   if (S.find) return findKey(k);
+  if (S.scratchPick) return scratchPickKey(k);
   const n = (S.paths || S.picker).length;
   if (S.paths) {
     S.flash = '';
@@ -23,6 +24,9 @@ export function pickerKey(k) {
     if (k === 'Delete' || k === 'shift+Delete') return true;
   }
   switch (k) {
+    case 'ctrl+s':
+      if (S.scratchWarehouses && S.scratchWarehouses.length) { openScratchPicker(); return true; }
+      return false;
     case 'down': S.pickerCursor = Math.min(S.pickerCursor + 1, Math.max(n - 1, 0)); return true;
     case 'up': S.pickerCursor = Math.max(S.pickerCursor - 1, 0); return true;
     case 'pgdown': S.pickerCursor = Math.min(S.pickerCursor + 10, Math.max(n - 1, 0)); return true;
@@ -413,4 +417,74 @@ export function cycleProject() {
   S.flash = 'opening ' + o.name + '…';
   redraw();
   goToProject(o.key);
+}
+
+// ---- standalone scratch warehouse chooser ----
+
+export function openScratchPicker() {
+  if (!S.scratchWarehouses || !S.scratchWarehouses.length) return;
+  stopFind(true);
+  S.pickerConfirm = null;
+  S.scratchPick = { cursor: 0, opening: false };
+  S.flash = '';
+}
+
+export function closeScratchPicker() {
+  S.scratchPick = null;
+}
+
+function scratchPickKey(k) {
+  const sp = S.scratchPick;
+  const list = S.scratchWarehouses || [];
+  const n = list.length;
+  if (!sp || !n) { S.scratchPick = null; return true; }
+  if (sp.opening) return k === 'esc' ? (S.scratchPick = null, true) : true;
+  switch (k) {
+    case 'down': case 'j': sp.cursor = Math.min(sp.cursor + 1, n - 1); return true;
+    case 'up': case 'k': sp.cursor = Math.max(sp.cursor - 1, 0); return true;
+    case 'enter': pickScratchWarehouse(sp.cursor, false); return true;
+    case 'shift+enter': pickScratchWarehouse(sp.cursor, true); return true;
+    case '1': case 'b': pickScratchWarehouse(list.findIndex((w) => w.id === 'bigquery'), false); return true;
+    case '2': case 'd': pickScratchWarehouse(list.findIndex((w) => w.id === 'databricks'), false); return true;
+    case 'esc': S.scratchPick = null; return true;
+    case 'ctrl+c': S.scratchPick = null; if (S.overlay === 'projects') S.overlay = null; else quit(); return true;
+  }
+  return true;
+}
+
+export function pickScratchWarehouse(i, flip) {
+  const list = S.scratchWarehouses || [];
+  const w = list[i];
+  if (!w) return;
+  openScratchWarehouse(w.id, flip);
+}
+
+// openScratchWarehouse opens the standalone scratch workspace for warehouse
+// id ("bigquery" or "databricks"), in this tab or a new one.
+export async function openScratchWarehouse(id, flip) {
+  const targetKey = 'scratch-' + id;
+  const inNewTab = newTabFor(flip);
+  if (!inNewTab && S.mode === 'project' && S.key === targetKey) {
+    S.scratchPick = null;
+    if (S.overlay === 'projects') S.overlay = null;
+    redraw();
+    return;
+  }
+  const tab = inNewTab ? window.open('', '_blank') : null;
+  if (inNewTab && !tab) { say(blocked); return; }
+  if (S.scratchPick) S.scratchPick.opening = true;
+  const w = (S.scratchWarehouses || []).find((x) => x.id === id);
+  S.flash = 'opening ' + (w ? w.name : id) + ' scratch…';
+  redraw();
+  try {
+    const { key } = await post('/api/scratch/open', { warehouse: id });
+    S.scratchPick = null;
+    if (tab) { tab.opener = null; tab.location.href = projectURL(key); openedInTab(); }
+    else goToProject(key);
+  } catch (e) {
+    if (tab) tab.close();
+    if (S.scratchPick) S.scratchPick.opening = false;
+    say(e.message);
+    redraw();
+  }
 }

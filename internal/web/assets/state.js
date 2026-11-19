@@ -11,7 +11,7 @@ import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranch
 import { answerProd, askDefer, changedKey, checkKey, deferAskKey, deferOn, onProgress, openChanged, openCost, openImpact, openTags, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleDefer, toggleTag } from './checks.js';
 import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showErrorsTab, sqlTabOn } from './errors-tab.js';
 import { clearHistory, closeWatch, hasTabs, jobsTableKey, logKey, logTabs, nextTab, openKept, openURL, openWatch } from './log-tabs.js';
-import { askRemoveWorktreeHere, cycleProject, nextOpenProject, openByName, pickerKey, readOpenWorktrees, setPickerQuery, stopFind, switchProject } from './picker.js';
+import { askRemoveWorktreeHere, closeScratchPicker, cycleProject, nextOpenProject, openByName, openScratchPicker, openScratchWarehouse, pickScratchWarehouse, pickerKey, readOpenWorktrees, setPickerQuery, stopFind, switchProject } from './picker.js';
 import { columnsKey, searchSQLFromPalette, sqlKey } from './sql-pane.js';
 import { unsavedIn, noteVimMode } from './vim-mode.js';
 
@@ -22,6 +22,7 @@ export const hooks = {};
 export const S = {
   mode: 'loading', // loading, picker, project, gone (xf web quit)
   picker: [], pickerCursor: 0, pickerQuery: '', pickerTotal: 0,
+  scratchWarehouses: [], scratchPick: null,
   // paths are the picker's rows while its query is a path (~/… or /…),
   // which opens a project xf has not opened before; null otherwise.
   paths: null,
@@ -513,6 +514,8 @@ export async function start() {
     applyTheme(b.theme, b.themes, b.themeOwn);
     S.openIn = b.openIn || 'same-tab';
     S.canFind = !!b.find;
+    S.scratchWarehouses = b.scratchWarehouses || [];
+    S.scratchPick = null;
     S.open = b.open || [];
     if (b.project) {
       holdFirstDraw();
@@ -533,6 +536,7 @@ export async function start() {
       S.picker = b.picker || [];
       arrangePicker(false);
       S.pickerTotal = b.total ?? S.picker.length;
+      if (b.startScratchPicker && S.scratchWarehouses.length) openScratchPicker();
       // Each project's branch, read at once on the server; "…" until then.
       get('/api/picker/branches').then((m) => { S.pickerBranches = m; redraw(); }).catch(() => { S.pickerBranches = {}; redraw(); });
       readPickerWorktrees();
@@ -684,6 +688,7 @@ function openEvents() {
   on('python', (ev) => hooks.pythonEvent && hooks.pythonEvent(ev));
   on('progress', onProgress);
   on('branch', (v) => { if (S.mode === 'project') onBranch(v.parts); });
+  on('databricks', (u) => { if (S.mode === 'project' && hooks.dbxUpdated) hooks.dbxUpdated(u); });
   on('base', (v) => S.mode === 'project' && onBase(v.defaultBranch));
   // The user's theme is not a project page's when its file sets its own,
   // which its own events tell.
@@ -1248,6 +1253,12 @@ export async function checkModel() {
 // then runs once one is chosen, else the model is checked.
 export function openWarehousePicker(then) {
   import('./databricks.js').then((m) => m.openWarehousePicker(then));
+}
+
+// openProfilePicker lists ~/.databrickscfg profiles for standalone Databricks
+// scratch (databricks.js, loaded the first time).
+export function openProfilePicker(then) {
+  import('./databricks.js').then((m) => m.openProfilePicker(then));
 }
 
 // ---- panes ----
@@ -2168,6 +2179,7 @@ export async function askQuit() {
   }
   S.quitUnsaved = [];
   S.quitTerm = '';
+  S.quitScratch = !!(hooks.scratchRunning && hooks.scratchRunning());
   let known = true;
   try {
     const [un, term] = await Promise.all([
@@ -2177,7 +2189,7 @@ export async function askQuit() {
     S.quitUnsaved = un.files || [];
     S.quitTerm = term.command || '';
   } catch (e) { known = false; }
-  if (known && !S.quitUnsaved.length && !S.quitTerm && !(S.run && S.run.running)) { closeProject(); return; }
+  if (known && !S.quitUnsaved.length && !S.quitTerm && !S.quitScratch && !(S.run && S.run.running)) { closeProject(); return; }
   S.overlay = 'confirmQuit';
   redraw();
 }
@@ -2193,6 +2205,10 @@ export async function quit() {
 // to the project it showed before, or the projects (ADR 0008).
 export async function closeProject() {
   S.overlay = null;
+  S.quitScratch = false;
+  if (hooks.scratchRunning && hooks.scratchRunning() && hooks.scratchCancel) {
+    try { await hooks.scratchCancel(); } catch { /* closing anyway */ }
+  }
   const name = S.boot.name;
   say('closing ' + name + '…');
   leaving = true;
@@ -2312,6 +2328,7 @@ export async function removeListedWorktree(c) {
 // open one: in this tab, or a new one, as webOpenProjectIn says
 // (shift+enter does the other).
 export function openProjects() {
+  S.scratchPick = null;
   S.overlay = 'projects';
   S.pickerConfirm = null;
   S.paths = null;
@@ -2494,6 +2511,7 @@ export function handleKey(k) {
     case 'deferAsk': return deferAskKey(k);
     case 'watch': return false; // its own input
     case 'dbxWarehouse': return hooks.dbxKey ? hooks.dbxKey(k) : true;
+    case 'dbxProfile': return hooks.dbxProfileKey ? hooks.dbxProfileKey(k) : true;
     case 'projects': pickerKey(k); return true;
     case 'changed': changedKey(k); return true;
     case 'errors': return errorsKey(k);
@@ -2601,6 +2619,7 @@ export function closeOverlay() {
   if (S.overlay === 'deferAsk') { deferAskKey('esc'); return; }
   if (S.overlay === 'palette') { cancelPalette(); return; }
   if (S.overlay === 'base') { closeBase(); return; }
+  if (S.overlay === 'projects') S.scratchPick = null;
   S.overlay = null;
 }
 
@@ -2797,5 +2816,5 @@ export { answerDefer, deferGroups, deferOn, toggleDefer } from './checks.js';
 export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, toggleTag } from './checks.js';
 export { actOnErrorRow, errorGroups, errorKinds, errorRows, errorsTabShown, pickSQLTab, runFix, runLogFix, showErrorsTab, sqlTabOn } from './errors-tab.js';
 export { clearHistory, closeWatch, JOB_COLS, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
-export { addFound, leaveFind, pickProject, pickerKey, setPickerQuery, toggleFound } from './picker.js';
+export { addFound, closeScratchPicker, leaveFind, openScratchPicker, openScratchWarehouse, pickProject, pickScratchWarehouse, pickerKey, setPickerQuery, toggleFound } from './picker.js';
 export { endSQLSearch, setSQLSearchQuery } from './sql-pane.js';
