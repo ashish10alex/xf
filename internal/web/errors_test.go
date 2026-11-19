@@ -85,3 +85,63 @@ func TestCoreInstallNeedsAPackageJSON(t *testing.T) {
 		t.Errorf("fix for dbt = %+v, want none", f)
 	}
 }
+
+// A clean compile with no action from a graph.yaml, as dataform CLIs
+// before 3.0.65 compile one, is counted as a warning in the state and
+// listed by the errors overlay; nothing is an error.
+func TestSkippedGraphWarning(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "definitions", "graphs", "graph.yaml")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("version: 0.2.0.dev0/google\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	eng := newFakeEngine(testGraph())
+	s, ts, c := newTest(t, frontend.Deps{Engine: eng, Root: root})
+	p := s.only()
+	eng.states <- engine.State{Graph: testGraph(), Compiles: 2}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		p.mu.Lock()
+		n, v := p.st.Compiles, p.stateViewLocked()
+		p.mu.Unlock()
+		if n == 2 {
+			if v.Warnings != 1 || v.Errors != 0 {
+				t.Fatalf("state counts %d warnings, %d errors; want 1 and 0", v.Warnings, v.Errors)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the compile never arrived")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	var v struct {
+		Errors   []struct{}
+		Warnings []struct{ File, Message string }
+	}
+	getJSON(t, c, ts.URL+"/api/errors", &v)
+	if len(v.Errors) != 0 || len(v.Warnings) != 1 || v.Warnings[0].File != "definitions/graphs/graph.yaml" || !strings.Contains(v.Warnings[0].Message, "3.0.65") {
+		t.Errorf("errors view = %+v", v)
+	}
+
+	// While a compile runs, the graph may be about to change: no warning.
+	eng.states <- engine.State{Graph: testGraph(), Compiles: 2, Compiling: true}
+	for {
+		p.mu.Lock()
+		compiling, w := p.st.Compiling, p.stateViewLocked().Warnings
+		p.mu.Unlock()
+		if compiling {
+			if w != 0 {
+				t.Errorf("warnings while compiling = %d, want 0", w)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the compiling state never arrived")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

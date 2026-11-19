@@ -16,6 +16,7 @@ import (
 
 	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/commanduse"
+	"github.com/ashish10alex/xf/internal/diagnose"
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/navigate"
@@ -70,6 +71,10 @@ type projectState struct {
 	mu       sync.Mutex
 	st       engine.State
 	compiles int
+	// warns are the warnings of st's compile, worked out for the graph
+	// warnsOf (warningsLocked).
+	warns   []project.CompilationError
+	warnsOf *project.Graph
 	// failedAt and failedTook are when the latest compile, when it failed,
 	// finished and how long it took, as seen here: the engine keeps the
 	// times of the last good compile.
@@ -384,6 +389,8 @@ type stateView struct {
 	Errors       int  `json:"errors"`
 	DryRunErrors int  `json:"dryRunErrors"`
 	DryRunAuth   bool `json:"dryRunAuth,omitempty"`
+	// Warnings counts the compile's warnings (warningsLocked).
+	Warnings int `json:"warnings,omitempty"`
 	// DryRunByFile are the failed dry runs by their action's file, which
 	// the status line shows for the file the page shows.
 	DryRunByFile map[string]fileDryRun `json:"dryRunByFile,omitempty"`
@@ -433,7 +440,22 @@ func (p *projectState) stateViewLocked() stateView {
 	}
 	errs, auth := p.dryRunErrorsLocked()
 	v.DryRunErrors, v.DryRunAuth, v.DryRunByFile = len(errs), auth, dryRunsByFile(errs)
+	v.Warnings = len(p.warningsLocked())
 	return v
+}
+
+// warningsLocked are the warnings of the latest compile, while it is clean
+// and done: the property graph files a Dataform CLI before 3.0.65 left
+// out (diagnose.SkippedGraphs). They're worked out once per graph.
+func (p *projectState) warningsLocked() []project.CompilationError {
+	st := p.st
+	if p.tool != "dataform" || st.Compiling || st.Err != nil || st.Stale || st.Partial || st.Graph == nil {
+		return nil
+	}
+	if p.warnsOf != st.Graph {
+		p.warns, p.warnsOf = diagnose.SkippedGraphs(os.DirFS(p.deps.Root), st.Graph), st.Graph
+	}
+	return p.warns
 }
 
 func (p *projectState) hasErrors() bool {

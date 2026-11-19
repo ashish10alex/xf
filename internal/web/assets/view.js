@@ -848,7 +848,7 @@ function StatusLine() {
   } else if (s.errors > 0) {
     state = html`${s.stale ? html`<span class="warn">stale · </span>` : ''}<button class="link error" onClick=${() => { st.showErrorsOrSay(); redraw(); }}>✗ ${s.errors} compile error${s.errors === 1 ? '' : 's'} (e)</button>`;
   } else {
-    state = html`<span class="ok">idle</span>${s.dryRunErrors > 0 ? html` · <button class="link error" onClick=${() => st.openErrors()}>✗ ${s.dryRunErrors} dry run error${s.dryRunErrors === 1 ? '' : 's'} (e)</button>` : ''}${FileDryRun()}`;
+    state = html`<span class="ok">idle</span>${s.dryRunErrors > 0 ? html` · <button class="link error" onClick=${() => st.openErrors()}>✗ ${s.dryRunErrors} dry run error${s.dryRunErrors === 1 ? '' : 's'} (e)</button>` : ''}${s.warnings > 0 ? html` · <button class="link warn" onClick=${() => st.openErrors()}>⚠ ${s.warnings} warning${s.warnings === 1 ? '' : 's'} (e)</button>` : ''}${FileDryRun()}`;
   }
   const r = S.run;
   return html`<div class="status">
@@ -1327,6 +1327,10 @@ function ErrorsOverlay() {
       if (e.compileErr) out.push(html`<div class="error">${e.tool} compile failed</div><pre>${e.compileErr}</pre>`);
       e.errors.forEach((x) => out.push(html`<div class="error">${x.file}</div><pre>${x.message}</pre>`));
       if (e.stale) out.push(html`<div class="dim">showing the last good compile until the project compiles cleanly</div>`);
+    }
+    if (e.warnings && e.warnings.length) {
+      out.push(html`<div class="sec-title">compile warnings</div>`);
+      e.warnings.forEach((x) => out.push(html`<div class="warn">${x.file}</div><pre>${x.message}</pre>`));
     }
     if (e.dryRun.length || e.auth) {
       out.push(html`<div class="sec-title">dry run errors</div>`);

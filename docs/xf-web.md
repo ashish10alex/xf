@@ -96,6 +96,8 @@ They are grouped as syntax / root errors (open: they usually cause the rest), un
 `e` focuses the tab, `j`/`k` move, `enter` opens a group or takes the source pane to the error's line with the editor's keys (`ctrl+o` comes back), `y` copies the errors and `tab` goes on to the stale SQL and the columns.
 The tab goes once the project compiles.
 With no compile errors, `e` shows the dry run errors as before.
+It shows compile warnings too, which the status line counts (`⚠ 1 warning`) but which block nothing: a property graph's `graph.yaml` that a clean compile has no graph from, as Dataform CLIs before 3.0.65 compile one without an error.
+The language server puts the same warning on the file's first line.
 
 **Without the Dataform CLI (xf web only).**
 When `dataform` isn't on your `PATH` (and no `--dataform-bin`, `$DATAFORM_BIN` or `dataformBin` names one), xf web still opens a Dataform project, so you can read and edit its files, search them and use source control; the TUI and the other commands stop and say how to install it, as before.

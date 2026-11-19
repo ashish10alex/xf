@@ -529,6 +529,10 @@ func clip(s string, n int) string {
 // errorsView answers with what pane 2's errors tab and the e overlay show:
 // the compile's errors, then the dry runs'.
 func (p *projectState) errorsView(w http.ResponseWriter, r *http.Request) {
+	type compileWarning struct {
+		File    string `json:"file"`
+		Message string `json:"message"`
+	}
 	type compileError struct {
 		File    string `json:"file"`
 		Message string `json:"message"`
@@ -556,11 +560,16 @@ func (p *projectState) errorsView(w http.ResponseWriter, r *http.Request) {
 		// Fix is the command that may get the compile going again, such
 		// as one that installs the CLI it couldn't find; nil for none.
 		Fix *fix `json:"fix,omitempty"`
+		// Warnings are what a clean compile may still be wrong about.
+		Warnings []compileWarning `json:"warnings"`
 	}
 	p.checkCreds()
 	missing := p.cliMissing()
 	p.mu.Lock()
-	v := view{Tool: p.tool, Stale: p.st.Stale, Errors: []compileError{}, At: p.failedAt, Took: p.failedTook.Seconds()}
+	v := view{Tool: p.tool, Stale: p.st.Stale, Errors: []compileError{}, At: p.failedAt, Took: p.failedTook.Seconds(), Warnings: []compileWarning{}}
+	for _, w := range p.warningsLocked() {
+		v.Warnings = append(v.Warnings, compileWarning{File: w.FileName, Message: w.Message})
+	}
 	if p.deps.Info != nil && p.install == nil { // else looked up at each compile
 		v.Bin = p.deps.Info.ToolBin
 	}

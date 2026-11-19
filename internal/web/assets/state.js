@@ -770,7 +770,7 @@ export function setState(st, first) {
     fitFocus();
   }
   // Opening e asks again for old failed dry runs: read their answers.
-  if (S.overlay === 'errors' && !st.errors && prev && st.dryRunErrors !== prev.dryRunErrors) refreshErrorsOverlay();
+  if (S.overlay === 'errors' && !st.errors && prev && (st.dryRunErrors !== prev.dryRunErrors || st.warnings !== prev.warnings)) refreshErrorsOverlay();
   if (!prev || st.compiles !== prev.compiles) {
     if (S.sel) refreshView();
     else if (prev && S.plainFile) adoptPlainFile();
@@ -2146,11 +2146,12 @@ export async function openErrors() {
 }
 
 // showErrorsOrSay is e: the compile's errors in pane 2 while it fails,
-// else the dry runs' in the errors overlay.
+// else the dry runs' errors and the compile's warnings in the errors
+// overlay.
 function showErrorsOrSay() {
   const st = S.state;
   if (hasErrors()) showErrorsTab();
-  else if (st && (st.dryRunErrors > 0 || st.dryRunAuth)) openErrors();
+  else if (st && (st.dryRunErrors > 0 || st.dryRunAuth || st.warnings > 0)) openErrors();
   else say('no errors');
 }
 
@@ -2667,6 +2668,11 @@ export function errorsText() {
     if (e.compileErr) out.push(e.tool + ' compile failed', e.compileErr);
     if (e.fix) out.push('fix: ' + e.fix.why + ': ' + e.fix.command);
     for (const x of e.errors) out.push(x.file, ...x.message.split('\n').map((l) => '  ' + l));
+  }
+  if (e.warnings && e.warnings.length) {
+    if (out.length) out.push('');
+    out.push('compile warnings');
+    for (const x of e.warnings) out.push(x.file, ...x.message.split('\n').map((l) => '  ' + l));
   }
   if (e.dryRun.length || e.auth) {
     if (out.length) out.push('');

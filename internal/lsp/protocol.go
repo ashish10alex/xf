@@ -155,8 +155,9 @@ type DiagnosticData struct {
 
 // Diagnostic severities.
 const (
-	severityError = 1
-	severityHint  = 4
+	severityError   = 1
+	severityWarning = 2
+	severityHint    = 4
 )
 
 type PublishDiagnosticsParams struct {

@@ -3,6 +3,7 @@
 - **`xf: not a Dataform or dbt project: … has none of workflow_settings.yaml, dataform.json, dbt_project.yml`**: run xf in the project's root (not a subdirectory such as `definitions/` or `models/`), or pass `--dir`.
 - **`… is both a Dataform and a dbt project`**: pass `--backend dataform` or `--backend dbt`.
 - **A dbt project shows `not compiled`**: you're on dbt v2 and the project has `on-run-start` or `on-run-end` hooks; see [dbt projects](dbt.md#dbt-projects).
+- **A property graph is missing, and `graph.yaml` has a warning**: your Dataform CLI is older than 3.0.65, which skips `graph.yaml` without an error; upgrade it (`npm i -g @dataform/cli@latest`). Property graphs also need `dataformCoreVersion` 3.1.4 or later, and an older core says so with a compile error.
 - **Dry runs say to log in**: run `gcloud auth application-default login` (step 2).
 - **`xf impact` in CI says `neither origin/main nor main exists`, or finds no common ancestor**: the job fetched too little history; fetch the default branch (`fetch-depth: 0`).
 - **Column impact says "no access to Data Lineage"**: enable the Data Lineage API in the tables' project and ask for `roles/datalineage.viewer`.

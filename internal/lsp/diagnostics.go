@@ -53,20 +53,32 @@ func (s *server) afterCompile(ctx context.Context, st engine.State) {
 		tool = "dbt"
 	}
 	byFile := diagnose.Compile(s.root, tool, st.Errors, os.ReadFile)
+	// Warnings go with the compile's diagnostics, but don't stop a file
+	// being dry-run.
+	var warns map[string][]diagnose.Diagnostic
+	if !s.dbt && st.Err == nil && !st.Stale && !st.Partial {
+		warns = diagnose.Warnings(s.root, tool, diagnose.SkippedGraphs(os.DirFS(s.root), st.Graph), os.ReadFile)
+	}
 
 	s.diagMu.Lock()
 	var changed []string
 	for file, fd := range s.diag.files {
-		if len(fd.compile) > 0 && byFile[file] == nil {
+		if len(fd.compile) > 0 && byFile[file] == nil && warns[file] == nil {
 			fd.compile = nil
 			changed = append(changed, file)
 		}
 	}
 	s.diag.compileErrors = map[string]bool{}
 	for file, ds := range byFile {
-		s.fileDiag(file).compile = ds
 		s.diag.compileErrors[file] = true
+		s.fileDiag(file).compile = append(ds, warns[file]...)
 		changed = append(changed, file)
+	}
+	for file, ds := range warns {
+		if byFile[file] == nil {
+			s.fileDiag(file).compile = ds
+			changed = append(changed, file)
+		}
 	}
 	if s.diag.cancelRound != nil {
 		s.diag.cancelRound()
@@ -208,8 +220,11 @@ func (s *server) publish(file string) {
 			End:   Position{Line: d.Line, Character: character(line, d.End, s.utf16)},
 		}
 		pd := Diagnostic{Range: r, Severity: severityError, Source: d.Source, Message: d.Message}
-		if d.Severity == diagnose.Hint {
+		switch d.Severity {
+		case diagnose.Hint:
 			pd.Severity = severityHint
+		case diagnose.Warning:
+			pd.Severity = severityWarning
 		}
 		if d.Fix != "" {
 			pd.Data = &DiagnosticData{Fix: d.Fix}

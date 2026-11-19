@@ -19,6 +19,7 @@ type Severity int
 const (
 	Error Severity = iota
 	Hint
+	Warning
 )
 
 // Diagnostic sources: a compile's is its tool's ("dataform compile", "dbt

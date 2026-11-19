@@ -329,3 +329,47 @@ func TestServeDbtDryRunDiagnostics(t *testing.T) {
 		t.Fatalf("got %+v", ds)
 	}
 }
+
+// A graph.yaml that a clean compile has no action from, as dataform CLIs
+// before 3.0.65 compile it, gets a warning on its first line, gone once
+// the compile has the graph.
+func TestServeSkippedGraphWarning(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "definitions", "graphs", "graph.yaml")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, data := range map[string]string{
+		filepath.Join(root, "workflow_settings.yaml"): "defaultProject: p\ndefaultDataset: d\n",
+		file: "version: 0.2.0.dev0/google\nsemantic_model: []\n",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	view := &project.Action{ID: "p.d.v", Target: project.Target{Database: "p", Schema: "d", Name: "v"}, Kind: project.KindView, FileName: "definitions/v.sqlx"}
+	pg := &project.Action{ID: "p.d.g", Target: project.Target{Database: "p", Schema: "d", Name: "g"}, Kind: project.KindPropertyGraph, FileName: "definitions/graphs/graph.yaml"}
+	changes := make(chan struct{})
+	var mu sync.Mutex
+	next := project.NewGraph([]*project.Action{view})
+	c := startServer(t, Config{
+		Compile: func(context.Context, string) (*project.Graph, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return next, nil
+		},
+		Watch: func(context.Context, string) (<-chan struct{}, error) { return changes, nil },
+	})
+	c.initialize(root)
+	ds := c.waitDiagnostics(file, func(ds []Diagnostic) bool { return len(ds) > 0 })
+	if d := ds[0]; len(ds) != 1 || d.Severity != severityWarning || d.Range.End != (Position{0, len("version: 0.2.0.dev0/google")}) ||
+		!strings.Contains(d.Message, "3.0.65") || d.Source != "dataform compile" {
+		t.Fatalf("got %+v", ds)
+	}
+
+	mu.Lock()
+	next = project.NewGraph([]*project.Action{view, pg})
+	mu.Unlock()
+	changes <- struct{}{}
+	c.waitDiagnostics(file, func(ds []Diagnostic) bool { return len(ds) == 0 })
+}
