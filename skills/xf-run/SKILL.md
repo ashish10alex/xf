@@ -1,6 +1,6 @@
 ---
 name: xf-run
-description: Run a Dataform or dbt project's actions with the xf CLI. `xf run` is `dataform run` (`dbt build` in dbt) with the tool's own flags plus `--defer`, which reads upstream tables not built in dev from prod instead of building them, and `--dry-run`, a free plan. Use when asked to run, build or test models or actions, or to see what a run would build, read and scan before running it.
+description: Run a Dataform or dbt project's actions with the xf CLI. `xf run` is `dataform run` (`dbt build` in dbt) with the tool's own flags plus `--defer`, which reads upstream tables not built in dev from prod instead of building them (proxy views in Dataform, dbt's own defer in dbt), and `--dry-run`, a free plan of what the run builds, reads and scans in BigQuery. Use when asked to run, build or test models or actions, to defer to prod, or to see what a run would build, read, scan and cost before running it.
 ---
 
 # xf run
@@ -10,6 +10,7 @@ description: Run a Dataform or dbt project's actions with the xf CLI. `xf run` i
 ## Steps
 
 1. **Ready the project.** From the project's root (or pass `--dir`):
+   - When `command -v xf` finds nothing, xf isn't installed. Show the user one way to install it before running anything: `brew install --cask ashish10alex/tap/xf`, `curl -fsSL https://xf.dataformtools.com/install.sh | sh`, `winget install AshishAlex.xf` on Windows, or `go install github.com/ashish10alex/xf/cmd/xf@latest`.
    - `git fetch origin <default branch>`: the stale check compares the branch with its merge-base there, and xf never fetches.
    - `xf config` shows the settings. `--defer` needs `prodCompilerOptions` (Dataform) or `dbtProdTarget` (dbt). The value is the user's to give: ask for it rather than guess.
    - A `403` or `Access Denied` later is usually the wrong Google account: `xf config --auth` names the one xf uses.

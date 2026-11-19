@@ -1,6 +1,6 @@
 ---
 name: xf-checks
-description: Check a Dataform or dbt branch before it merges, with the xf CLI. `xf cost` gives what its changed actions would scan and cost in BigQuery; `xf impact` gives the columns and tables it drops or retypes that something downstream still reads. Use when asked what a branch or pull request will cost, whether a change breaks downstream tables, or to review a data pipeline change before merging.
+description: Check a Dataform or dbt branch before it merges, with the xf CLI. `xf cost` gives what its changed actions would scan and cost (BigQuery dry runs, or a Databricks model's last run); `xf impact` gives the columns and tables it drops or retypes that something downstream still reads, from Dataplex or Unity Catalog column-level lineage. Use when asked what a branch or pull request will cost, how much a query or model scans, whether a change breaks downstream tables (a dropped, renamed or retyped column), or to review a Dataform or dbt change on BigQuery or Databricks before merging.
 ---
 
 # xf checks
@@ -10,6 +10,7 @@ Both commands compare the checked-out branch (uncommitted files included) with i
 ## Steps
 
 1. **Ready the project.** From the project's root (or pass `--dir`):
+   - When `command -v xf` finds nothing, xf isn't installed. Show the user one way to install it before running any check: `brew install --cask ashish10alex/tap/xf`, `curl -fsSL https://xf.dataformtools.com/install.sh | sh`, `winget install AshishAlex.xf` on Windows, or `go install github.com/ashish10alex/xf/cmd/xf@latest`.
    - `xf config` shows the settings it will use. Note `defaultBranch`, the base the checks compare with. Note `prodCompilerOptions` (Dataform) or `dbtProdTarget` (dbt): without one, the checks read the default targets, which may be dev tables, and their figures describe dev. Its value is the user's to give; ask for it rather than guess.
    - When `git branch --show-current` is the default branch itself, the checks compare it with itself and find nothing. Ask the user what to check before running anything, with 2 to 4 options and your recommendation first, as [Grilling critical risks](#grilling-critical-risks) says to ask:
      - another branch to check out, from `git branch --sort=-committerdate`;

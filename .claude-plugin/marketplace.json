@@ -1,0 +1,25 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "xf",
+  "description": "Skills for the xf CLI: cost and breakage checks for Dataform and dbt branches on BigQuery and Databricks.",
+  "owner": {
+    "name": "Ashish Alex"
+  },
+  "plugins": [
+    {
+      "name": "xf",
+      "source": "./",
+      "strict": false,
+      "description": "Check a Dataform or dbt branch before it merges (query cost and the downstream columns it breaks, from Dataplex or Unity Catalog lineage), and plan runs with a free dry run before running them.",
+      "author": {
+        "name": "Ashish Alex"
+      },
+      "homepage": "https://xf.dataformtools.com",
+      "repository": "https://github.com/ashish10alex/xf",
+      "license": "MIT",
+      "category": "data-engineering",
+      "tags": ["bigquery", "dataform", "dbt", "databricks", "dataplex", "lineage", "cost", "ci"],
+      "skills": ["./skills/xf-checks", "./skills/xf-run"]
+    }
+  ]
+}

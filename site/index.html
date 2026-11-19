@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>xf — BigQuery cost and breakage checks for Dataform and dbt</title>
-  <meta name="description" content="Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops. For GitHub Actions, GitLab CI and coding agents.">
+  <meta name="description" content="Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops, from Dataplex column lineage. dbt on Databricks too. For GitHub Actions, GitLab CI and coding agents.">
   <meta name="theme-color" content="#0b0d0c" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f2efe7" media="(prefers-color-scheme: light)">
 
@@ -12,14 +12,14 @@
   <meta property="og:url" content="https://xf.dataformtools.com/">
   <meta property="og:site_name" content="xf">
   <meta property="og:title" content="xf — BigQuery cost and breakage checks for Dataform and dbt">
-  <meta property="og:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, in CI or from a coding agent.">
+  <meta property="og:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, for Dataform and dbt, in CI or from a coding agent.">
   <meta property="og:image" content="https://xf.dataformtools.com/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="xf: cost and breakage, checked before the merge. xf cost, xf impact and xf check, in CI and agents.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="xf — BigQuery cost and breakage checks for Dataform and dbt">
-  <meta name="twitter:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, in CI or from a coding agent.">
+  <meta name="twitter:description" content="Estimate BigQuery cost before you run, see who breaks before you merge, and gate pull requests, for Dataform and dbt, in CI or from a coding agent.">
   <meta name="twitter:image" content="https://xf.dataformtools.com/og.png">
 
   <link rel="canonical" href="https://xf.dataformtools.com/">
@@ -50,12 +50,15 @@
     "@type": "SoftwareApplication",
     "name": "xf",
     "url": "https://xf.dataformtools.com/",
-    "description": "Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops. For GitHub Actions, GitLab CI and coding agents.",
+    "description": "Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops, from Dataplex column lineage. dbt on Databricks too. For GitHub Actions, GitLab CI and coding agents.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "macOS, Linux, Windows",
     "license": "https://github.com/ashish10alex/xf/blob/main/LICENSE",
     "downloadUrl": "https://github.com/ashish10alex/xf/releases",
     "sameAs": ["https://github.com/ashish10alex/xf"],
+    "codeRepository": "https://github.com/ashish10alex/xf",
+    "softwareHelp": "https://xf.dataformtools.com/llms.txt",
+    "keywords": "Dataform, dbt, BigQuery, Databricks, Unity Catalog, Dataplex, column lineage, query cost, dry run, breaking changes, pull request checks, GitHub Actions, GitLab CI, Agent Skills, Claude Code",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
   }
   </script>
@@ -423,8 +426,8 @@ exit "$code"</code></pre>
               <span class="step-n">1</span>
               <div>
                 <h3>Install the skills</h3>
-                <p>xf-checks and xf-run, for Claude Code; Codex looks in <code>~/.agents/skills/</code>. Run it again when you update xf.</p>
-                <div class="one-cmd"><code id="skill-cmd">curl -fsSL --create-dirs "https://xf.dataformtools.com/skills/{xf-checks,xf-run}/SKILL.md" -o "$HOME/.claude/skills/#1/SKILL.md"</code><button type="button" class="copy" data-copy="skill-cmd" aria-label="Copy the skill install command"><span class="copy-label">Copy</span></button></div>
+                <p>xf-checks and xf-run, for Claude Code, Codex, Cursor and other agents that read skills. Run it again when you update xf. Claude Code also takes <code>/plugin marketplace add ashish10alex/xf</code>, then <code>/plugin install xf@xf</code>; without Node, <a href="/llms.txt"><code>/llms.txt</code></a> has a <code>curl</code> command.</p>
+                <div class="one-cmd"><code id="skill-cmd">npx skills add ashish10alex/xf</code><button type="button" class="copy" data-copy="skill-cmd" aria-label="Copy the skill install command"><span class="copy-label">Copy</span></button></div>
               </div>
             </li>
             <li data-reveal>

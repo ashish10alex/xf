@@ -638,14 +638,27 @@ To run `xf cost` alone in a job, set it up as [Other CI systems](#other-ci-syste
 ## Agent skill for cost and impact
 
 [`skills/xf-checks`](../skills/xf-checks/SKILL.md) is an [Agent Skill](https://agentskills.io) that teaches a coding agent (Claude Code, Codex and others that read skills) to run `xf cost --json` and `xf impact --json` on a branch and read what they report: what to fix, what is a bound, what wasn't checked.
-Install it where your agent looks for skills, for every project or one.
-For Claude Code, from a checkout of this repository:
+[`skills/xf-run`](../skills/xf-run/SKILL.md), its companion, starts every run as a free `xf run --dry-run --json` plan.
+Install both with [`skills`](https://github.com/vercel-labs/skills), which asks which agents to add them to, and whether for every project or this one:
 
 ```bash
-mkdir -p ~/.claude/skills && cp -R skills/xf-checks ~/.claude/skills/
+npx skills add ashish10alex/xf
 ```
 
-Other agents look elsewhere:
+In Claude Code, the repository is also a plugin marketplace:
+
+```text
+/plugin marketplace add ashish10alex/xf
+/plugin install xf@xf
+```
+
+Without Node, `curl` fetches both into Claude Code's folder for every project; change `$HOME/.claude/skills` for another agent:
+
+```bash
+curl -fsSL --create-dirs "https://xf.dataformtools.com/skills/{xf-checks,xf-run}/SKILL.md" -o "$HOME/.claude/skills/#1/SKILL.md"
+```
+
+Agents look for skills here:
 
 | Agent | Every project | One project |
 |---|---|---|
@@ -657,4 +670,4 @@ Other agents look elsewhere:
 A project's folder is shared with its team through git.
 The skill grills you on each critical change before fixing anything, with the agent's own question tool when it has one (T3 Code shows Claude Code's and Codex's), else as a numbered list in its reply.
 Then ask the agent what your branch costs, or whether it breaks anything downstream.
-Copy it again when you update xf, so it matches the flags of the `xf` you run.
+Install it again when you update xf (`npx skills update`, or the `curl` command again), so it matches the flags of the `xf` you run.

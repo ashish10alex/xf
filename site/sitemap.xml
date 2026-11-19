@@ -3,4 +3,40 @@
   <url>
     <loc>https://xf.dataformtools.com/</loc>
   </url>
+  <url>
+    <loc>https://xf.dataformtools.com/llms.txt</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/skills/xf-checks/SKILL.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/skills/xf-run/SKILL.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/checks.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/running.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/dbt.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/xf-web.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/settings.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/windows.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/neovim.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/tui.md</loc>
+  </url>
+  <url>
+    <loc>https://xf.dataformtools.com/docs/troubleshooting.md</loc>
+  </url>
 </urlset>

@@ -22,7 +22,7 @@ Total scanned: 1.67 TiB | Estimated cost: $10.46
 ✗ Gate failed: 1.67 TiB exceeds the limit of 1.00 TiB
 ```
 
-xf works out from the files in a project's root whether it is Dataform or dbt. dbt projects get most of what Dataform's do; [dbt projects](docs/dbt.md) lists the differences.
+xf works out from the files in a project's root whether it is Dataform or dbt. dbt projects get most of what Dataform's do, and also work on Databricks, with Unity Catalog's lineage; [dbt projects](docs/dbt.md) lists the differences.
 Site: [xf.dataformtools.com](https://xf.dataformtools.com).
 
 ## What you need
@@ -151,13 +151,21 @@ Elsewhere (Cloud Build, Jenkins), download the release and run `xf check --outpu
 
 [`skills/xf-checks`](skills/xf-checks/SKILL.md) is an [Agent Skill](https://agentskills.io) that has Claude Code, Codex and other agents that read skills run `xf cost --json` and `xf impact --json` on a branch, read the `severity` of each change, and ask you about each critical one before fixing anything.
 [`skills/xf-run`](skills/xf-run/SKILL.md) starts every run as a free `xf run --dry-run --json` plan, and runs it only once you say yes.
-For Claude Code, from a checkout of this repository:
+Install both with [`skills`](https://github.com/vercel-labs/skills), which asks which agents to add them to (Claude Code, Codex, Cursor and others that read Agent Skills):
 
 ```bash
-mkdir -p ~/.claude/skills && cp -R skills/xf-checks skills/xf-run ~/.claude/skills/
+npx skills add ashish10alex/xf
 ```
 
-Other agents look elsewhere; see [Agent skill for cost and impact](docs/checks.md#agent-skill-for-cost-and-impact).
+In Claude Code, the repository is also a plugin marketplace:
+
+```text
+/plugin marketplace add ashish10alex/xf
+/plugin install xf@xf
+```
+
+Without Node, `curl` fetches both for Claude Code; [Agent skill for cost and impact](docs/checks.md#agent-skill-for-cost-and-impact) has the command and where other agents look.
+Install them again when you update xf, so they match its flags.
 
 ## xf web
 

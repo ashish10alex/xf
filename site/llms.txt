@@ -35,7 +35,15 @@ The JSON of `xf cost`, `xf impact` and `xf check` has `version` (now 1): fields 
 
 ## Agent skills
 
-Install both for Claude Code (Codex looks in `~/.agents/skills/`), and again after updating xf, so they match its flags:
+Install both, and again after updating xf, so they match its flags. `npx skills add` asks which agents to add them to (Claude Code, Codex, Cursor and others that read Agent Skills):
+
+```bash
+npx skills add ashish10alex/xf
+```
+
+In Claude Code, the repository is also a plugin marketplace: `/plugin marketplace add ashish10alex/xf`, then `/plugin install xf@xf`.
+
+Without Node, `curl` fetches both for Claude Code (Codex looks in `~/.agents/skills/`):
 
 ```bash
 curl -fsSL --create-dirs "https://xf.dataformtools.com/skills/{xf-checks,xf-run}/SKILL.md" -o "$HOME/.claude/skills/#1/SKILL.md"
