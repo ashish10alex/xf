@@ -787,8 +787,8 @@ function TermBody({ focused }) {
 }
 
 // termTabs are the terminal's tabs in the log pane's title: one for each
-// shell (numbered once there are two), × on the one shown, and + for
-// another.
+// shell, named after the command running in it, else its shell (zsh),
+// × on the one shown, and + for another.
 function termTabs() {
   const shown = S.logTab === 'term' ? st.activeTerm() : -1;
   const pick = (id) => (e) => { e.stopPropagation(); S.logTab = 'term'; S.termId = id; st.setFocus('log'); redraw(); };
@@ -798,7 +798,7 @@ function termTabs() {
   ids.forEach((id, i) => {
     if (i) out.push(' │ ');
     const on = id === shown || (!S.terms.length && S.logTab === 'term');
-    out.push(html`<span class=${'tab' + (on ? ' on' : '')} onMouseDown=${pick(id)}>${ids.length > 1 ? 'terminal ' + (i + 1) : 'terminal'}</span>`);
+    out.push(html`<span class=${'tab' + (on ? ' on' : '')} title=${'terminal ' + (i + 1)} onMouseDown=${pick(id)}>${st.termLabel(id)}</span>`);
     if (on && S.terms.length) out.push(html`<span class="tab-btn" title=${'close this terminal (' + st.termCloseLabel + ' in it)'} onMouseDown=${act(() => st.closeTerm(id))}>×</span>`);
   });
   out.push(html`<span class="tab-btn" title="new terminal (ctrl+shift+\`)" onMouseDown=${act(st.newTerm)}>+</span>`);

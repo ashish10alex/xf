@@ -9,12 +9,14 @@ package web
 // sizes come as POSTs, each naming its shell by id; id 0 is the first.
 
 import (
+	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -28,7 +30,7 @@ const termRingSize = 128 << 10
 const termExited = "\r\n\x1b[2m[process exited · press enter to restart]\x1b[0m\r\n"
 
 // terminal is one of a project's shells. mu guards every field but the
-// first four.
+// first five.
 type terminal struct {
 	id  int
 	dir string
@@ -39,8 +41,14 @@ type terminal struct {
 	// while no command runs (its prompt, once one has ended), and when it
 	// exits; nil tells no one.
 	idle func()
+	// named is told, with no lock held, each time name changes; nil
+	// tells no one.
+	named func()
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// name is what the shell's tab is called: the command running, else
+	// the shell's own name; "" before it starts and once it ends.
+	name    string
 	pty     *os.File
 	cmd     *exec.Cmd
 	running bool
@@ -88,7 +96,9 @@ func (t *terminal) pump(m *os.File, cmd *exec.Cmd) {
 			t.mu.Lock()
 			t.sendLocked(append([]byte(nil), buf[:n]...))
 			t.mu.Unlock()
-			if t.idle != nil && t.command() == "" {
+			c := t.command()
+			t.noteName(c)
+			if t.idle != nil && c == "" {
 				t.idle()
 			}
 		}
@@ -106,9 +116,38 @@ func (t *terminal) pump(m *os.File, cmd *exec.Cmd) {
 		}
 	}
 	t.mu.Unlock()
+	t.noteName("")
 	if t.idle != nil {
 		t.idle()
 	}
+}
+
+// noteName names the shell's tab after c, the command running ("" for
+// none), and tells named when that changes it.
+func (t *terminal) noteName(c string) {
+	t.mu.Lock()
+	n := c
+	if n == "" && t.running {
+		n = shellName(t.cmd.Process.Pid)
+	}
+	changed := n != t.name
+	t.name = n
+	t.mu.Unlock()
+	if changed && t.named != nil {
+		t.named()
+	}
+}
+
+// shellName is the name of the shell with pid, as its tab shows it.
+func shellName(pid int) string {
+	return cmp.Or(procName(pid), filepath.Base(cmp.Or(os.Getenv("SHELL"), "sh")))
+}
+
+// title is the shell's tab's name, "" for none yet.
+func (t *terminal) title() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.name
 }
 
 // command is the name of the command running in the shell, "" while the
@@ -190,7 +229,19 @@ func (t *terminal) input(b []byte) error {
 	m := t.pty
 	t.mu.Unlock()
 	_, err := m.Write(b)
+	if bytes.ContainsRune(b, '\r') {
+		t.renameSoon()
+	}
 	return err
+}
+
+// renameSoon reads the tab's name again once a command typed at the
+// prompt has had time to start (one that prints nothing would never
+// rename it otherwise), and again later for a slow shell.
+func (t *terminal) renameSoon() {
+	for _, d := range []time.Duration{150 * time.Millisecond, time.Second} {
+		time.AfterFunc(d, func() { t.noteName(t.command()) })
+	}
 }
 
 // run types line into the shell, then enter, starting a shell when none
@@ -213,6 +264,7 @@ func (t *terminal) run(line string) error {
 	m := t.pty
 	t.mu.Unlock()
 	_, err := m.Write([]byte(line + "\r"))
+	t.renameSoon()
 	return err
 }
 
@@ -281,6 +333,7 @@ func (p *projectState) addTerminalLocked() *terminal {
 		}
 	})
 	t.id = p.termNext
+	t.named = func() { p.sendTerms() }
 	p.terms = append(p.terms, t)
 	return t
 }
@@ -288,32 +341,36 @@ func (p *projectState) addTerminalLocked() *terminal {
 // errNoTerm answers a request for a shell that was closed.
 var errNoTerm = errors.New("that terminal was closed")
 
-// termIDs are p's shells' ids, in their tabs' order, making the first
-// when there is none.
-func (p *projectState) termIDs() []int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.terms) == 0 {
-		p.addTerminalLocked()
-	}
-	ids := make([]int, len(p.terms))
-	for i, t := range p.terms {
-		ids[i] = t.id
-	}
-	return ids
-}
-
 // termsView is the "terms" event and the answer of /api/term/list, /new
-// and /close: the shells' ids, in their tabs' order.
+// and /close: the shells' ids, in their tabs' order, and each one's name.
 type termsView struct {
 	IDs []int `json:"ids"`
+	// Names are the tabs' names, by IDs' order: the command running in
+	// each, else its shell's name; "" for a shell not started or ended.
+	Names []string `json:"names"`
 	// ID is the shell /api/term/new made, 0 otherwise.
 	ID int `json:"id,omitempty"`
 }
 
+// termsNow is p's shells as they are now, making the first when there is
+// none.
+func (p *projectState) termsNow() termsView {
+	p.mu.Lock()
+	if len(p.terms) == 0 {
+		p.addTerminalLocked()
+	}
+	terms := append([]*terminal(nil), p.terms...)
+	p.mu.Unlock()
+	v := termsView{IDs: make([]int, len(terms)), Names: make([]string, len(terms))}
+	for i, t := range terms {
+		v.IDs[i], v.Names[i] = t.id, t.title()
+	}
+	return v
+}
+
 // sendTerms tells every page p's shells, as they are now.
 func (p *projectState) sendTerms() termsView {
-	v := termsView{IDs: p.termIDs()}
+	v := p.termsNow()
 	p.hub.send("terms", v)
 	return v
 }
@@ -341,7 +398,7 @@ func (p *projectState) termState(w http.ResponseWriter, r *http.Request) {
 
 // termList is GET /api/term/list: the shells the terminal tab shows.
 func (p *projectState) termList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, termsView{IDs: p.termIDs()})
+	writeJSON(w, p.termsNow())
 }
 
 // termNew is POST /api/term/new: another shell, last among the tabs.

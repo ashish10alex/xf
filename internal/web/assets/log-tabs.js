@@ -57,13 +57,20 @@ export function loadTerms() {
   return listing;
 }
 
-// setTerms takes the shells' ids, from the list or the "terms" event,
-// another page's new or closed shells among them.
+// setTerms takes the shells' ids and names, from the list or the
+// "terms" event: another page's new or closed shells among them, and a
+// command starting or ending in one.
 export function setTerms(v) {
   S.terms = (v && v.ids) || [];
+  S.termNames = {};
+  S.terms.forEach((id, i) => { S.termNames[id] = (v.names && v.names[i]) || ''; });
   S.termId = activeTerm();
   if (hooks.termsChanged) hooks.termsChanged();
 }
+
+// termLabel is shell id's tab's name: the command running in it, else
+// its shell's (zsh); "terminal" for one not started or ended.
+export const termLabel = (id) => S.termNames[id] || 'terminal';
 
 // newTerm opens another shell, shows it and gives it the keys.
 export async function newTerm() {
@@ -83,6 +90,7 @@ export async function newTerm() {
 export async function closeTerm(id = activeTerm()) {
   const i = S.terms.indexOf(id);
   const last = S.terms.length <= 1;
+  const label = termLabel(id);
   // Asked before the answer, which a "terms" event may beat: either
   // takes the closed shell from the list and shows the first.
   const shown = activeTerm() === id;
@@ -94,7 +102,7 @@ export async function closeTerm(id = activeTerm()) {
   setTerms(v);
   if (last && S.logTab === 'term' && S.showLog) togglePanel();
   else if (S.logTab === 'term' && S.showLog) setFocus('log');
-  say(last ? 'closed the terminal' : 'closed terminal ' + (i + 1));
+  say('closed ' + (label === 'terminal' ? 'the terminal' : label));
   redraw();
 }
 

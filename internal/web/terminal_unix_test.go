@@ -213,3 +213,52 @@ func TestTerminalTabsAreShellsOfTheirOwn(t *testing.T) {
 		t.Fatalf("after closing the last, shells %v, want a fresh one", v.IDs)
 	}
 }
+
+// A shell's tab is named after the command running in it, else after the
+// shell, and named is told each change: a command that prints nothing
+// renames it too.
+func TestTerminalNamesItsTabAfterTheCommand(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	term := newTerminal(t.TempDir(), nil, nil)
+	var renames atomic.Int32
+	term.named = func() { renames.Add(1) }
+	defer term.close()
+	if n := term.title(); n != "" {
+		t.Fatalf("before it starts the tab is %q, want none", n)
+	}
+	_, ch, err := term.subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for range ch {
+		}
+	}()
+	waitForName := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for term.title() != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("the tab is %q, want %q", term.title(), want)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	// macOS's /bin/sh starts bash: the shell's name is what it settles on.
+	deadline := time.Now().Add(10 * time.Second)
+	for term.title() == "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	shell := term.title()
+	if shell == "" || shell == "sleep" {
+		t.Fatalf("at its prompt the tab is %q, want the shell's name", shell)
+	}
+	_ = term.input([]byte("sleep 30\r"))
+	waitForName("sleep")
+	before := renames.Load()
+	_ = term.input([]byte("\x03"))
+	waitForName(shell)
+	if renames.Load() == before {
+		t.Fatal("named wasn't told the command ended")
+	}
+}

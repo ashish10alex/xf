@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { S, isNewTermKey, isTermCloseKey, termCloseLabel, termReserved } from '../assets/state.js';
-import { activeTerm, closeTerm, nextTab, setTerms } from '../assets/log-tabs.js';
+import { activeTerm, closeTerm, nextTab, setTerms, termLabel } from '../assets/log-tabs.js';
 
 // The server answers a close with the shells left.
 let left = [];
@@ -72,4 +72,11 @@ test('closing the shell shown shows the one before it, or after the first, the o
   left = [5];
   await closeTerm(3);
   assert.equal(activeTerm(), 5, 'closing another shell keeps the one shown');
+});
+
+test('each tab is named after what runs in it, "terminal" before it has a name', () => {
+  setTerms({ ids: [1, 2, 3], names: ['zsh', 'dbt', ''] });
+  assert.deepEqual([1, 2, 3, 9].map(termLabel), ['zsh', 'dbt', 'terminal', 'terminal']);
+  setTerms({ ids: [2] });
+  assert.equal(termLabel(2), 'terminal', 'a list with no names names nothing');
 });

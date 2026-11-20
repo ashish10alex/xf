@@ -69,8 +69,9 @@ export const S = {
   logFollow: true,
   logTab: 'log',    // log, jobs, history, preview, term
   // terms are the ids of the project's shells, in the terminal's tabs'
-  // order (empty until asked for); termId is the one it shows.
-  terms: [], termId: 0,
+  // order (empty until asked for); termId is the one it shows;
+  // termNames are their tabs' names by id (termLabel).
+  terms: [], termId: 0, termNames: {},
   jobsCursor: 0, historyCursor: 0,
   // The jobs table's search and sort: / types the query, S or a column's
   // header sorts (col '' is the run's own order).
@@ -590,6 +591,7 @@ function startProject(p, ws) {
   S.caps = p.caps;
   S.terms = [];
   S.termId = 0;
+  S.termNames = {};
   S.flags.api = p.caps.apiDefault;
   S.following = p.caps.follow;
   S.recent = p.resume.recent || [];
@@ -2869,6 +2871,6 @@ export { cancelWorktreeName, closeBase, fetchBases, fetchBranches, moveBase, mov
 export { answerDefer, deferGroups, deferOn, toggleDefer } from './checks.js';
 export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, toggleTag } from './checks.js';
 export { actOnErrorRow, errorGroups, errorKinds, errorRows, errorsTabShown, pickSQLTab, runFix, runLogFix, showErrorsTab, sqlTabOn } from './errors-tab.js';
-export { activeTerm, clearHistory, closeTerm, closeWatch, JOB_COLS, loadTerms, newTerm, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
+export { activeTerm, termLabel, clearHistory, closeTerm, closeWatch, JOB_COLS, loadTerms, newTerm, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
 export { addFound, closeScratchPicker, leaveFind, openScratchPicker, openScratchWarehouse, pickProject, pickScratchWarehouse, pickerKey, setPickerQuery, toggleFound } from './picker.js';
 export { endSQLSearch, setSQLSearchQuery } from './sql-pane.js';
