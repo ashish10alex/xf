@@ -384,12 +384,12 @@ func TestText(t *testing.T) {
 	got := Text(testReport(), Options{Threshold: 100 * gib})
 	want := `4 changed actions in feat/v2 vs origin/main @ abc1234 (working tree)
 
-  action                         origin/main                feat/v2               change
-⚠ marts.fct_order_items     3.00 GiB  $0.018   ≤ 4.20 TiB    $26.25   +4.20 TiB  +$26.23  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
-✓ marts.dim_customers              —             1.80 GiB    $0.011         new
-✓ marts.stg_pageviews     420.00 MiB  $0.003   420.00 MiB    $0.003   no change
-────────────────────────────────────────────────────────────────────────────────────────
-  total                     3.41 GiB  $0.021   ≤ 4.20 TiB  ≤ $26.26   +4.20 TiB  +$26.24
+  marts.                   origin/main                feat/v2               change
+⚠ fct_order_items     3.00 GiB  $0.018   ≤ 4.20 TiB    $26.25   +4.20 TiB  +$26.23  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
+✓ dim_customers              —             1.80 GiB    $0.011         new
+✓ stg_pageviews     420.00 MiB  $0.003   420.00 MiB    $0.003         0 B       $0
+──────────────────────────────────────────────────────────────────────────────────
+  total               3.41 GiB  $0.021   ≤ 4.20 TiB  ≤ $26.26   +4.20 TiB  +$26.24
 
 Not estimated, so not in the total:
 ? marts.load  BigQuery gives no estimate for a script
@@ -440,9 +440,9 @@ func TestTextInColor(t *testing.T) {
 		t.Errorf("without its escapes:\n%s\nwant:\n%s", stripped, plain)
 	}
 	for _, want := range []string{
-		"\x1b[33m⚠\x1b[0m marts.fct_order_items", "\x1b[1;33m≤ 4.20 TiB\x1b[0m", "\x1b[31m+4.20 TiB\x1b[0m  \x1b[31m+$26.23\x1b[0m",
+		"\x1b[33m⚠\x1b[0m fct_order_items", "\x1b[1;33m≤ 4.20 TiB\x1b[0m", "\x1b[31m+4.20 TiB\x1b[0m  \x1b[31m+$26.23\x1b[0m",
 		"\x1b[33m[MISSING PARTITION FILTER: event_date on raw.events]\x1b[0m",
-		"\x1b[32m✓\x1b[0m marts.dim_customers", "\x1b[36mnew\x1b[0m",
+		"\x1b[32m✓\x1b[0m dim_customers", "\x1b[36mnew\x1b[0m",
 		"\x1b[33m?\x1b[0m marts.load", "\x1b[2mBigQuery gives no estimate for a script\x1b[0m",
 		"\x1b[2m3.00 GiB\x1b[0m  \x1b[2m$0.018\x1b[0m", "\x1b[1mtotal\x1b[0m",
 		"\x1b[1;31m✗ Gate failed: 4.20 TiB exceeds the limit of 100.00 GiB\x1b[0m",
@@ -884,12 +884,12 @@ func TestAttentionListsOnlyWhatNeedsALook(t *testing.T) {
 	got := Text(testReport(), Options{Attention: true})
 	want := `4 changed actions in feat/v2 vs origin/main @ abc1234 (working tree)
 
-  action                       origin/main                feat/v2               change
-⚠ marts.fct_order_items   3.00 GiB  $0.018   ≤ 4.20 TiB    $26.25   +4.20 TiB  +$26.23  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
-✓ marts.dim_customers            —             1.80 GiB    $0.011         new
+  marts.                 origin/main                feat/v2               change
+⚠ fct_order_items   3.00 GiB  $0.018   ≤ 4.20 TiB    $26.25   +4.20 TiB  +$26.23  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
+✓ dim_customers            —             1.80 GiB    $0.011         new
 Not shown: 1 more action, estimated with partition filters and scanning less than 1.00 GiB more than at the merge-base; the total counts it.
-──────────────────────────────────────────────────────────────────────────────────────
-  total                   3.41 GiB  $0.021   ≤ 4.20 TiB  ≤ $26.26   +4.20 TiB  +$26.24
+────────────────────────────────────────────────────────────────────────────────
+  total             3.41 GiB  $0.021   ≤ 4.20 TiB  ≤ $26.26   +4.20 TiB  +$26.24
 
 Not estimated, so not in the total:
 ? marts.load  BigQuery gives no estimate for a script
@@ -1018,7 +1018,8 @@ func TestRunLeavesOutPreOperationsDMLItMayNotWrite(t *testing.T) {
 	}
 	text := Text(r, Options{})
 	for _, want := range []string{
-		"(DML in pre_operations left out: dry running it needs bigquery.tables.updateData on its own table)",
+		"✓ declared ¹   2.00 GiB", "✓ snap ²       1.00 GiB",
+		"\n¹ DML in pre_operations left out: dry running it needs bigquery.tables.updateData on marts.log\n² DML in pre_operations left out: dry running it needs bigquery.tables.updateData on its own table\n",
 		"? marts.purge  dry run failed: it writes to marts.snap, and BigQuery checks bigquery.tables.updateData on it even in a dry run",
 	} {
 		if !strings.Contains(text, want) {
@@ -1034,5 +1035,36 @@ func TestRunLeavesOutPreOperationsDMLItMayNotWrite(t *testing.T) {
         "permission": "bigquery.tables.updateData"
       }`) {
 		t.Errorf("JSON %v:\n%s", err, data)
+	}
+}
+
+// The text table says a dataset every action is in once, over their
+// names; a note too long for a row once, under the table, each row naming
+// it by number; and a full refresh only when it scans other than the run.
+func TestTextTableNotes(t *testing.T) {
+	own := func(name string) Action {
+		return Action{Name: "acme.ops." + name, Type: "incremental", Estimate: &Estimate{Bytes: gib}, Full: &Estimate{Bytes: gib}, Base: &Estimate{Bytes: gib},
+			LeftOutDML: &Write{Table: "acme.ops." + name, Permission: "bigquery.tables.updateData"}}
+	}
+	r := &Report{Comparison: changedComparison(), Actions: []Action{own("a_snap"), own("b_snap")}}
+	got := Text(r, Options{})
+	want := `2 changed actions in feat/v2 vs origin/main @ abc1234 (working tree)
+
+  ops.            origin/main            feat/v2    change
+✓ a_snap ¹   1.00 GiB  $0.006   1.00 GiB  $0.006   0 B  $0
+✓ b_snap ¹   1.00 GiB  $0.006   1.00 GiB  $0.006   0 B  $0
+────────────────────────────────────────────────────────────
+  total      2.00 GiB  $0.012   2.00 GiB  $0.012   0 B  $0
+
+¹ DML in pre_operations left out: dry running it needs bigquery.tables.updateData on its own table
+`
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	// Actions in more than one dataset are named whole.
+	r.Actions[1].Name = "acme.marts.b_snap"
+	r.Actions[1].LeftOutDML.Table = "acme.marts.b_snap"
+	if got := Text(r, Options{}); !strings.Contains(got, "\n  action ") || !strings.Contains(got, "\n✓ ops.a_snap ¹ ") || !strings.Contains(got, "\n✓ marts.b_snap ¹ ") {
+		t.Errorf("two datasets:\n%s", got)
 	}
 }

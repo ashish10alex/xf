@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -405,6 +406,12 @@ func Text(r *Report, o Options) string {
 	if later := LaterLine(r, o); later != "" {
 		b.WriteString(later + "\n")
 	}
+	if len(t.footnotes) > 0 {
+		b.WriteString("\n")
+		for i, note := range t.footnotes {
+			b.WriteString(o.paint(superscript(i+1)+" "+note, ansiDim) + "\n")
+		}
+	}
 	if len(others) > 0 {
 		b.WriteString("\n" + o.paint("Not estimated, so not in the total:", ansiBold) + "\n")
 		nameW := 0
@@ -467,6 +474,47 @@ type ttable struct {
 	total  trow
 	groups []string // the label over each group of two columns
 	widths []int    // the name's, then each figure column's
+	// footnotes are the notes too long for a row, each said once under
+	// the table; a row names its own by number.
+	footnotes []string
+}
+
+// footnote is the mark of note in t's footnotes, added when new.
+func (t *ttable) footnote(note string) string {
+	i := slices.Index(t.footnotes, note)
+	if i < 0 {
+		t.footnotes = append(t.footnotes, note)
+		i = len(t.footnotes) - 1
+	}
+	return superscript(i + 1)
+}
+
+// superscript is n in superscript digits: "¹", "¹²".
+func superscript(n int) string {
+	digits := []rune("⁰¹²³⁴⁵⁶⁷⁸⁹")
+	var out []rune
+	for _, c := range strconv.Itoa(n) {
+		out = append(out, digits[c-'0'])
+	}
+	return string(out)
+}
+
+// sharedDataset is "dataset." when every action is in that one dataset,
+// else "".
+func sharedDataset(actions []Action) string {
+	if len(actions) == 0 {
+		return ""
+	}
+	dataset, _, ok := strings.Cut(impact.ShortTable(actions[0].Name), ".")
+	if !ok {
+		return ""
+	}
+	for _, a := range actions {
+		if !strings.HasPrefix(impact.ShortTable(a.Name), dataset+".") {
+			return ""
+		}
+	}
+	return dataset + "."
 }
 
 // costTable lays out the estimated actions of r.
@@ -481,8 +529,10 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 	if withBase {
 		t.groups = []string{r.Comparison.BaseRef, head, "change"}
 	}
+	// A dataset every action is in is said once, over their names.
+	dataset := sharedDataset(estimated)
 	for _, a := range estimated {
-		row := trow{mark: o.paint("✓", ansiGreen), name: cellOf(impact.ShortTable(a.Name))}
+		row := trow{mark: o.paint("✓", ansiGreen), name: cellOf(strings.TrimPrefix(impact.ShortTable(a.Name), dataset))}
 		warn := len(a.Unfiltered) > 0
 		if warn {
 			row.mark = o.paint("⚠", ansiYellow)
@@ -511,19 +561,24 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 			case !ok:
 				row.cells = append(row.cells, cellOf(""), cellOf(""))
 			case d == 0:
-				row.cells = append(row.cells, cellOf("no change", ansiDim), cellOf(""))
+				row.cells = append(row.cells, cellOf("0 B", ansiDim), cellOf("$0", ansiDim))
 			default:
 				row.cells = append(row.cells, cellOf(DeltaText(a), style), cellOf(SignedUSD(o.USD(d)), style))
 			}
 		}
-		if a.Full != nil {
+		// A full refresh that scans what the run does says nothing more.
+		if a.Full != nil && a.Full.Bytes != a.Estimate.Bytes {
 			row.notes = append(row.notes, o.paint("(full refresh "+Size(*a.Full)+" · "+FormatUSD(o.USD(a.Full.Bytes))+")", ansiDim))
 		}
+		var marks []string
 		if a.FirstBuild {
-			row.notes = append(row.notes, o.paint("("+FirstBuildNote(a, o)+")", ansiDim))
+			marks = append(marks, t.footnote(FirstBuildNote(a, o)))
 		}
 		if note := LeftOutNote(a); note != "" {
-			row.notes = append(row.notes, o.paint("("+note+")", ansiDim))
+			marks = append(marks, t.footnote(note))
+		}
+		if len(marks) > 0 {
+			row.name.text += " " + strings.Join(marks, " ")
 		}
 		for _, d := range a.FromDev {
 			row.notes = append(row.notes, o.paint("(reads "+impact.ShortTable(d.Table)+" from dev)", ansiDim))
@@ -551,7 +606,7 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 		case !baseKnown:
 			t.total.cells = append(t.total.cells, cellOf(""), cellOf(""))
 		case d == 0:
-			t.total.cells = append(t.total.cells, cellOf("no change", ansiDim), cellOf(""))
+			t.total.cells = append(t.total.cells, cellOf("0 B", ansiDim), cellOf("$0", ansiDim))
 		case d < 0:
 			t.total.cells = append(t.total.cells, cellOf("-"+warehouse.FormatBytes(-d), ansiGreen), cellOf(SignedUSD(o.USD(d)), ansiGreen))
 		default:
@@ -566,14 +621,18 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 			t.widths[i+1] = max(t.widths[i+1], utf8.RuneCountInString(c.text))
 		}
 	}
-	t.widths[0] = max(t.widths[0], len("action"))
+	label := "action"
+	if dataset != "" {
+		label = dataset
+	}
+	t.widths[0] = max(t.widths[0], utf8.RuneCountInString(label))
 	// A group's label longer than its two columns widens the first.
 	for g, label := range t.groups {
 		if short := utf8.RuneCountInString(label) - (t.widths[1+2*g] + 2 + t.widths[2+2*g]); short > 0 {
 			t.widths[1+2*g] += short
 		}
 	}
-	t.header = trow{header: true, mark: " ", name: cellOf("action", ansiDim)}
+	t.header = trow{header: true, mark: " ", name: cellOf(label, ansiDim)}
 	for _, label := range t.groups {
 		t.header.cells = append(t.header.cells, cellOf(""), cellOf(label, ansiDim))
 	}
