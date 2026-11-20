@@ -83,10 +83,15 @@ export async function newTerm() {
 export async function closeTerm(id = activeTerm()) {
   const i = S.terms.indexOf(id);
   const last = S.terms.length <= 1;
+  // Asked before the answer, which a "terms" event may beat: either
+  // takes the closed shell from the list and shows the first.
+  const shown = activeTerm() === id;
+  let v;
   try {
-    setTerms(await post('/api/term/close', { term: id }));
+    v = await post('/api/term/close', { term: id });
   } catch (e) { say('terminal: ' + e.message); redraw(); return; }
-  if (S.termId === id || !S.terms.includes(S.termId)) S.termId = S.terms[Math.max(i - 1, 0)] || 0;
+  if (shown && v && v.ids && v.ids.length) S.termId = v.ids[Math.max(i - 1, 0)];
+  setTerms(v);
   if (last && S.logTab === 'term' && S.showLog) togglePanel();
   else if (S.logTab === 'term' && S.showLog) setFocus('log');
   say(last ? 'closed the terminal' : 'closed terminal ' + (i + 1));

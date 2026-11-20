@@ -1,11 +1,15 @@
 // The terminal tab's shells, each a tab of the log pane: ⌥⌘→/← goes
-// through them in order, and ctrl+shift+` (a new one) stays xf's from
-// inside the terminal.
+// through them in order, and ctrl+shift+` (a new one) and alt+w (close it)
+// stay xf's from inside the terminal.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { S, isNewTermKey, termReserved } from '../assets/state.js';
-import { activeTerm, nextTab, setTerms } from '../assets/log-tabs.js';
+import { S, isNewTermKey, isTermCloseKey, termCloseLabel, termReserved } from '../assets/state.js';
+import { activeTerm, closeTerm, nextTab, setTerms } from '../assets/log-tabs.js';
+
+// The server answers a close with the shells left.
+let left = [];
+globalThis.fetch = async () => new Response(JSON.stringify({ ids: left }), { headers: { 'Content-Type': 'application/json' } });
 
 test('next tab goes through each shell before leaving the terminal', () => {
   S.caps = { history: true, terminal: true };
@@ -38,4 +42,34 @@ test('ctrl+shift+` is a new terminal, read by code, and xf keeps it', () => {
   for (const e of [tick({ shiftKey: true }), tick({ ctrlKey: true }), tick({ ctrlKey: true, shiftKey: true, altKey: true }), tick({ metaKey: true, shiftKey: true })]) {
     assert.equal(isNewTermKey(e), false, JSON.stringify(e));
   }
+});
+
+test('alt+w closes the terminal, read by code, and xf keeps it; ⌘w and ctrl+w are not it', () => {
+  const w = (mods) => ({ key: '∑', code: 'KeyW', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  assert.equal(isTermCloseKey(w({ altKey: true })), true);
+  assert.equal(termReserved(w({ altKey: true })), true);
+  assert.equal(termCloseLabel, 'alt+w');
+  for (const e of [w({}), w({ ctrlKey: true }), w({ metaKey: true }), w({ altKey: true, shiftKey: true }), w({ altKey: true, metaKey: true })]) {
+    assert.equal(isTermCloseKey(e), false, JSON.stringify(e));
+    assert.equal(termReserved(e), false, JSON.stringify(e));
+  }
+});
+
+test('closing the shell shown shows the one before it, or after the first, the one after', async () => {
+  S.caps = { history: true, terminal: true };
+  S.logTab = 'term';
+  setTerms({ ids: [1, 3, 4] });
+  S.termId = 4;
+  left = [1, 3];
+  await closeTerm();
+  assert.equal(activeTerm(), 3);
+  S.termId = 1;
+  left = [3];
+  await closeTerm();
+  assert.equal(activeTerm(), 3);
+  setTerms({ ids: [3, 5] });
+  S.termId = 5;
+  left = [5];
+  await closeTerm(3);
+  assert.equal(activeTerm(), 5, 'closing another shell keeps the one shown');
 });

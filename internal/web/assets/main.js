@@ -3,7 +3,7 @@
 import { h, render } from './vendor/preact.mjs';
 import { App, LostNotice } from './view.js';
 import { runScratch, toggleResults, toggleList, flushSave, SC } from './scratch.js';
-import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
+import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, isTermCloseKey, closeTerm, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
 import { SET, reopenAfterReload, openSettings, closeSettings } from './settings.js';
 import { T, closeThemePicker } from './theme.js';
 import { track } from './windows.js';
@@ -325,6 +325,13 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     toggleTermZoom();
     redraw();
+    return;
+  }
+  // alt+w (⌥w on a Mac) closes the shell shown from inside it, where w is
+  // the shell's.
+  if (isTermCloseKey(e) && t instanceof Element && t.closest('.xterm') && S.mode === 'project' && !S.overlay) {
+    e.preventDefault();
+    closeTerm();
     return;
   }
   // ctrl+shift+` opens another shell in the terminal tab, from anywhere

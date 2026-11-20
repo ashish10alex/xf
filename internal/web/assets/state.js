@@ -1435,10 +1435,10 @@ export function showTerm() {
 
 // termReserved says xf keeps a key while the terminal has the keys:
 // ctrl+0…3 (go to a pane), ctrl+j and ⌘j (the panel), ctrl+` and ⌘`
-// (the terminal), ctrl+shift+` (a new one), alt+z and ⌘z (zoom it),
-// ⌥⌘←/→ (the log pane's next tab) and the palette.
+// (the terminal), ctrl+shift+` (a new one), alt+w (close it), alt+z
+// and ⌘z (zoom it), ⌥⌘←/→ (the log pane's next tab) and the palette.
 export function termReserved(e) {
-  if (isTermZoomKey(e) || logTabKey(e) || isNewTermKey(e)) return true;
+  if (isTermZoomKey(e) || logTabKey(e) || isNewTermKey(e) || isTermCloseKey(e)) return true;
   if (e.altKey) return false;
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (e.ctrlKey && !e.metaKey && !e.shiftKey && k.length === 1 && '0123'.includes(k)) return true;
@@ -1456,6 +1456,12 @@ export const isTermKey = (e) => e.code === 'Backquote' && !e.altKey && !e.shiftK
 // isNewTermKey is ctrl+shift+`, as VS Code's: another shell, in a tab of
 // its own. Read by code, since shift makes the key ~ on most keyboards.
 export const isNewTermKey = (e) => e.code === 'Backquote' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
+
+// isTermCloseKey is alt+w (⌥w on a Mac) in the terminal: close the shell
+// shown, as alt+z zooms it. ⌘w and ctrl+w close the browser's tab, and
+// ctrl+shift+w its window. Read by code: option changes the key a Mac
+// reports.
+export const isTermCloseKey = (e) => e.code === 'KeyW' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 
 // termZoomed says the terminal tab fills the window.
 const termZoomed = () => S.showLog && S.logTab === 'term' && S.focus === 'log' && S.zoomed;
@@ -2113,7 +2119,7 @@ function commands() {
     toggle('View: terminal', S.showLog && S.logTab === 'term', termKeyLabel, toggleTerm);
     toggle('View: zoom terminal', termZoomed(), onMac ? '⌘z' : 'alt+z', toggleTermZoom);
     add('Terminal: new terminal', 'ctrl+shift+`', newTerm);
-    if (S.showLog && S.logTab === 'term') add('Terminal: close terminal', '', () => closeTerm());
+    if (S.showLog && S.logTab === 'term') add('Terminal: close terminal', termCloseLabel, () => closeTerm());
   }
   if (hooks.toggleTree) toggle('View: file tree', hooks.treeShown() && !hooks.scmShown() && !hooks.projectsShown(), onMac ? '⌘b' : 'ctrl+b', hooks.toggleTree);
   if (hooks.revealActive) add('View: show the open file in the file tree', revealKey, hooks.revealActive);
@@ -2393,6 +2399,9 @@ export function openProjects() {
 export const onMac = /Mac|iPhone|iPad/.test(navigator.platform);
 // logTabLabel names the log pane's next-tab key in footers.
 export const logTabLabel = onMac ? '⌥⌘→' : 'ctrl+alt+→';
+// termCloseLabel names alt+w, which closes the terminal shown.
+export const termCloseLabel = onMac ? '⌥w' : 'alt+w';
+
 // termKeyLabel names the terminal's key.
 // ctrl+` on a Mac too: macOS keeps ⌘` for its next window unless that
 // shortcut is turned off, so ⌘` works only on some Macs.
