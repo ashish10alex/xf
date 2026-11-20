@@ -104,6 +104,14 @@ test('keys that close, quit, run or answer a confirm are refused', async () => {
   assert.equal(r.blocked, true);
   assert.match(r.reason, /closes the project/);
 
+  // On a page it goes back to the project, which act allows (main.js,
+  // not loaded here, does the going back).
+  S.checks = 'cost';
+  S.cost = { report: null };
+  r = await act('key', 'ctrl+q');
+  assert.notEqual(r.blocked, true);
+  S.checks = null;
+
   S.overlay = 'confirmQuit';
   r = await act('key', 'y');
   assert.equal(r.blocked, true);

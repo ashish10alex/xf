@@ -19,7 +19,7 @@ import { F } from './search.js';
 import { T as THEME } from './theme.js';
 import { menuItems, pickMenuItem, closeMenu } from './ctx-menu.js';
 import { vimOn } from './vim-mode.js';
-import { exitKey } from './exit.js';
+import { exitKey, exitLevel } from './exit.js';
 
 // ---- reading ----
 
@@ -95,9 +95,10 @@ const confirms = ['confirmQuit', 'confirmClose', 'confirmClear', 'confirmFull', 
 // keyDanger is what the key k (keyName's) would do that act refuses, here
 // and now; '' for none.
 function keyDanger(k, e) {
-  if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'q') return 'ctrl+q closes the project';
   const el = typeof document !== 'undefined' && document.activeElement;
   if (el && el.closest && el.closest('.xterm')) return 'the terminal has the keys';
+  // ctrl+q goes back one level: only the last closes the project.
+  if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'q') return exitLevel() === 'project' ? 'ctrl+q closes the project' : '';
   const enter = k === 'enter' || k === 'y';
   if (S.mode === 'picker') {
     if (S.pickerConfirm && k === 'y') return 'closes or removes a project';
