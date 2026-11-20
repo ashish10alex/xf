@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -268,23 +269,27 @@ func TestCostReportExplain(t *testing.T) {
 func TestCostReportFirstBuildAndFromDev(t *testing.T) {
 	checked := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	read := cost.DevRead{Table: "prod.marts.agg", Dev: "dev.marts_dev.agg", BuiltAt: checked.Add(-12 * time.Minute)}
-	v := CostReport(&cost.Report{CheckedAt: checked, Actions: []cost.Action{
+	v := CostReport(&cost.Report{CheckedAt: checked, Comparison: &impact.Comparison{HeadRef: "feat_x", BaseRef: "origin/main", MergeBase: "abc1234"}, Actions: []cost.Action{
 		{Name: "p.marts.agg", Type: "incremental", New: true, Estimate: &cost.Estimate{Bytes: 1 << 30}, FirstBuild: true, Incremental: &cost.Estimate{Bytes: 1 << 28}},
 		{Name: "p.marts.report", Type: "table", Estimate: &cost.Estimate{Bytes: 1 << 20}, Base: &cost.Estimate{Bytes: 3 << 30}, FromDev: []cost.DevRead{read}},
 		{Name: "p.marts.other", Type: "table", Estimate: &cost.Estimate{Bytes: 1 << 10}, FromDev: []cost.DevRead{read}},
 	}})
 	rows := map[string]CostRow{}
 	for _, r := range v.Rows {
-		rows[r.Action] = r
+		rows[r.Name] = r
 	}
-	agg := rows["marts.agg"]
-	if agg.Notes != "new: its first run is a full build, counted; incremental runs sized on dev's copy" || agg.Counted != cost.RunFull ||
-		agg.Full != (CostFigure{"1.00 GiB", "$0.006"}) || agg.Incremental != (CostFigure{"256.00 MiB", "$0.002"}) {
-		t.Errorf("first build %+v", agg)
+	// All three are in marts, named once over them.
+	if v.Dataset != "marts." {
+		t.Errorf("Dataset %q", v.Dataset)
 	}
-	rep := rows["marts.report"]
-	if rep.Notes != "reads dev's marts_dev.agg (built 12m ago)" || rep.Change != "-3.00 GiB (-$0.018)" || rep.Was != "3.00 GiB · $0.018" ||
-		rep.Counted != cost.RunFull || rep.Incremental != (CostFigure{}) {
+	agg := rows["agg"]
+	if !slices.Equal(agg.Marks, []int{1}) || len(v.Footnotes) != 1 || v.Footnotes[0] != "first run: full build; then 256.00 MiB · $0.002 a run, sized on dev's copy" ||
+		agg.Head != (cost.Figure{Scans: "1.00 GiB", Cost: "$0.006"}) || agg.Notes != "" {
+		t.Errorf("first build %+v, footnotes %q", agg, v.Footnotes)
+	}
+	rep := rows["report"]
+	if rep.Notes != "reads dev's marts_dev.agg (built 12m ago)" || rep.Change != (cost.Figure{Scans: "-3.00 GiB", Cost: "-$0.018"}) || rep.Trend != cost.TrendDown ||
+		rep.Base != (cost.Figure{Scans: "3.00 GiB", Cost: "$0.018"}) || len(rep.Marks) != 0 {
 		t.Errorf("report %+v", rep)
 	}
 	if v.Later != "Each run after the first: 257.00 MiB | $0.002" {

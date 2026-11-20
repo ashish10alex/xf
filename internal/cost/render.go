@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -409,7 +408,7 @@ func Text(r *Report, o Options) string {
 	if len(t.footnotes) > 0 {
 		b.WriteString("\n")
 		for i, note := range t.footnotes {
-			b.WriteString(o.paint(superscript(i+1)+" "+note, ansiDim) + "\n")
+			b.WriteString(o.paint(Superscript(i+1)+" "+note, ansiDim) + "\n")
 		}
 	}
 	if len(others) > 0 {
@@ -479,106 +478,42 @@ type ttable struct {
 	footnotes []string
 }
 
-// footnote is the mark of note in t's footnotes, added when new.
-func (t *ttable) footnote(note string) string {
-	i := slices.Index(t.footnotes, note)
-	if i < 0 {
-		t.footnotes = append(t.footnotes, note)
-		i = len(t.footnotes) - 1
-	}
-	return superscript(i + 1)
-}
-
-// superscript is n in superscript digits: "¹", "¹²".
-func superscript(n int) string {
-	digits := []rune("⁰¹²³⁴⁵⁶⁷⁸⁹")
-	var out []rune
-	for _, c := range strconv.Itoa(n) {
-		out = append(out, digits[c-'0'])
-	}
-	return string(out)
-}
-
-// sharedDataset is "dataset." when every action is in that one dataset,
-// else "".
-func sharedDataset(actions []Action) string {
-	if len(actions) == 0 {
-		return ""
-	}
-	dataset, _, ok := strings.Cut(impact.ShortTable(actions[0].Name), ".")
-	if !ok {
-		return ""
-	}
-	for _, a := range actions {
-		if !strings.HasPrefix(impact.ShortTable(a.Name), dataset+".") {
-			return ""
-		}
-	}
-	return dataset + "."
-}
-
-// costTable lays out the estimated actions of r.
+// costTable lays out the estimated actions of r for Text.
 func costTable(r *Report, estimated []Action, o Options) ttable {
-	withBase := r.Comparison != nil && r.BaseError == ""
-	head := "estimate"
-	t := ttable{groups: []string{head}}
-	if c := r.Comparison; c != nil {
-		head = c.HeadRef
-		t.groups = []string{head}
-	}
+	l := Layout(r, estimated, o)
+	withBase := l.BaseLabel != ""
+	t := ttable{groups: []string{l.HeadLabel}, footnotes: l.Footnotes}
 	if withBase {
-		t.groups = []string{r.Comparison.BaseRef, head, "change"}
+		t.groups = []string{l.BaseLabel, l.HeadLabel, "change"}
 	}
-	// A dataset every action is in is said once, over their names.
-	dataset := sharedDataset(estimated)
-	for _, a := range estimated {
-		row := trow{mark: o.paint("✓", ansiGreen), name: cellOf(strings.TrimPrefix(impact.ShortTable(a.Name), dataset))}
-		warn := len(a.Unfiltered) > 0
-		if warn {
-			row.mark = o.paint("⚠", ansiYellow)
-		}
+	trend := map[string]string{TrendUp: ansiRed, TrendDown: ansiGreen, TrendSame: ansiDim, TrendNew: ansiCyan, "": ansiDim}
+	// cells are row's figures: the branch's scans styled head, and its cost
+	// headCost.
+	cells := func(row TableRow, head, headCost []string) []tcell {
+		var out []tcell
 		if withBase {
-			switch {
-			case a.New:
-				row.cells = append(row.cells, cellOf("—", ansiDim), cellOf(""))
-			case a.Base != nil:
-				row.cells = append(row.cells, cellOf(Size(*a.Base), ansiDim), cellOf(FormatUSD(o.USD(a.Base.Bytes)), ansiDim))
-			default:
-				row.cells = append(row.cells, cellOf("?", ansiDim), cellOf(""))
-			}
+			out = append(out, cellOf(row.Base.Scans, ansiDim), cellOf(row.Base.Cost, ansiDim))
 		}
-		size := cellOf(Size(*a.Estimate), ansiBold)
-		if warn {
-			size.styles = []string{ansiBold, ansiYellow}
-		}
-		row.cells = append(row.cells, size, cellOf(FormatUSD(o.USD(a.Estimate.Bytes)), ansiDim))
+		out = append(out, cellOf(row.Head.Scans, head...), cellOf(row.Head.Cost, headCost...))
 		if withBase {
-			d, ok := a.Delta()
-			style := map[bool]string{true: ansiRed, false: ansiGreen}[d > 0]
-			switch {
-			case a.New:
-				row.cells = append(row.cells, cellOf("new", ansiCyan), cellOf(""))
-			case !ok:
-				row.cells = append(row.cells, cellOf(""), cellOf(""))
-			case d == 0:
-				row.cells = append(row.cells, cellOf("0 B", ansiDim), cellOf("$0", ansiDim))
-			default:
-				row.cells = append(row.cells, cellOf(DeltaText(a), style), cellOf(SignedUSD(o.USD(d)), style))
-			}
+			out = append(out, cellOf(row.Change.Scans, trend[row.Trend]), cellOf(row.Change.Cost, trend[row.Trend]))
 		}
-		// A full refresh that scans what the run does says nothing more.
-		if a.Full != nil && a.Full.Bytes != a.Estimate.Bytes {
-			row.notes = append(row.notes, o.paint("(full refresh "+Size(*a.Full)+" · "+FormatUSD(o.USD(a.Full.Bytes))+")", ansiDim))
+		return out
+	}
+	for _, lr := range l.Rows {
+		a := lr.Action
+		name := lr.Name
+		for _, m := range lr.Marks {
+			name += " " + Superscript(m)
 		}
-		var marks []string
-		if a.FirstBuild {
-			marks = append(marks, t.footnote(FirstBuildNote(a, o)))
+		row := trow{mark: o.paint("✓", ansiGreen), name: cellOf(name)}
+		head := []string{ansiBold}
+		if len(a.Unfiltered) > 0 {
+			row.mark, head = o.paint("⚠", ansiYellow), []string{ansiBold, ansiYellow}
 		}
-		if note := LeftOutNote(a); note != "" {
-			marks = append(marks, t.footnote(note))
-		}
-		if len(marks) > 0 {
-			row.name.text += " " + strings.Join(marks, " ")
+		row.cells = cells(lr, head, []string{ansiDim})
+		if lr.FullRefresh != "" {
+			row.notes = append(row.notes, o.paint("(full refresh "+lr.FullRefresh+")", ansiDim))
 		}
 		for _, d := range a.FromDev {
 			row.notes = append(row.notes, o.paint("(reads "+impact.ShortTable(d.Table)+" from dev)", ansiDim))
@@ -588,31 +523,7 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 		}
 		t.rows = append(t.rows, row)
 	}
-
-	total, bound := r.Total()
-	t.total = trow{mark: " ", name: cellOf("total", ansiBold)}
-	baseTotal, baseKnown := r.BaseTotal()
-	if withBase {
-		if baseKnown {
-			t.total.cells = append(t.total.cells, cellOf(warehouse.FormatBytes(baseTotal), ansiDim), cellOf(FormatUSD(o.USD(baseTotal)), ansiDim))
-		} else {
-			t.total.cells = append(t.total.cells, cellOf("?", ansiDim), cellOf(""))
-		}
-	}
-	t.total.cells = append(t.total.cells, cellOf(bound+warehouse.FormatBytes(total), ansiBold), cellOf(bound+FormatUSD(o.USD(total)), ansiBold))
-	if withBase {
-		d := total - baseTotal
-		switch {
-		case !baseKnown:
-			t.total.cells = append(t.total.cells, cellOf(""), cellOf(""))
-		case d == 0:
-			t.total.cells = append(t.total.cells, cellOf("0 B", ansiDim), cellOf("$0", ansiDim))
-		case d < 0:
-			t.total.cells = append(t.total.cells, cellOf("-"+warehouse.FormatBytes(-d), ansiGreen), cellOf(SignedUSD(o.USD(d)), ansiGreen))
-		default:
-			t.total.cells = append(t.total.cells, cellOf("+"+warehouse.FormatBytes(d), ansiRed), cellOf(SignedUSD(o.USD(d)), ansiRed))
-		}
-	}
+	t.total = trow{mark: " ", name: cellOf("total", ansiBold), cells: cells(l.Total, []string{ansiBold}, []string{ansiBold})}
 
 	t.widths = make([]int, 1+2*len(t.groups))
 	for _, row := range append(slices.Clone(t.rows), t.total) {
@@ -622,8 +533,8 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 		}
 	}
 	label := "action"
-	if dataset != "" {
-		label = dataset
+	if l.Dataset != "" {
+		label = l.Dataset
 	}
 	t.widths[0] = max(t.widths[0], utf8.RuneCountInString(label))
 	// A group's label longer than its two columns widens the first.

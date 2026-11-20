@@ -865,6 +865,10 @@ mark.cur { background: var(--amber); color: var(--bg); }
 .report table.grid td.num, .report table.grid td.change { white-space: nowrap; }
 .report table.grid th.run { text-align: center; }
 .report table.grid td.counted { font-weight: 600; }
+.report table.cost-table tfoot td { font-weight: 600; border-top: 1px solid var(--rule); border-bottom: none; white-space: nowrap; }
+.report table.cost-table sup.fn { font-size: 9px; margin-left: 3px; color: var(--dim); }
+.report table.cost-table th.as-is { text-transform: none; }
+.report ol.cost-footnotes { margin: 6px 0; padding-left: 22px; font-size: 11px; }
 .verdict.v-fix b { color: var(--red); }
 .verdict.v-review b, .verdict.v-unknown b { color: var(--amber); }
 .verdict.v-ok b { color: var(--green); }

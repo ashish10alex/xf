@@ -1709,11 +1709,38 @@ function ImpactReport({ o }) {
     </div>`;
 }
 
-// costCells are a run's scans and cost: bold when the total counts them,
-// else dim; a dash when there is no such run or it isn't known.
-const costCells = (f, counted) => f && f.scans
-  ? html`<td class=${'num' + (counted ? ' counted' : ' dim')} title=${counted ? 'in the total' : ''}>${f.scans}</td><td class=${'num' + (counted ? '' : ' dim')}>${f.cost}</td>`
-  : html`<td class="num dim">–</td><td class="num dim">–</td>`;
+// costCells are a figure's scans and dollars, in classes scans and cost;
+// a new action's change is marked new.
+const costCells = (f, scans, cost = scans) => f.scans === 'new'
+  ? html`<td class="num"><span class="mark m-new">new</span></td><td class="num"></td>`
+  : html`<td class=${'num ' + scans}>${f.scans}</td><td class=${'num ' + cost}>${f.cost}</td>`;
+
+// costTrend is the class of a change that way: more red, less green.
+const costTrend = { up: 'error', down: 'ok', same: 'dim', new: '' };
+
+// CostTable is the estimated actions as the text report lays them out:
+// what each scanned and cost at the merge-base, on the branch, and the
+// change, with their total; a note too long for a row is numbered on it
+// and said once under the table.
+function CostTable({ r }) {
+  const groups = r.baseLabel ? 3 : 1;
+  const row = (x, total) => html`
+    ${r.baseLabel && costCells(x.base, 'dim')}
+    ${costCells(x.head, 'counted', total ? 'counted' : 'dim')}
+    ${r.baseLabel && costCells(x.change, 'change ' + (costTrend[x.trend] ?? 'dim'))}`;
+  return html`${wrapTable(html`<table class="grid cost-table">
+      <thead><tr><th rowspan="2" class=${r.dataset ? 'mono as-is' : ''} title=${r.dataset ? 'Every action is in this dataset' : ''}>${r.dataset || 'Action'}</th>
+        ${r.baseLabel && html`<th colspan="2" class="run as-is" title="The same action at the merge-base, dry run now">${r.baseLabel}</th>`}
+        <th colspan="2" class="run as-is" title="Dry-run estimate of each changed action on this branch; nothing was run">${r.headLabel}</th>
+        ${r.baseLabel && html`<th colspan="2" class="run" title="Against the same action at the merge-base">Change</th>`}
+        <th rowspan="2">Notes</th></tr>
+        <tr>${Array.from({ length: groups }, () => html`<th class="num">Scans</th><th class="num">Cost</th>`)}</tr></thead>
+      <tbody>${r.rows.map((x) => html`<tr><td class="mono">${x.name}${x.marks && html`<sup class="fn">${x.marks.join(' ')}</sup>`}</td>
+        ${row(x, false)}<td class=${x.warn ? 'warn' : 'dim'}>${x.notes}</td></tr>`)}</tbody>
+      <tfoot><tr><td>Total</td>${row(r.totalRow, true)}<td></td></tr></tfoot>
+    </table>`)}
+    ${r.footnotes && html`<ol class="cost-footnotes dim">${r.footnotes.map((n) => html`<li>${n}</li>`)}</ol>`}`;
+}
 
 function CostReport({ o }) {
   const r = o.report && o.report.report;
@@ -1728,17 +1755,8 @@ function CostReport({ o }) {
       ${r.explain && html`<p class="explain">${raw(r.explain)}</p>`}
       ${r.fromDev && html`<div class="dim">${r.fromDev}</div>`}
       ${r.unset && html`<p class="warn">${r.unset}</p>`}
-      <p class="total"><b>${r.total}</b>${r.later && html`<br /><span class="dim">${r.later}</span>`}</p>
-      ${r.empty ? html`<p class="dim">${r.empty}</p>` : r.rows.length > 0 && wrapTable(html`<table class="grid">
-        <thead><tr><th rowspan="2">Action</th><th rowspan="2">Type</th>
-          <th colspan="2" class="run" title="Dry-run estimate of a table's run, or of an incremental table's full rebuild; nothing was run">Full build (dry run)</th>
-          <th colspan="2" class="run" title="Dry-run estimate of each run of an incremental table once it is built; nothing was run">Incremental (dry run)</th>
-          <th rowspan="2" title=${'Against the same action at the merge-base' + (r.compared ? ', ' + r.compared.split(' vs ')[1] : '')}>Change</th><th rowspan="2">Notes</th></tr>
-          <tr><th class="num">Scans</th><th class="num">Cost</th><th class="num">Scans</th><th class="num">Cost</th></tr></thead>
-        <tbody>${r.rows.map((x) => html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td>
-          ${costCells(x.full, x.counted === 'full')}${costCells(x.incremental, x.counted === 'incremental')}
-          <td class="dim change">${x.change}${x.was && html`<br />was ${x.was}`}</td><td class=${x.warn ? 'warn' : 'dim'}>${x.notes}</td></tr>`)}</tbody>
-      </table>`)}
+      ${r.empty ? html`<p class="dim">${r.empty}</p>` : r.rows.length > 0 ? html`<${CostTable} r=${r} />` : html`<p class="total"><b>${r.total}</b></p>`}
+      ${r.later && html`<p class="dim">${r.later}</p>`}
       ${r.baseError && html`<p class="warn">${r.baseError}</p>`}
       ${r.notEstimated && html`<${NotEstimated} n=${r.notEstimated} />`}
       <p class="dim small">${r.footnote}</p>

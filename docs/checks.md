@@ -95,8 +95,9 @@ The report lists them with the most bytes first:
 - **Scans and cost.**
   BigQuery's estimate, in binary units as it bills (1 GiB is 2³⁰ bytes), priced at $6.25 per TiB.
   `≤` marks an upper bound, which is what BigQuery gives for clustered tables, and `≥` a lower bound; the total carries the mark too.
-- **Incremental tables** count their incremental run, the one that recurs, with the full rebuild beside it.
-- **Change** is against the same action at the commit where your branch left `main`, dry run now, so both sides read today's tables: `+1.20 GiB`, `no change`, or `new`.
+- **Columns.** In xf web and `xf cost`, each action has what it scanned and cost at the merge-base, on the branch, and the change, with a total row under them; a dataset every action is in is named once, over the action column.
+- **Incremental tables** count their incremental run, the one that recurs; the full rebuild is in the notes when it scans another amount (in the TUI, always beside it).
+- **Change** is against the same action at the commit where your branch left `main`, dry run now, so both sides read today's tables: `+1.20 GiB`, `0 B` (`no change` in the TUI), or `new`.
   The branch's own figures show first and the change fills in after, since it needs the merge-base compiled.
 - **⚠ no partition filter** marks a query that reads a partitioned table by name and never names its partition column (`_PARTITIONTIME` or `_PARTITIONDATE` for a table partitioned by ingestion time), so nothing can be pruned.
   It is a check of the compiled SQL's text: a column that is selected but not filtered on passes, and a table read through a view isn't judged, since the view may filter it.

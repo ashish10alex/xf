@@ -497,10 +497,18 @@ type CostView struct {
 	// Later is the total of each run after the first, when an incremental
 	// table's first build is in Total.
 	Later string `json:"later,omitempty"`
-	// Rows are the estimated actions, most bytes first; Empty says why
-	// there are none.
-	Rows  []CostRow `json:"rows"`
-	Empty string    `json:"empty,omitempty"`
+	// Rows are the estimated actions, most bytes first, laid out as the
+	// text report lays them out (cost.Table): TotalRow is their total,
+	// Dataset the one dataset they are all in, BaseLabel and HeadLabel
+	// name the merge-base's and branch's columns, and Footnotes are the
+	// notes too long for a row. Empty says why there are no rows.
+	Rows      []CostRow     `json:"rows"`
+	TotalRow  cost.TableRow `json:"totalRow"`
+	Dataset   string        `json:"dataset,omitempty"`
+	BaseLabel string        `json:"baseLabel,omitempty"`
+	HeadLabel string        `json:"headLabel"`
+	Footnotes []string      `json:"footnotes,omitempty"`
+	Empty     string        `json:"empty,omitempty"`
 	// BaseError is why no change is shown.
 	BaseError string `json:"baseError,omitempty"`
 	// NotEstimated are the actions that couldn't be estimated.
@@ -511,36 +519,13 @@ type CostView struct {
 	Past *CostPast `json:"past,omitempty"`
 }
 
-// CostRow is an estimated action of a CostView.
+// CostRow is an estimated action of a CostView: its row of the table,
+// with the notes short enough to go on it.
 type CostRow struct {
-	Action string `json:"action"`
-	Type   string `json:"type"`
-	// Full and Incremental are what the action's full run and incremental
-	// run scan and cost, "" where it has none or it isn't known; Counted is
-	// the one the total counts, "full" or "incremental".
-	Full        CostFigure   `json:"full"`
-	Incremental CostFigure   `json:"incremental"`
-	Counted     cost.RunKind `json:"counted"`
-	// Change is against the merge-base, in bytes and dollars, and Was what
-	// the action scanned and cost there.
-	Change string `json:"change,omitempty"`
-	Was    string `json:"was,omitempty"`
-	Notes  string `json:"notes,omitempty"`
-	Warn   bool   `json:"warn,omitempty"`
-}
-
-// CostFigure is what a run scans and costs, as shown; both "" when not
-// known.
-type CostFigure struct {
-	Scans string `json:"scans,omitempty"`
-	Cost  string `json:"cost,omitempty"`
-}
-
-func costFigure(e *cost.Estimate) CostFigure {
-	if e == nil {
-		return CostFigure{}
-	}
-	return CostFigure{Scans: cost.Size(*e), Cost: cost.FormatUSD(cost.Options{}.USD(e.Bytes))}
+	cost.TableRow
+	Notes string `json:"notes,omitempty"`
+	// Warn says a query reads a partitioned table without its filter.
+	Warn bool `json:"warn,omitempty"`
 }
 
 // CostPast is a report of past runs (Databricks, ADR 0042) as the cost tab
@@ -585,7 +570,7 @@ func CostReport(r *cost.Report) CostView {
 	// Rows is never nil, so a report whose every action failed to estimate
 	// sends [], not null, which xf web's cost tab could not draw.
 	v := CostView{Compiled: r.Compiled, DryRunIn: r.DryRunIn, FromDev: cost.FromDevLine(r), Total: cost.TotalLine(r, cost.Options{}),
-		Footnote: CostFootnote, Markdown: cost.Markdown(r, cost.Options{}), Rows: []CostRow{},
+		Footnote: CostTableFootnote, Markdown: cost.Markdown(r, cost.Options{}), Rows: []CostRow{},
 		Explain: impact.InlineHTML(cost.Explanation(r))}
 	if c := r.Comparison; c != nil {
 		v.Compared = c.HeadRef + " vs " + c.BaseRef + " @ " + c.MergeBase[:min(len(c.MergeBase), 7)]
@@ -593,25 +578,22 @@ func CostReport(r *cost.Report) CostView {
 	if hint := cost.UnsetHint(r); hint != "" {
 		v.Unset = "⚠ " + strings.ReplaceAll(hint, "`", "")
 	}
+	var estimated []cost.Action
 	for _, a := range r.Actions {
-		if a.Estimate == nil {
-			continue
+		if a.Estimate != nil {
+			estimated = append(estimated, a)
 		}
+	}
+	t := cost.Layout(r, estimated, cost.Options{})
+	v.TotalRow, v.Dataset, v.BaseLabel, v.HeadLabel, v.Footnotes = t.Total, t.Dataset, t.BaseLabel, t.HeadLabel, t.Footnotes
+	for _, tr := range t.Rows {
+		a := tr.Action
 		var notes []string
 		for _, u := range a.Unfiltered {
 			notes = append(notes, "⚠ no partition filter: "+u.Column+" of "+impact.ShortTable(u.Table))
 		}
-		full, incremental, counted := a.Runs()
-		row := CostRow{Action: impact.ShortTable(a.Name), Type: a.Type, Full: costFigure(full), Incremental: costFigure(incremental),
-			Counted: counted, Warn: len(a.Unfiltered) > 0}
-		switch {
-		case a.FirstBuild && a.Incremental != nil:
-			notes = append(notes, "new: its first run is a full build, counted; incremental runs sized on dev's copy")
-		case a.FirstBuild:
-			notes = append(notes, "new: its first run is a full build, counted; incremental runs not known until dev has the table")
-		}
-		if note := cost.LeftOutNote(a); note != "" {
-			notes = append(notes, note)
+		if tr.FullRefresh != "" {
+			notes = append(notes, "full refresh "+tr.FullRefresh)
 		}
 		for _, d := range a.FromDev {
 			note := "reads dev's " + impact.ShortTable(d.Dev)
@@ -620,12 +602,7 @@ func CostReport(r *cost.Report) CostView {
 			}
 			notes = append(notes, note)
 		}
-		row.Change, row.Was = cost.ChangeText(a, cost.Options{}), cost.WasText(a, cost.Options{})
-		if row.Change == "" && r.BasePending && !a.New {
-			row.Change = "…"
-		}
-		row.Notes = strings.Join(notes, " · ")
-		v.Rows = append(v.Rows, row)
+		v.Rows = append(v.Rows, CostRow{TableRow: tr, Notes: strings.Join(notes, " · "), Warn: len(a.Unfiltered) > 0})
 	}
 	v.Later = cost.LaterLine(r, cost.Options{})
 	v.NotEstimated = costSkipped(r)

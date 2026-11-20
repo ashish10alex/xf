@@ -194,6 +194,12 @@ const CostFootnote = `Bytes are BigQuery dry-run estimates of each changed actio
 	`The total counts the figure in bold: a table's run, an incremental table's incremental run, or its full build while its table isn't built yet, whose incremental run is then sized on dev's copy. Change is against the same action at the merge-base. ` +
 	`"No partition filter": the query never names the partition column of a partitioned table it reads.`
 
+// CostTableFootnote explains the figures of xf web's cost table, laid out
+// as the text report's (cost.Table).
+const CostTableFootnote = `Bytes are BigQuery dry-run estimates of each changed action's query; nothing was run. ` +
+	`Each row counts a table's run, an incremental table's incremental run (its full refresh is in the notes when that scans another amount), or its full build while its table isn't built yet, whose incremental run is then sized on dev's copy. Change is against the same action at the merge-base. ` +
+	`"No partition filter": the query never names the partition column of a partitioned table it reads.`
+
 // PastFootnote is a Databricks cost report's (ADR 0042).
 const PastFootnote = `Databricks bills SQL warehouse time, not the bytes a query scans, so nothing is estimated before a run. ` +
 	`Each row is the model's latest build in Query History with the target named, found by dbt's query comment; it ran the model as it was then, not as this branch has it, and nothing was run to show it.`
