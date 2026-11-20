@@ -336,7 +336,7 @@ jobs:
           workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/github/providers/github
           service_account: xf-check@my-project.iam.gserviceaccount.com
 
-      - uses: ashish10alex/xf@v0.0.9
+      - uses: ashish10alex/xf@v0.0.10
         with:
           fail-on: critical  <span class="c"># a dropped column something still reads</span>
           fail-over: 1TB     <span class="c"># the changed actions scan more than 1 TiB</span></code></pre>
@@ -348,11 +348,11 @@ jobs:
                 <button type="button" class="copy" data-copy-active aria-label="Copy the GitLab CI include"><span class="copy-label">Copy</span></button>
               </div>
 <pre class="snip-code"><code>include:
-  - remote: https://raw.githubusercontent.com/ashish10alex/xf/v0.0.9/ci/gitlab/xf-check.yml
+  - remote: https://raw.githubusercontent.com/ashish10alex/xf/v0.0.10/ci/gitlab/xf-check.yml
 
 xf-check:
   variables:
-    XF_VERSION: v0.0.9
+    XF_VERSION: v0.0.10
     XF_FAIL_ON: critical
     XF_FAIL_OVER: 1TB
     <span class="c"># XF_DIR: analytics/dataform</span></code></pre>
@@ -365,7 +365,7 @@ xf-check:
               </div>
 <pre class="snip-code"><code>git fetch origin main                  <span class="c"># xf needs origin/main; it never fetches</span>
 npm i -g @dataform/cli
-curl -fsSL https://github.com/ashish10alex/xf/releases/download/v0.0.9/xf_linux_amd64.tar.gz | tar -xz xf
+curl -fsSL https://github.com/ashish10alex/xf/releases/download/v0.0.10/xf_linux_amd64.tar.gz | tar -xz xf
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json  <span class="c"># or workload identity</span>
 
 set +e
