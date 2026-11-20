@@ -790,15 +790,21 @@ function TermBody({ focused }) {
 // shell, named after the command running in it, else its shell (zsh),
 // and numbered where two share a name (termLabel), × on the one shown,
 // and + for another.
-function termTabs() {
-  const shown = S.logTab === 'term' ? st.activeTerm() : -1;
-  const pick = (id) => (e) => { e.stopPropagation(); S.logTab = 'term'; S.termId = id; st.setFocus('log'); redraw(); };
+// On the Checks page (checks) they are its terminal's.
+function termTabs(checks) {
+  const shown = checks || S.logTab === 'term' ? st.activeTerm() : -1;
+  const pick = (id) => (e) => {
+    e.stopPropagation();
+    S.termId = id;
+    if (checks) S.checksTermFocus = true; else { S.logTab = 'term'; st.setFocus('log'); }
+    redraw();
+  };
   const act = (f) => (e) => { e.stopPropagation(); e.preventDefault(); f(); };
   const ids = S.terms.length ? S.terms : [0];
   const out = [];
   ids.forEach((id, i) => {
     if (i) out.push(' │ ');
-    const on = id === shown || (!S.terms.length && S.logTab === 'term');
+    const on = id === shown || (!S.terms.length && (checks || S.logTab === 'term'));
     out.push(html`<span class=${'tab' + (on ? ' on' : '')} title=${'terminal ' + (i + 1)} onMouseDown=${pick(id)}>${st.termLabel(id)}</span>`);
     if (on && S.terms.length) out.push(html`<span class="tab-btn" title=${'close this terminal (' + st.termCloseLabel + ' in it)'} onMouseDown=${act(() => st.closeTerm(id))}>×</span>`);
   });
@@ -1674,11 +1680,23 @@ function ChecksPage() {
       ${which === 'impact' ? html`<${ImpactReport} o=${o} />` : html`<${CostReport} o=${o} />`}
       <${GitLine} verb="check" />
     </div>
-    <div class="footer set-footer"><${Keys} list=${[['j/k', 'scroll'], ...(tabs.length > 1 ? [['tab', 'Impact/Cost']] : []), ['ctrl+q', 'back']]} />
+    ${S.caps.terminal && S.checksTerm && html`<${ChecksTerm} />`}
+    <div class="footer set-footer"><${Keys} list=${[['j/k', 'scroll'], ...(tabs.length > 1 ? [['tab', 'Impact/Cost']] : []),
+      ...(S.caps.terminal ? [[st.termKeyLabel, 'terminal']] : []), ['ctrl+q', 'back']]} />
       <span class="spacer"></span>${S.flash && html`<span class="warn">${S.flash}</span>`}</div>
     ${S.overlay === 'prod' && S.prod && html`<${ProdPrompt} />`}
     ${S.overlay === 'base' && S.base && html`<${BaseOverlay} />`}
   </div>`;
+}
+
+// ChecksTerm is the Checks page's terminal, under the report while ctrl+`
+// shows it: the project's shells, the log pane's terminal tab's. A click
+// in it gives it the keys; outlined while it has them.
+function ChecksTerm() {
+  const focus = st.takeChecksTermFocus();
+  return html`<${Pane} cls="checks-term" focused=${st.termFocused()}
+      title=${html`${termTabs(true)}<span class="dim"> · ${st.termKeyLabel} hides</span>`}>
+    <div class="checks-term-body" onfocusin=${() => redraw()} onfocusout=${() => redraw()}><${TermBody} focused=${focus} /></div><//>`;
 }
 
 // A table scrolls sideways in its own box, so the page never does.

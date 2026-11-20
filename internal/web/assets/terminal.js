@@ -88,6 +88,8 @@ function open(s) {
   });
   term.onData((d) => { if (!s.replaying) type(s, d); });
   s.host.addEventListener('focusin', () => {
+    // The Checks page's terminal leaves the project view's focus alone.
+    if (S.checks) { if (S.termId !== s.id) { S.termId = s.id; redraw(); } return; }
     if (S.focus !== 'log' || S.termId !== s.id) { S.termId = s.id; setFocus('log'); redraw(); }
   });
   new ResizeObserver(() => fitNow(s)).observe(s.host);

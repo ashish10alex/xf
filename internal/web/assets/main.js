@@ -3,7 +3,7 @@
 import { h, render } from './vendor/preact.mjs';
 import { App, LostNotice } from './view.js';
 import { runScratch, toggleResults, toggleList, flushSave, SC } from './scratch.js';
-import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, isTermCloseKey, closeTerm, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
+import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, isTermCloseKey, closeTerm, toggleTermZoom, termHasKey, termFocused, activeTerm, toggleChecksTerm, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
 import { SET, reopenAfterReload, openSettings, closeSettings } from './settings.js';
 import { T, closeThemePicker } from './theme.js';
 import { track } from './windows.js';
@@ -313,6 +313,14 @@ window.addEventListener('keydown', (e) => {
     redraw();
     return;
   }
+  // On the Checks page they go round its terminal's shells.
+  if (logDir && S.mode === 'project' && S.checks && S.checksTerm && termFocused() && !S.overlay) {
+    e.preventDefault();
+    const next = S.terms[S.terms.indexOf(activeTerm()) + logDir];
+    if (next !== undefined) { S.termId = next; S.checksTermFocus = true; }
+    redraw();
+    return;
+  }
   if (logDir && S.mode === 'project' && S.showLog && S.focus === 'log' && !S.overlay && !S.checks && !SET.open && !SC.open) {
     e.preventDefault();
     nextTab(logDir);
@@ -321,7 +329,7 @@ window.addEventListener('keydown', (e) => {
   }
   // alt+z (and ⌘z on a Mac) zooms the terminal tab from inside it, where
   // z is the shell's.
-  if (isTermZoomKey(e) && t instanceof Element && t.closest('.xterm') && S.mode === 'project' && !S.overlay) {
+  if (isTermZoomKey(e) && t instanceof Element && t.closest('.xterm') && S.mode === 'project' && !S.overlay && !S.checks) {
     e.preventDefault();
     toggleTermZoom();
     redraw();
@@ -335,20 +343,21 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   // ctrl+shift+` opens another shell in the terminal tab, from anywhere
-  // in the project view, inside the terminal too.
+  // in the project view and the Checks page, inside the terminal too.
   if (isNewTermKey(e)) {
-    if (S.mode === 'project' && S.caps.terminal && !S.overlay && !S.checks && !SET.open && !SC.open) {
+    if (S.mode === 'project' && S.caps.terminal && !S.overlay && !SET.open && !SC.open) {
       e.preventDefault();
       newTerm();
     }
     return;
   }
   // ctrl+` (and ⌘` on a Mac that leaves it to the page) shows the terminal tab with the keys, or hides the pane
-  // when the terminal has them, from anywhere in the project view.
+  // when the terminal has them, from anywhere in the project view; on the
+  // Checks page, its own terminal under the report.
   if (isTermKey(e)) {
-    if (S.mode === 'project' && S.caps.terminal && !S.overlay && !S.checks && !SET.open && !SC.open) {
+    if (S.mode === 'project' && S.caps.terminal && !S.overlay && !SET.open && !SC.open) {
       e.preventDefault();
-      toggleTerm();
+      if (S.checks) toggleChecksTerm(); else toggleTerm();
       redraw();
     }
     return;
@@ -362,9 +371,9 @@ window.addEventListener('keydown', (e) => {
       if (letter(e) === 'j') toggleResults(); else toggleList();
       return;
     }
-    if (letter(e) === 'j' && S.mode === 'project' && !S.overlay && !S.checks && !SET.open) {
+    if (letter(e) === 'j' && S.mode === 'project' && !S.overlay && !SET.open) {
       e.preventDefault();
-      togglePanel();
+      if (S.checks) { if (S.caps.terminal) toggleChecksTerm(true); } else togglePanel();
       redraw();
       return;
     }

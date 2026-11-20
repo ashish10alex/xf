@@ -86,7 +86,8 @@ export async function newTerm() {
     const v = await post('/api/term/new');
     setTerms(v);
     S.termId = v.id;
-    showTerm();
+    // On the Checks page the shells show under the report.
+    if (S.checks) { S.checksTerm = true; S.checksTermFocus = true; } else showTerm();
   } catch (e) { say('terminal: ' + e.message); }
   redraw();
 }
@@ -107,7 +108,8 @@ export async function closeTerm(id = activeTerm()) {
   } catch (e) { say('terminal: ' + e.message); redraw(); return; }
   if (shown && v && v.ids && v.ids.length) S.termId = v.ids[Math.max(i - 1, 0)];
   setTerms(v);
-  if (last && S.logTab === 'term' && S.showLog) togglePanel();
+  if (S.checks) { if (last) S.checksTerm = false; else S.checksTermFocus = true; }
+  else if (last && S.logTab === 'term' && S.showLog) togglePanel();
   else if (S.logTab === 'term' && S.showLog) setFocus('log');
   say('closed ' + (label === 'terminal' ? 'the terminal' : label));
   redraw();

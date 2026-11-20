@@ -4,7 +4,7 @@
 import { openBase } from './branches.js';
 import { showErrorsTab } from './errors-tab.js';
 import { joinOptions } from './prod-options.js';
-import { S, compile, copy, get, hasErrors, hooks, launch, post, redraw, refreshView, running, say, toggles } from './state.js';
+import { S, compile, copy, get, hasErrors, hooks, launch, post, redraw, refreshView, running, say, termFocused, toggles } from './state.js';
 
 // R: the Changed Actions.
 export async function openChanged() {
@@ -219,9 +219,33 @@ export async function openCheck(which, refresh) {
 // closeChecks leaves the Checks page for the project as it was, a check
 // still running carrying on; pane 1 gets its editor's keys back.
 export function closeChecks() {
+  if (termFocused()) document.activeElement.blur();
   S.checks = null;
   if (S.overlay === 'prod') S.overlay = null;
   if (S.focus === 'source' && hooks.sourceReturn) queueMicrotask(hooks.sourceReturn);
+}
+
+// toggleChecksTerm is ctrl+` on the Checks page: it shows the project's
+// shells under the report, with the keys, as the log pane's terminal tab
+// does in the project view; again, while the terminal has the keys, it
+// hides them. ⌘j (panel) hides them whether they have the keys or not.
+// checksTermFocus gives the terminal the keys at its next draw.
+export function toggleChecksTerm(panel) {
+  if (S.checksTerm && (panel || termFocused())) {
+    if (termFocused()) document.activeElement.blur();
+    S.checksTerm = false;
+    return;
+  }
+  S.checksTerm = true;
+  S.checksTermFocus = true;
+}
+
+// takeChecksTermFocus says the Checks page's terminal takes the keys
+// this draw, once.
+export function takeChecksTermFocus() {
+  const f = S.checksTermFocus;
+  S.checksTermFocus = false;
+  return !!f;
 }
 
 // checksKey is the Checks page's key k, its buttons' too.

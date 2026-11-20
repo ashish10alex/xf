@@ -82,6 +82,9 @@ export const S = {
   // checks is the Checks page's tab while the page shows, impact or cost:
   // I and C fill the window, as settings does (ADR 0010).
   checks: null,
+  // checksTerm says the Checks page shows the terminal under its report;
+  // checksTermFocus gives it the keys at the next draw (checks.js).
+  checksTerm: false, checksTermFocus: false,
   // inspector is the dependency inspector's state (inspector.js) while
   // its page shows (ADR 0033), else null.
   inspector: null,
@@ -1505,7 +1508,7 @@ export function termHasKey(e) {
 }
 
 // termFocused says the terminal has the keys.
-export const termFocused = () => typeof document !== 'undefined' && document.activeElement instanceof Element && !!document.activeElement.closest('.xterm');
+export const termFocused = () => typeof document !== 'undefined' && typeof Element !== 'undefined' && document.activeElement instanceof Element && !!document.activeElement.closest('.xterm');
 
 function focusLog() {
   if (S.showLog) setFocus('log');
@@ -2869,7 +2872,7 @@ export { vim, toggleColumns, toggleIncremental, toggleFlag, startRun, toggleLine
 // What other modules take from here, now kept in modules of their own.
 export { cancelWorktreeName, closeBase, fetchBases, fetchBranches, moveBase, moveBranches, nameWorktree, newBranchName, openBase, openBranches, openNewWorktree, openWorktree, pickBase, setBaseQuery, setBranchesQuery, setWorktreeName, switchBranch, worktreeFolder } from './branches.js';
 export { answerDefer, deferGroups, deferOn, toggleDefer } from './checks.js';
-export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, toggleTag } from './checks.js';
+export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, takeChecksTermFocus, toggleChecksTerm, toggleTag } from './checks.js';
 export { actOnErrorRow, errorGroups, errorKinds, errorRows, errorsTabShown, pickSQLTab, runFix, runLogFix, showErrorsTab, sqlTabOn } from './errors-tab.js';
 export { activeTerm, termLabel, clearHistory, closeTerm, closeWatch, JOB_COLS, loadTerms, newTerm, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
 export { addFound, closeScratchPicker, leaveFind, openScratchPicker, openScratchWarehouse, pickProject, pickScratchWarehouse, pickerKey, setPickerQuery, toggleFound } from './picker.js';
