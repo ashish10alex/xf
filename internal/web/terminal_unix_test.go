@@ -3,6 +3,8 @@
 package web
 
 import (
+	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -147,5 +149,67 @@ func TestTerminalStreamLeadsWithTheScreenEvenEmpty(t *testing.T) {
 	op, p := ws.next(t)
 	if op != wsBinary || len(p) != 0 {
 		t.Fatalf("first frame is op %d with %q, want an empty binary one: the shell had shown nothing", op, p)
+	}
+}
+
+// A project's terminal tab holds as many shells as the page asks for,
+// each its own: keys typed in one reach only it, and closing one stops
+// it and drops it from the list. Closing the last leaves a fresh one.
+func TestTerminalTabsAreShellsOfTheirOwn(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	s, ts, c := newTestProject(t, &Project{Deps: frontend.Deps{Engine: newFakeEngine(testGraph()), Root: t.TempDir()}})
+	p := s.only()
+	defer p.close()
+
+	var v termsView
+	getJSON(t, c, ts.URL+"/api/term/list", &v)
+	if len(v.IDs) != 1 {
+		t.Fatalf("a new project lists shells %v, want one", v.IDs)
+	}
+	first := v.IDs[0]
+	postJSON(t, c, ts.URL+"/api/term/new", struct{}{}, &v)
+	if len(v.IDs) != 2 || v.ID != v.IDs[1] || v.ID == first {
+		t.Fatalf("new answered %+v, want a second shell, last", v)
+	}
+	second := v.ID
+
+	_, ch1, err := p.terminalByID(first).subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ch2, err := p.terminalByID(second).subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	postJSON(t, c, ts.URL+"/api/term/input", map[string]any{"term": second, "data": "echo two-$((1+1))\r"}, nil)
+	postJSON(t, c, ts.URL+"/api/term/input", map[string]any{"term": first, "data": "echo one-$((0+1))\r"}, nil)
+	var seen1, seen2 strings.Builder
+	waitForTerm(t, ch2, &seen2, "two-2")
+	waitForTerm(t, ch1, &seen1, "one-1")
+	if strings.Contains(seen1.String(), "two-2") || strings.Contains(seen2.String(), "one-1") {
+		t.Fatalf("a shell showed the other's output:\nfirst %q\nsecond %q", seen1.String(), seen2.String())
+	}
+
+	postJSON(t, c, ts.URL+"/api/term/close", map[string]int{"term": second}, &v)
+	if len(v.IDs) != 1 || v.IDs[0] != first {
+		t.Fatalf("after closing the second, shells %v, want [%d]", v.IDs, first)
+	}
+	if p.terminalByID(second) != nil {
+		t.Fatal("the closed shell is still found")
+	}
+	for range ch2 { // closing it lets its pages go
+	}
+	res, err := c.Post(ts.URL+"/api/term/input", "application/json", strings.NewReader(`{"term":`+strconv.Itoa(second)+`,"data":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("keys for a closed shell: %s, want 404", res.Status)
+	}
+
+	postJSON(t, c, ts.URL+"/api/term/close", map[string]int{"term": first}, &v)
+	if len(v.IDs) != 1 || v.IDs[0] == first || v.IDs[0] == second {
+		t.Fatalf("after closing the last, shells %v, want a fresh one", v.IDs)
 	}
 }

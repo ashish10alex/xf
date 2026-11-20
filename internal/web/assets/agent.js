@@ -86,6 +86,7 @@ const risky = [
   [/discard|delete|trash|^Buffers: remove|^Revert Change|undo the last replace/i, 'loses changes or files'],
   [/^Git: (commit|amend|push|pull|sync|stash|abort|continue|create)/, 'changes the repository or its remote'],
   [/^Close (project|scratch|Project)/, 'closes the project'],
+  [/^Terminal: close/, 'stops a shell and what runs in it'],
 ];
 export const danger = (title) => (risky.find(([re]) => re.test(title)) || [, ''])[1];
 

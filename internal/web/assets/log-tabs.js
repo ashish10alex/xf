@@ -1,7 +1,7 @@
-// The log pane's tabs: the run's log, its jobs, the kept runs and the
-// preview of an action's rows (preview.js).
+// The log pane's tabs: the run's log, its jobs, the kept runs, the
+// preview of an action's rows (preview.js) and the terminal's shells.
 
-import { S, copy, get, hooks, openLink, post, redraw, say } from './state.js';
+import { S, copy, get, hooks, openLink, post, redraw, say, setFocus, showTerm, togglePanel } from './state.js';
 
 export const hasTabs = () => S.caps.history;
 
@@ -18,17 +18,79 @@ export function logTabs() {
   return tabs;
 }
 
-// nextTab shows the log pane's next tab (dir -1: the one before). Leaving
-// the terminal takes the keys out of it, so the log pane's keys work again;
-// the terminal takes them when it shows (TermBody).
+// nextTab shows the log pane's next tab (dir -1: the one before), each
+// of the terminal's shells being a tab. Leaving the terminal takes the
+// keys out of it, so the log pane's keys work again; the terminal takes
+// them when it shows (TermBody).
 export function nextTab(dir = 1) {
   const tabs = logTabs();
   if (tabs.length < 2) return false;
-  if (S.logTab === 'term' && typeof document !== 'undefined' && document.activeElement instanceof HTMLElement &&
-    document.activeElement.closest('.xterm')) document.activeElement.blur();
+  if (S.logTab === 'term') {
+    const i = S.terms.indexOf(activeTerm()) + dir;
+    if (i >= 0 && i < S.terms.length) { S.termId = S.terms[i]; return true; }
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement &&
+      document.activeElement.closest('.xterm')) document.activeElement.blur();
+  }
   S.logTab = tabs[(tabs.indexOf(S.logTab) + dir + tabs.length) % tabs.length];
+  if (S.logTab === 'term' && S.terms.length) S.termId = dir > 0 ? S.terms[0] : S.terms[S.terms.length - 1];
   if (S.logTab === 'history') get('/api/history').then((h) => { S.history = h; redraw(); }).catch(() => {});
   return true;
+}
+
+// ---- the terminal's shells ----
+
+// activeTerm is the id of the shell the terminal tab shows: the one
+// picked while it is still open, or else the first; 0 (the server's
+// first) before the list has come.
+export function activeTerm() {
+  return S.terms.includes(S.termId) ? S.termId : (S.terms[0] || 0);
+}
+
+let listing = null;
+
+// loadTerms asks for the project's shells, once at a time; the tab waits
+// for them, so a shell is never shown as id 0 and again by its own id.
+export function loadTerms() {
+  if (!listing) {
+    listing = get('/api/term/list').then(setTerms).finally(() => { listing = null; });
+  }
+  return listing;
+}
+
+// setTerms takes the shells' ids, from the list or the "terms" event,
+// another page's new or closed shells among them.
+export function setTerms(v) {
+  S.terms = (v && v.ids) || [];
+  S.termId = activeTerm();
+  if (hooks.termsChanged) hooks.termsChanged();
+}
+
+// newTerm opens another shell, shows it and gives it the keys.
+export async function newTerm() {
+  if (!S.caps.terminal) return;
+  try {
+    const v = await post('/api/term/new');
+    setTerms(v);
+    S.termId = v.id;
+    showTerm();
+  } catch (e) { say('terminal: ' + e.message); }
+  redraw();
+}
+
+// closeTerm stops shell id (the one shown) and drops its tab, showing
+// the one beside it. Closing the last one hides the panel, as VS Code
+// does; the terminal then shows a new shell.
+export async function closeTerm(id = activeTerm()) {
+  const i = S.terms.indexOf(id);
+  const last = S.terms.length <= 1;
+  try {
+    setTerms(await post('/api/term/close', { term: id }));
+  } catch (e) { say('terminal: ' + e.message); redraw(); return; }
+  if (S.termId === id || !S.terms.includes(S.termId)) S.termId = S.terms[Math.max(i - 1, 0)] || 0;
+  if (last && S.logTab === 'term' && S.showLog) togglePanel();
+  else if (S.logTab === 'term' && S.showLog) setFocus('log');
+  say(last ? 'closed the terminal' : 'closed terminal ' + (i + 1));
+  redraw();
 }
 
 // ---- watching a workflow xf did not start ----

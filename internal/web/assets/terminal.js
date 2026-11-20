@@ -1,28 +1,47 @@
-// The log pane's terminal tab: xterm.js on the project's shell,
-// which the server owns. Output comes over a WebSocket of its own; keys
-// and the size go as POSTs. xterm loads the first time the tab shows.
+// The log pane's terminal tab: an xterm.js for each of the project's
+// shells, which the server owns. Each shell's output comes over a
+// WebSocket of its own; keys and the size go as POSTs, naming the shell.
+// xterm loads the first time the tab shows.
 
-import { S, post, redraw, say, setFocus, termReserved, termFocused, onMac } from './state.js';
+import { S, hooks, post, redraw, say, setFocus, termReserved, onMac } from './state.js';
+import { activeTerm } from './log-tabs.js';
 
-let term = null, fit = null, host = null, loading = null;
-let ws = null, wsKey = '', retry = null;
-let queued = '', sending = false;
-let sized = '';
-// replaying is set while xterm writes the screen so far. A program's
-// queries in it (a TUI's mode or colour query) were answered when they
-// were new: answering again would type the replies at the shell's prompt.
-let replaying = false;
+let loading = null, Terminal = null, FitAddon = null;
 
-// mountTerm puts the terminal into el, the tab's box, loading xterm the
-// first time; focused gives it the keys.
-export function mountTerm(el, focused) {
+// sessions are the shells this page has shown or streamed, by id: the
+// stream and keys of each, and its xterm once xterm has loaded.
+const sessions = new Map();
+
+function session(id) {
+  let s = sessions.get(id);
+  if (!s) {
+    s = {
+      id, term: null, fit: null, host: null,
+      ws: null, wsKey: '', retry: null,
+      queued: '', sending: false, sized: '',
+      // replaying is set while xterm writes the screen so far. A
+      // program's queries in it (a TUI's mode or colour query) were
+      // answered when they were new: answering again would type the
+      // replies at the shell's prompt.
+      replaying: false,
+    };
+    sessions.set(id, s);
+  }
+  return s;
+}
+
+// mountTerm puts shell id's terminal into el, the tab's box, loading
+// xterm the first time; focused gives it the keys.
+export function mountTerm(el, focused, id = activeTerm()) {
   if (!loading) loading = load();
   loading.then(() => {
     if (!el.isConnected) return;
-    if (host.parentNode !== el) el.appendChild(host);
-    keepStream();
-    fitNow();
-    if (focused && !termFocused()) term.focus();
+    const s = session(id);
+    if (!s.term) open(s);
+    if (s.host.parentNode !== el) el.replaceChildren(s.host);
+    keepStream(id);
+    fitNow(s);
+    if (focused && !s.host.contains(document.activeElement)) s.term.focus();
   }).catch((e) => say('could not load the terminal: ' + e.message));
 }
 
@@ -31,20 +50,26 @@ async function load() {
   css.rel = 'stylesheet';
   css.href = 'vendor/xterm.css';
   document.head.appendChild(css);
-  const { Terminal, FitAddon } = await import('./vendor/xterm.mjs');
-  term = new Terminal({
+  ({ Terminal, FitAddon } = await import('./vendor/xterm.mjs'));
+  // Each terminal takes on each theme shown: one picked, one the picker
+  // previews, or auto's other one.
+  new MutationObserver(() => { for (const s of sessions.values()) if (s.term) s.term.options.theme = termTheme(); })
+    .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  hooks.termsChanged = prune;
+}
+
+// open makes s its xterm.
+function open(s) {
+  const term = new Terminal({
     fontFamily: cssVar('--mono') || 'monospace', fontSize: 13, cursorBlink: true, scrollback: 5000,
     macOptionIsMeta: true, theme: termTheme(),
   });
-  // The terminal takes on each theme shown: one picked, one the picker
-  // previews, or auto's other one.
-  new MutationObserver(() => { term.options.theme = termTheme(); })
-    .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  fit = new FitAddon();
-  term.loadAddon(fit);
-  host = document.createElement('div');
-  host.className = 'term-screen';
-  term.open(host);
+  s.term = term;
+  s.fit = new FitAddon();
+  term.loadAddon(s.fit);
+  s.host = document.createElement('div');
+  s.host.className = 'term-screen';
+  term.open(s.host);
   // xterm's hidden textarea takes the keys. Password managers (iCloud
   // Passwords' "Enable Password AutoFill" bubble, 1Password, LastPass,
   // Bitwarden) look for a field to fill: tell them this is not one.
@@ -56,14 +81,27 @@ async function load() {
     // ⌘⌫ clears the line as in a Mac's terminals: xterm ignores ⌘ and
     // would send one backspace, so send ctrl+u instead.
     if (isCmdBackspace(e)) {
-      if (e.type === 'keydown') { e.preventDefault(); type('\x15'); }
+      if (e.type === 'keydown') { e.preventDefault(); type(s, '\x15'); }
       return false;
     }
     return true;
   });
-  term.onData((d) => { if (!replaying) type(d); });
-  host.addEventListener('focusin', () => { if (S.focus !== 'log') { setFocus('log'); redraw(); } });
-  new ResizeObserver(() => fitNow()).observe(host);
+  term.onData((d) => { if (!s.replaying) type(s, d); });
+  s.host.addEventListener('focusin', () => {
+    if (S.focus !== 'log' || S.termId !== s.id) { S.termId = s.id; setFocus('log'); redraw(); }
+  });
+  new ResizeObserver(() => fitNow(s)).observe(s.host);
+}
+
+// prune lets go of the shells that were closed, here or in another page.
+function prune() {
+  for (const [id, s] of sessions) {
+    if (S.terms.includes(id)) continue;
+    sessions.delete(id);
+    clearTimeout(s.retry);
+    if (s.ws) { s.ws.onclose = null; s.ws.close(); }
+    if (s.term) { s.host.remove(); s.term.dispose(); }
+  }
 }
 
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || undefined;
@@ -78,67 +116,74 @@ function termTheme() {
     red: cssVar('--red'), green: cssVar('--green'), yellow: cssVar('--amber'), blue: cssVar('--blue'), magenta: cssVar('--purple') };
 }
 
-const isCmdBackspace =(e) => onMac && e.metaKey && e.key === 'Backspace' && !e.ctrlKey && !e.altKey && !e.shiftKey;
+const isCmdBackspace = (e) => onMac && e.metaKey && e.key === 'Backspace' && !e.ctrlKey && !e.altKey && !e.shiftKey;
 
-function fitNow() {
+function fitNow(s) {
+  const { host, term } = s;
   if (!host || !host.isConnected || !host.offsetWidth || !host.offsetHeight) return;
-  try { fit.fit(); } catch { return; }
+  try { s.fit.fit(); } catch { return; }
   const size = term.rows + 'x' + term.cols;
-  if (size === sized) return;
-  sized = size;
-  post('/api/term/resize', { rows: term.rows, cols: term.cols }).catch(() => {});
+  if (size === s.sized) return;
+  s.sized = size;
+  post('/api/term/resize', { term: s.id, rows: term.rows, cols: term.cols }).catch(() => {});
 }
 
 // type sends what was typed, in order: keys typed while a POST is out go
 // together in the next.
-function type(d) {
-  queued += d;
-  if (sending) return;
-  sending = true;
+function type(s, d) {
+  s.queued += d;
+  if (s.sending) return;
+  s.sending = true;
   (async () => {
-    while (queued) {
-      const data = queued;
-      queued = '';
-      try { await post('/api/term/input', { data }); } catch (e) { say('terminal: ' + e.message); }
+    while (s.queued) {
+      const data = s.queued;
+      s.queued = '';
+      try { await post('/api/term/input', { term: s.id, data }); } catch (e) { say('terminal: ' + e.message); }
     }
-    sending = false;
+    s.sending = false;
   })();
 }
 
-// keepStream opens the output stream unless one is open for this page's
-// project. A stream that closed while the tab was hidden (xf web
+// keepStream opens shell id's output stream unless one is open for this
+// page's project. A stream that closed while the tab was hidden (xf web
 // restarted, say) wasn't retried, so showing the tab opens it again:
 // without it, keys reach the shell and nothing comes back.
-export function keepStream() {
-  if (!ws || wsKey !== S.key) connect();
+export function keepStream(id = activeTerm()) {
+  const s = session(id);
+  if (!s.ws || s.wsKey !== S.key) connect(s);
 }
 
-// connect opens the output stream for this page's project. The server
+// connect opens s's output stream for this page's project. The server
 // sends the screen so far first, so a reconnect starts from a clean one.
-function connect() {
-  clearTimeout(retry);
-  if (ws) { ws.onclose = null; ws.close(); }
-  wsKey = S.key;
-  sized = '';
+function connect(s) {
+  clearTimeout(s.retry);
+  if (s.ws) { s.ws.onclose = null; s.ws.close(); }
+  s.wsKey = S.key;
+  s.sized = '';
   const q = new URLSearchParams();
   if (S.key) q.set('project', S.key);
+  q.set('term', String(s.id));
   const sock = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/term/stream?' + q);
   sock.binaryType = 'arraybuffer';
-  ws = sock;
+  s.ws = sock;
   let first = true;
   sock.onmessage = (m) => {
+    if (!s.term) return;
     const data = new Uint8Array(m.data);
-    if (!first) { term.write(data); return; }
+    if (!first) { s.term.write(data); return; }
     first = false;
-    term.reset();
-    replaying = true;
-    term.write(data, () => { replaying = false; });
+    s.term.reset();
+    s.replaying = true;
+    s.term.write(data, () => { s.replaying = false; });
   };
-  sock.onopen = () => fitNow();
+  sock.onopen = () => fitNow(s);
   sock.onclose = () => {
-    if (ws !== sock) return;
-    ws = null;
-    // Back after a second while the project is still this page's.
-    retry = setTimeout(() => { if (S.mode === 'project' && wsKey === S.key && host && host.isConnected) connect(); }, 1000);
+    if (s.ws !== sock) return;
+    s.ws = null;
+    // Back after a second while the project is still this page's and
+    // the shell still open.
+    s.retry = setTimeout(() => {
+      if (S.mode === 'project' && s.wsKey === S.key && sessions.get(s.id) === s && s.host && s.host.isConnected) connect(s);
+    }, 1000);
   };
 }

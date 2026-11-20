@@ -10,7 +10,7 @@ import { part, setWorkspaceRoot, saveWorkspace, workspaceOf, restoreParts, unsav
 import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranches, openNewWorktree, readBranch } from './branches.js';
 import { answerProd, askDefer, changedKey, checkKey, deferAskKey, deferOn, onProgress, openChanged, openCost, openImpact, openTags, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleDefer, toggleTag } from './checks.js';
 import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showErrorsTab, sqlTabOn } from './errors-tab.js';
-import { clearHistory, closeWatch, hasTabs, jobsTableKey, logKey, logTabs, nextTab, openKept, openURL, openWatch } from './log-tabs.js';
+import { clearHistory, closeTerm, closeWatch, hasTabs, jobsTableKey, loadTerms, logKey, logTabs, newTerm, nextTab, openKept, openURL, openWatch, setTerms } from './log-tabs.js';
 import { askRemoveWorktreeHere, closeScratchPicker, cycleProject, nextOpenProject, openByName, openScratchPicker, openScratchWarehouse, pickScratchWarehouse, pickerKey, readOpenWorktrees, setPickerQuery, stopFind, switchProject } from './picker.js';
 import { columnsKey, searchSQLFromPalette, sqlKey } from './sql-pane.js';
 import { unsavedIn, noteVimMode } from './vim-mode.js';
@@ -67,7 +67,10 @@ export const S = {
   flash: '',
   run: null,        // the server's run, with its whole log
   logFollow: true,
-  logTab: 'log',    // log, jobs, history
+  logTab: 'log',    // log, jobs, history, preview, term
+  // terms are the ids of the project's shells, in the terminal's tabs'
+  // order (empty until asked for); termId is the one it shows.
+  terms: [], termId: 0,
   jobsCursor: 0, historyCursor: 0,
   // The jobs table's search and sort: / types the query, S or a column's
   // header sorts (col '' is the run's own order).
@@ -585,6 +588,8 @@ function startProject(p, ws) {
   if (hooks.vimMode) hooks.vimMode(p.vimMode);
   if (hooks.wrapLines) hooks.wrapLines(p.wrapLines);
   S.caps = p.caps;
+  S.terms = [];
+  S.termId = 0;
   S.flags.api = p.caps.apiDefault;
   S.following = p.caps.follow;
   S.recent = p.resume.recent || [];
@@ -691,6 +696,7 @@ function openEvents() {
   on('editor', onEditor);
   on('files', () => hooks.filesChanged && hooks.filesChanged());
   on('scm', (ev) => hooks.scmEvent && hooks.scmEvent(ev));
+  on('terms', (v) => { if (S.mode === 'project') setTerms(v); });
   on('forge', (v) => S.mode === 'project' && hooks.forgeEvent && hooks.forgeEvent(v));
   on('python', (ev) => hooks.pythonEvent && hooks.pythonEvent(ev));
   on('progress', onProgress);
@@ -747,6 +753,8 @@ async function resync() {
     setState(b.project.state, false);
     readBranch();
     if (hooks.forgeStart) hooks.forgeStart();
+    // Shells opened or closed while the stream was down.
+    if (S.caps.terminal && S.terms.length) loadTerms().catch(() => {});
     redraw();
   } catch { /* the stream retries */ }
 }
@@ -1427,10 +1435,10 @@ export function showTerm() {
 
 // termReserved says xf keeps a key while the terminal has the keys:
 // ctrl+0…3 (go to a pane), ctrl+j and ⌘j (the panel), ctrl+` and ⌘`
-// (the terminal), alt+z and ⌘z
-// (zoom it), ⌥⌘←/→ (the log pane's next tab) and the palette.
+// (the terminal), ctrl+shift+` (a new one), alt+z and ⌘z (zoom it),
+// ⌥⌘←/→ (the log pane's next tab) and the palette.
 export function termReserved(e) {
-  if (isTermZoomKey(e) || logTabKey(e)) return true;
+  if (isTermZoomKey(e) || logTabKey(e) || isNewTermKey(e)) return true;
   if (e.altKey) return false;
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (e.ctrlKey && !e.metaKey && !e.shiftKey && k.length === 1 && '0123'.includes(k)) return true;
@@ -1444,6 +1452,10 @@ export function termReserved(e) {
 // has it too.
 export const isTermKey = (e) => e.code === 'Backquote' && !e.altKey && !e.shiftKey &&
   (e.ctrlKey ? !e.metaKey : onMac && e.metaKey);
+
+// isNewTermKey is ctrl+shift+`, as VS Code's: another shell, in a tab of
+// its own. Read by code, since shift makes the key ~ on most keyboards.
+export const isNewTermKey = (e) => e.code === 'Backquote' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
 
 // termZoomed says the terminal tab fills the window.
 const termZoomed = () => S.showLog && S.logTab === 'term' && S.focus === 'log' && S.zoomed;
@@ -2100,6 +2112,8 @@ function commands() {
   if (S.caps.terminal) {
     toggle('View: terminal', S.showLog && S.logTab === 'term', termKeyLabel, toggleTerm);
     toggle('View: zoom terminal', termZoomed(), onMac ? '⌘z' : 'alt+z', toggleTermZoom);
+    add('Terminal: new terminal', 'ctrl+shift+`', newTerm);
+    if (S.showLog && S.logTab === 'term') add('Terminal: close terminal', '', () => closeTerm());
   }
   if (hooks.toggleTree) toggle('View: file tree', hooks.treeShown() && !hooks.scmShown() && !hooks.projectsShown(), onMac ? '⌘b' : 'ctrl+b', hooks.toggleTree);
   if (hooks.revealActive) add('View: show the open file in the file tree', revealKey, hooks.revealActive);
@@ -2846,6 +2860,6 @@ export { cancelWorktreeName, closeBase, fetchBases, fetchBranches, moveBase, mov
 export { answerDefer, deferGroups, deferOn, toggleDefer } from './checks.js';
 export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, toggleTag } from './checks.js';
 export { actOnErrorRow, errorGroups, errorKinds, errorRows, errorsTabShown, pickSQLTab, runFix, runLogFix, showErrorsTab, sqlTabOn } from './errors-tab.js';
-export { clearHistory, closeWatch, JOB_COLS, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
+export { activeTerm, clearHistory, closeTerm, closeWatch, JOB_COLS, loadTerms, newTerm, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
 export { addFound, closeScratchPicker, leaveFind, openScratchPicker, openScratchWarehouse, pickProject, pickScratchWarehouse, pickerKey, setPickerQuery, toggleFound } from './picker.js';
 export { endSQLSearch, setSQLSearchQuery } from './sql-pane.js';

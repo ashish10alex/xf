@@ -95,14 +95,15 @@ func shellQuote(s string) string {
 }
 
 // termFix is POST /api/term/fix: the errors tab's fix, or with run the
-// log's, run in the terminal tab.
+// log's, run in the terminal tab's shell term (0: the first).
 func (p *projectState) termFix(w http.ResponseWriter, r *http.Request) {
 	if !termSupported {
 		http.Error(w, "the terminal tab needs macOS or Linux", http.StatusNotFound)
 		return
 	}
 	var req struct {
-		Run bool `json:"run"`
+		Run  bool `json:"run"`
+		Term int  `json:"term"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -129,7 +130,11 @@ func (p *projectState) termFix(w http.ResponseWriter, r *http.Request) {
 		p.coreFix = &coreFix{before: coreStamp(p.deps.Root)}
 		p.mu.Unlock()
 	}
-	if err := p.terminal().run(f.Command); err != nil {
+	t := p.terminalByID(req.Term)
+	if t == nil {
+		t = p.terminal() // the shell the page showed was closed
+	}
+	if err := t.run(f.Command); err != nil {
 		writeError(w, err)
 		return
 	}

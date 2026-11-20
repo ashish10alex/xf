@@ -1,10 +1,12 @@
 package web
 
-// The terminal tab: one shell per open project, on a
-// pseudo-terminal the server owns, so it outlives a reload. Its output
-// reaches pages over a WebSocket of its own (binary frames, not the event
-// stream's JSON), led by the last termRingSize bytes so a page that
-// connects late sees the screen as it is. Keys and sizes come as POSTs.
+// The terminal tab: an open project's shells, each on a pseudo-terminal
+// the server owns, so it outlives a reload. A project has one until a
+// page asks for another; the tab shows each as a tab of its own. A
+// shell's output reaches pages over a WebSocket of its own (binary
+// frames, not the event stream's JSON), led by the last termRingSize
+// bytes so a page that connects late sees the screen as it is. Keys and
+// sizes come as POSTs, each naming its shell by id; id 0 is the first.
 
 import (
 	"cmp"
@@ -13,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -24,8 +27,10 @@ const termRingSize = 128 << 10
 // termExited is written to the terminal when its shell ends.
 const termExited = "\r\n\x1b[2m[process exited · press enter to restart]\x1b[0m\r\n"
 
-// terminal is a project's shell. mu guards every field but the first.
+// terminal is one of a project's shells. mu guards every field but the
+// first four.
 type terminal struct {
+	id  int
 	dir string
 	// env is added to the shell's environment (Config.TermEnv); nil adds
 	// nothing.
@@ -236,41 +241,149 @@ func (t *terminal) close() {
 	}
 }
 
-// terminal is p's, made the first time it is asked for.
+// terminal is p's first shell, made the first time one is asked for.
 func (p *projectState) terminal() *terminal {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.term == nil {
-		idle := p.runEnded
-		p.term = newTerminal(p.deps.Root, p.termEnv, func() {
-			// Back at the prompt, an install may have just finished.
-			p.recompileOnceFound()
-			p.recompileAfterFix()
-			if idle != nil {
-				idle()
-			}
-		})
+	if len(p.terms) == 0 {
+		p.addTerminalLocked()
 	}
-	return p.term
+	return p.terms[0]
 }
 
-// termCommand is the command running in p's terminal, "" for none.
+// terminalByID is p's shell with id, nil for none; id 0 is its first,
+// made the first time one is asked for.
+func (p *projectState) terminalByID(id int) *terminal {
+	if id == 0 {
+		return p.terminal()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, t := range p.terms {
+		if t.id == id {
+			return t
+		}
+	}
+	return nil
+}
+
+// addTerminalLocked makes p a new shell, last among its tabs. Its shell
+// starts when a page first shows it.
+func (p *projectState) addTerminalLocked() *terminal {
+	idle := p.runEnded
+	p.termNext++
+	t := newTerminal(p.deps.Root, p.termEnv, func() {
+		// Back at the prompt, an install may have just finished.
+		p.recompileOnceFound()
+		p.recompileAfterFix()
+		if idle != nil {
+			idle()
+		}
+	})
+	t.id = p.termNext
+	p.terms = append(p.terms, t)
+	return t
+}
+
+// errNoTerm answers a request for a shell that was closed.
+var errNoTerm = errors.New("that terminal was closed")
+
+// termIDs are p's shells' ids, in their tabs' order, making the first
+// when there is none.
+func (p *projectState) termIDs() []int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.terms) == 0 {
+		p.addTerminalLocked()
+	}
+	ids := make([]int, len(p.terms))
+	for i, t := range p.terms {
+		ids[i] = t.id
+	}
+	return ids
+}
+
+// termsView is the "terms" event and the answer of /api/term/list, /new
+// and /close: the shells' ids, in their tabs' order.
+type termsView struct {
+	IDs []int `json:"ids"`
+	// ID is the shell /api/term/new made, 0 otherwise.
+	ID int `json:"id,omitempty"`
+}
+
+// sendTerms tells every page p's shells, as they are now.
+func (p *projectState) sendTerms() termsView {
+	v := termsView{IDs: p.termIDs()}
+	p.hub.send("terms", v)
+	return v
+}
+
+// termCommand is the command running in one of p's shells, "" for none.
 func (p *projectState) termCommand() string {
 	p.mu.Lock()
-	t := p.term
+	terms := append([]*terminal(nil), p.terms...)
 	p.mu.Unlock()
-	if t == nil {
-		return ""
+	for _, t := range terms {
+		if c := t.command(); c != "" {
+			return c
+		}
 	}
-	return t.command()
+	return ""
 }
 
-// termState is GET /api/term/state: the command running in the terminal,
+// termState is GET /api/term/state: the command running in a terminal,
 // which closing the project would stop.
 func (p *projectState) termState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct {
 		Command string `json:"command"`
 	}{p.termCommand()})
+}
+
+// termList is GET /api/term/list: the shells the terminal tab shows.
+func (p *projectState) termList(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, termsView{IDs: p.termIDs()})
+}
+
+// termNew is POST /api/term/new: another shell, last among the tabs.
+func (p *projectState) termNew(w http.ResponseWriter, r *http.Request) {
+	if !termSupported {
+		http.Error(w, "the terminal tab needs macOS or Linux", http.StatusNotFound)
+		return
+	}
+	p.mu.Lock()
+	if len(p.terms) == 0 {
+		p.addTerminalLocked() // the first, which the tab showed
+	}
+	t := p.addTerminalLocked()
+	p.mu.Unlock()
+	v := p.sendTerms()
+	v.ID = t.id
+	writeJSON(w, v)
+}
+
+// termClose is POST /api/term/close: stop a shell and drop its tab. The
+// last one closed leaves a new one, which starts when the tab shows.
+func (p *projectState) termClose(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Term int `json:"term"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	p.mu.Lock()
+	var gone *terminal
+	for i, t := range p.terms {
+		if t.id == req.Term {
+			gone = t
+			p.terms = append(p.terms[:i:i], p.terms[i+1:]...)
+			break
+		}
+	}
+	p.mu.Unlock()
+	if gone != nil {
+		gone.close()
+	}
+	writeJSON(w, p.sendTerms())
 }
 
 // termStream is GET /api/term/stream: the terminal's output, over a
@@ -295,7 +408,12 @@ func (s *Server) termStream(w http.ResponseWriter, r *http.Request) {
 	} else if p = s.project(w, r); p == nil {
 		return
 	}
-	t := p.terminal()
+	id, _ := strconv.Atoi(r.URL.Query().Get("term"))
+	t := p.terminalByID(id)
+	if t == nil {
+		http.Error(w, errNoTerm.Error(), http.StatusNotFound)
+		return
+	}
 	screen, ch, err := t.subscribe()
 	if err != nil {
 		writeError(w, err)
@@ -330,15 +448,22 @@ func (s *Server) termStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// termInput is POST /api/term/input: keys typed in the terminal tab.
+// termInput is POST /api/term/input: keys typed in one of the terminal
+// tab's shells.
 func (p *projectState) termInput(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Term int    `json:"term"`
 		Data string `json:"data"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if err := p.terminal().input([]byte(req.Data)); err != nil {
+	t := p.terminalByID(req.Term)
+	if t == nil {
+		http.Error(w, errNoTerm.Error(), http.StatusNotFound)
+		return
+	}
+	if err := t.input([]byte(req.Data)); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -372,16 +497,22 @@ func (p *projectState) recompileOnceFound() {
 	}
 }
 
-// termResize is POST /api/term/resize: the terminal tab's rows and columns.
+// termResize is POST /api/term/resize: a shell's rows and columns.
 func (p *projectState) termResize(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Term int    `json:"term"`
 		Rows uint16 `json:"rows"`
 		Cols uint16 `json:"cols"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if err := p.terminal().resize(req.Rows, req.Cols); err != nil {
+	t := p.terminalByID(req.Term)
+	if t == nil {
+		http.Error(w, errNoTerm.Error(), http.StatusNotFound)
+		return
+	}
+	if err := t.resize(req.Rows, req.Cols); err != nil {
 		writeError(w, err)
 		return
 	}

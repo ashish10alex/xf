@@ -772,15 +772,37 @@ function HistoryList() {
   </table></div>`;
 }
 
-// TermBody is the terminal tab's box, which terminal.js fills: it loads
-// the first time the tab shows.
+// TermBody is the terminal tab's box, which terminal.js fills with the
+// shell shown: it loads the first time the tab shows, once the list of
+// shells has come.
 function TermBody({ focused }) {
   const box = useRef(null);
   useEffect(() => {
     const el = box.current;
-    import('./terminal.js').then((m) => m.mountTerm(el, focused));
+    const mount = () => import('./terminal.js').then((m) => m.mountTerm(el, focused, st.activeTerm()));
+    if (S.terms.length) mount();
+    else st.loadTerms().then(mount, (e) => { st.say('terminal: ' + e.message); redraw(); });
   });
   return html`<div class="term-box" ref=${box}></div>`;
+}
+
+// termTabs are the terminal's tabs in the log pane's title: one for each
+// shell (numbered once there are two), × on the one shown, and + for
+// another.
+function termTabs() {
+  const shown = S.logTab === 'term' ? st.activeTerm() : -1;
+  const pick = (id) => (e) => { e.stopPropagation(); S.logTab = 'term'; S.termId = id; st.setFocus('log'); redraw(); };
+  const act = (f) => (e) => { e.stopPropagation(); e.preventDefault(); f(); };
+  const ids = S.terms.length ? S.terms : [0];
+  const out = [];
+  ids.forEach((id, i) => {
+    if (i) out.push(' │ ');
+    const on = id === shown || (!S.terms.length && S.logTab === 'term');
+    out.push(html`<span class=${'tab' + (on ? ' on' : '')} onMouseDown=${pick(id)}>${ids.length > 1 ? 'terminal ' + (i + 1) : 'terminal'}</span>`);
+    if (on && S.terms.length) out.push(html`<span class="tab-btn" title="close this terminal" onMouseDown=${act(() => st.closeTerm(id))}>×</span>`);
+  });
+  out.push(html`<span class="tab-btn" title="new terminal (ctrl+shift+\`)" onMouseDown=${act(st.newTerm)}>+</span>`);
+  return out;
 }
 
 function LogPane() {
@@ -797,7 +819,7 @@ function LogPane() {
       onMouseDown=${(e) => { e.stopPropagation(); S.logTab = id; st.setFocus('log'); if (id === 'history') st.get('/api/history').then((hv) => { S.history = hv; redraw(); }); redraw(); }}>${label}</span>`;
     title = tabs ? html`${tab('log', 'log')} │ ${tab('jobs', n ? `jobs (${n})` : 'jobs')} │ ${tab('history', 'history')}` : tab('log', 'log');
     if (previewTab) title = html`${title} │ ${tab('preview', 'preview')}`;
-    if (termTab) title = html`${title} │ ${tab('term', 'terminal')}`;
+    if (termTab) title = html`${title} │ ${termTabs()}`;
   }
   let rest = '';
   if (S.logTab === 'preview' && previewTab) {
@@ -1001,7 +1023,7 @@ function Footer() {
   // In the terminal every other key is the shell's: only xf's own show.
   if (S.focus === 'log' && S.logTab === 'term' && S.caps.terminal) {
     return html`<div class="footer"><${Keys} list=${[[st.paletteKey, 'find'], [st.commandsKey, 'commands'],
-      [st.onMac ? '⌘z' : 'alt+z', S.zoomed ? 'unzoom' : 'zoom'], [st.logTabLabel, 'next tab'], ['ctrl+j', 'hide'], ['ctrl+1', 'source']]} /></div>`;
+      [st.onMac ? '⌘z' : 'alt+z', S.zoomed ? 'unzoom' : 'zoom'], [st.logTabLabel, 'next tab'], ['ctrl+shift+`', 'new terminal'], ['ctrl+j', 'hide'], ['ctrl+1', 'source']]} /></div>`;
   }
   list = [[st.paletteKey, 'find'], ...find, ...list, ['z', S.zoomed ? 'unzoom' : 'zoom'], ['r', 'run'], ['?', 'help'], ...(['actions', 'lineage', 'run', 'defer', 'sql'].includes(S.focus) && !S.zoomed ? [['esc', 'projects']] : [])];
   return html`<div class="footer"><${Keys} list=${list} /></div>`;
@@ -1214,7 +1236,7 @@ function Palette() {
 function helpSections() {
   const c = S.caps;
   const global = [[st.paletteKey, st.paletteKeyMovesDown ? 'find file (again: down the list)' : 'find file'], ['# in it', 'find action'], ['/', 'search the focused pane'], ['$kind', 'find one kind'], [st.commandsKey + ' or >', 'commands'], [']', 'next action in file'], ['[', 'prev action in file'],
-    [st.saveKey, 'save and compile'], ['i', 'incremental/full'], ['E', 'show/hide source'], ['ctrl+,', 'settings and project info'], ['s', 'scratch query from this model'], ...(c.scratch ? [[previewKeyLabel, 'preview the selected action\'s rows (log pane\'s preview tab)']] : []), ['e', 'errors'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the bottom panel, on its last tab'], [st.termKeyLabel, 'show/hide terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
+    [st.saveKey, 'save and compile'], ['i', 'incremental/full'], ['E', 'show/hide source'], ['ctrl+,', 'settings and project info'], ['s', 'scratch query from this model'], ...(c.scratch ? [[previewKeyLabel, 'preview the selected action\'s rows (log pane\'s preview tab)']] : []), ['e', 'errors'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the bottom panel, on its last tab'], [st.termKeyLabel, 'show/hide terminal'], ['ctrl+shift+`', 'new terminal, in a tab of its own'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
   if (c.branches) global.push(['B', 'switch branch']);
   if (c.follow) global.push(['F', 'follow editor on/off']);
   if (c.open) global.push(['o', 'open in editor']);
@@ -1229,10 +1251,10 @@ function helpSections() {
   if (c.run) run.push(['d', 'deps'], ['D', 'dependents'], ['f', 'full refresh']);
   if (c.api) run.push(['a', 'run via Dataform API']);
   const panes = [[st.onMac ? '⌘b' : 'ctrl+b', 'show/hide the file tree'], ['ctrl+g', 'show/hide source control'], [st.projectsKey, 'show/hide open projects'], [st.revealKey, 'show the open file in the file tree'], [search.searchKey + (st.onMac ? '/ctrl+shift+f' : ''), 'search in files'], ['F4/shift+F4', 'next/prev search match'], ['ctrl+0', 'file tree / source control / search'], ['ctrl+1', 'source (left)'], ['ctrl+2', 'inspector / sql (right)'], ['ctrl+3', 'log (bottom)'], [st.rightKey(), 'show/hide pane 2 (right)'],
-    ['z', 'zoom pane'], ['esc', 'unzoom'], ['O', 'lineage tab (again: the sql)'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the bottom panel, on its last tab'], [st.termKeyLabel, 'show/hide terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
+    ['z', 'zoom pane'], ['esc', 'unzoom'], ['O', 'lineage tab (again: the sql)'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the bottom panel, on its last tab'], [st.termKeyLabel, 'show/hide terminal'], ['ctrl+shift+`', 'new terminal, in a tab of its own'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
   const target = [['u', 'open in ' + st.tablesSite()], ['y', 'copy `table` name'], ['Y', 'copy file path (again: absolute)']];
   const log = [['g', 'top'], ['G', 'bottom'], ['u', 'open run in browser'], ['y', 'copy the run\'s command for a terminal']];
-  if (c.history || c.terminal) log.push([(st.onMac ? '⌥⌘→/t' : 'ctrl+alt+→/t'), 'next tab: ' + [...(c.history ? ['log', 'jobs', 'history'] : ['log']), ...(c.terminal ? ['terminal'] : [])].join(', ') + (st.onMac ? ' (⌥⌘← back; from the terminal too)' : ' (ctrl+alt+← back; from the terminal too)')]);
+  if (c.history || c.terminal) log.push([(st.onMac ? '⌥⌘→/t' : 'ctrl+alt+→/t'), 'next tab: ' + [...(c.history ? ['log', 'jobs', 'history'] : ['log']), ...(c.terminal ? ['each terminal'] : [])].join(', ') + (st.onMac ? ' (⌥⌘← back; from the terminal too)' : ' (ctrl+alt+← back; from the terminal too)')]);
   if (c.history) log.push(['enter', 'open BigQuery job'], ['/', 'search the jobs (esc clears)'], ['S', 'sort the jobs by the next column'], ['X', 'clear history']);
   const right = [
     ['move', [['j/↓', 'down'], ['k/↑', 'up'], ...(st.ctrlNMoves ? [['ctrl+n/p', 'down/up, in boxes too']] : []), ['g', 'top'], ['G', 'bottom'], ['ctrl+d', 'page down'], ['ctrl+u', 'page up']]],

@@ -97,10 +97,13 @@ type projectState struct {
 	prodAsked bool
 	// editor changes the editor o opens files with; nil can't.
 	editor *Editor
-	// term is the terminal tab's shell, nil until a page first opens it;
-	// termEnv is what its shell's environment gets added (Config.TermEnv).
-	term    *terminal
-	termEnv func() []string
+	// terms are the terminal tab's shells, in the order its tabs show
+	// them, none until a page first opens it; termNext is the next one's
+	// id; termEnv is what each shell's environment gets added
+	// (Config.TermEnv).
+	terms    []*terminal
+	termNext int
+	termEnv  func() []string
 	// install is the CLI the project opened without, nil for none;
 	// cliFound is set once it has been found and the project recompiled.
 	install *InstallCLI
@@ -245,10 +248,10 @@ func (p *projectState) close() {
 	p.mu.Lock()
 	sess := p.sess
 	run := p.run
-	term := p.term
+	terms := p.terms
 	p.mu.Unlock()
-	if term != nil {
-		term.close()
+	for _, t := range terms {
+		t.close()
 	}
 	p.py.stop()
 	if run.running && !run.api && run.cancel != nil {
@@ -664,6 +667,9 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 	route("POST /api/run/cancel", (*projectState).cancelRun)
 	route("POST /api/watch", (*projectState).watchWorkflow)
 	route("POST /api/term/input", (*projectState).termInput)
+	route("GET /api/term/list", (*projectState).termList)
+	route("POST /api/term/new", (*projectState).termNew)
+	route("POST /api/term/close", (*projectState).termClose)
 	route("POST /api/term/fix", (*projectState).termFix)
 	route("POST /api/term/resize", (*projectState).termResize)
 	route("GET /api/term/state", (*projectState).termState)

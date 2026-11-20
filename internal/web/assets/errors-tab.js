@@ -1,7 +1,7 @@
 // Pane 2's errors tab: the compile's errors grouped by kind, which
 // enter jumps to.
 
-import { S, copy, errorsText, get, hasErrors, hooks, post, redraw, say, setFocus, showTerm, toggleColumns } from './state.js';
+import { S, activeTerm, copy, errorsText, get, hasErrors, hooks, post, redraw, say, setFocus, showTerm, toggleColumns } from './state.js';
 
 // The kinds of compile error, as diagnose.Kind names them, in the order
 // the tab groups them: a syntax error usually causes the rest.
@@ -130,7 +130,7 @@ export async function runFix(run = false) {
   const cmd = f && f.command;
   if (!cmd) return;
   if (!S.caps.terminal) { copy(cmd, 'copied the command: run it in a terminal' + (run ? '' : ', then compile')); return; }
-  try { await post('/api/term/fix', { run }); } catch (e) { say(e.message); return; }
+  try { await post('/api/term/fix', { run, term: activeTerm() }); } catch (e) { say(e.message); return; }
   showTerm();
   redraw();
 }

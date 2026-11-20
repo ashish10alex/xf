@@ -3,7 +3,7 @@
 import { h, render } from './vendor/preact.mjs';
 import { App, LostNotice } from './view.js';
 import { runScratch, toggleResults, toggleList, flushSave, SC } from './scratch.js';
-import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
+import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, toggleTermZoom, termHasKey, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
 import { SET, reopenAfterReload, openSettings, closeSettings } from './settings.js';
 import { T, closeThemePicker } from './theme.js';
 import { track } from './windows.js';
@@ -325,6 +325,15 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     toggleTermZoom();
     redraw();
+    return;
+  }
+  // ctrl+shift+` opens another shell in the terminal tab, from anywhere
+  // in the project view, inside the terminal too.
+  if (isNewTermKey(e)) {
+    if (S.mode === 'project' && S.caps.terminal && !S.overlay && !S.checks && !SET.open && !SC.open) {
+      e.preventDefault();
+      newTerm();
+    }
     return;
   }
   // ctrl+` (and ⌘` on a Mac that leaves it to the page) shows the terminal tab with the keys, or hides the pane

@@ -18,7 +18,7 @@ test('showing the tab opens the stream again once it has closed', () => {
   S.key = 'p1';
   keepStream();
   assert.equal(opened.length, 1);
-  assert.match(opened[0].url, /\/api\/term\/stream\?project=p1$/);
+  assert.match(opened[0].url, /\/api\/term\/stream\?project=p1&term=0$/);
 
   keepStream();
   assert.equal(opened.length, 1, 'an open stream is kept');
@@ -30,5 +30,17 @@ test('showing the tab opens the stream again once it has closed', () => {
   S.key = 'p2';
   keepStream();
   assert.equal(opened.length, 3, 'another project gets its own stream');
-  assert.match(opened[2].url, /project=p2$/);
+  assert.match(opened[2].url, /project=p2&term=0$/);
+})
+
+test('each shell has a stream of its own', () => {
+  S.mode = 'project';
+  S.key = 'p3';
+  const before = opened.length;
+  keepStream(4);
+  keepStream(5);
+  keepStream(4);
+  assert.equal(opened.length, before + 2);
+  assert.match(opened[before].url, /project=p3&term=4$/);
+  assert.match(opened[before + 1].url, /project=p3&term=5$/);
 });
