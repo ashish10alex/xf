@@ -357,26 +357,90 @@ func fromDev(q *project.DryRunQuery, reads []DevRead) *project.DryRunQuery {
 		return q
 	}
 	out := *q
+	out.PreOps = slices.Clone(q.PreOps)
 	for _, d := range reads {
-		out.SQL = strings.ReplaceAll(out.SQL, quoted(d.Table), quoted(d.Dev))
+		from, to := quoted(d.Table), quoted(d.Dev)
+		out.SQL = strings.ReplaceAll(out.SQL, from, to)
+		out.Query = strings.ReplaceAll(out.Query, from, to)
+		for i := range out.PreOps {
+			out.PreOps[i] = strings.ReplaceAll(out.PreOps[i], from, to)
+		}
 	}
 	return &out
 }
 
+// writeDeniedRE is BigQuery's message for a dry run of a statement that
+// writes to a table the caller may read but not write to.
+var writeDeniedRE = regexp.MustCompile(`Permission (bigquery\.tables\.(?:updateData|create|delete|update)) denied on table (\S+)`)
+
+// writeDenied is the write reason says BigQuery refused to plan.
+func writeDenied(reason string) (w Write, ok bool) {
+	m := writeDeniedRE.FindStringSubmatch(reason)
+	if m == nil {
+		return Write{}, false
+	}
+	return Write{Table: strings.Replace(m[2], ":", ".", 1), Permission: m[1]}, true
+}
+
+// dmlRE is a statement that writes to a table.
+var dmlRE = regexp.MustCompile(`(?i)^\s*(delete|insert|update|merge|truncate)\b`)
+
+// withoutDML is q without the pre_operations that write to a table; ok is
+// false when it has none.
+func withoutDML(q *project.DryRunQuery) (out *project.DryRunQuery, ok bool) {
+	var kept []string
+	for _, s := range q.PreOps {
+		if dmlRE.MatchString(stripComments(s)) {
+			ok = true
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if !ok {
+		return nil, false
+	}
+	sql, _ := project.Script(append(slices.Clone(kept), q.Query))
+	return &project.DryRunQuery{Label: q.Label, SQL: sql, PreOps: kept, Query: q.Query}, true
+}
+
+// deniedReason is why an action whose dry run was refused w has no
+// estimate.
+func deniedReason(a *project.Action, w Write) string {
+	table := impact.ShortTable(w.Table)
+	if strings.EqualFold(w.Table, string(a.Target.ID())) {
+		table = "its own table"
+	}
+	return "dry run failed: it writes to " + table + ", and BigQuery checks " + w.Permission + " on it even in a dry run"
+}
+
 // dryRun dry runs q as an action of g, returning its estimate, or why it
 // has none, and the dry run, nil when it failed. err is the dry run's own
-// failure.
-func (r *runner) dryRun(ctx context.Context, g *project.Graph, a *project.Action, q *project.DryRunQuery) (est *Estimate, d *warehouse.Check, reason string, err error) {
+// failure. BigQuery checks that the caller may write to the table a DML
+// statement writes to even when it only plans it: refused that for DML in
+// q's pre_operations, it dry runs q without them, and left is the write
+// left out.
+func (r *runner) dryRun(ctx context.Context, g *project.Graph, a *project.Action, q *project.DryRunQuery) (est *Estimate, d *warehouse.Check, reason string, left *Write, err error) {
 	proj, location := g.DryRunTarget(a)
 	if proj == "" {
-		return nil, nil, "no project to dry run in: set defaultProject", nil
+		return nil, nil, "no project to dry run in: set defaultProject", nil, nil
 	}
 	d, err = r.deps.DryRun(ctx, proj, location, q.SQL)
 	if err != nil {
-		return nil, nil, "dry run failed: " + errorText(err), err
+		reason = "dry run failed: " + errorText(err)
+		w, ok := writeDenied(reason)
+		if !ok {
+			return nil, nil, reason, nil, err
+		}
+		if lean, ok := withoutDML(q); ok {
+			if d, leanErr := r.deps.DryRun(ctx, proj, location, lean.SQL); leanErr == nil {
+				est, reason = estimateOf(d)
+				return est, d, reason, &w, nil
+			}
+		}
+		return nil, nil, deniedReason(a, w), nil, err
 	}
 	est, reason = estimateOf(d)
-	return est, d, reason, nil
+	return est, d, reason, nil, nil
 }
 
 // denied reports a dry run BigQuery refused whatever the SQL: no usable
@@ -399,7 +463,7 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 	var err error
 	for {
 		sql := fromDev(q, out.FromDev)
-		out.Estimate, d, out.Reason, err = r.dryRun(ctx, head, a, sql)
+		out.Estimate, d, out.Reason, out.LeftOutDML, err = r.dryRun(ctx, head, a, sql)
 		m, ok := missingIn(out.Reason)
 		if err == nil || !ok {
 			break
@@ -421,7 +485,7 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 		out.Unfiltered = r.ps.unfiltered(ctx, fromDev(q, out.FromDev).SQL, d.Tables)
 	}
 	if full != nil && err == nil {
-		out.Full, _, _, _ = r.dryRun(ctx, head, a, fromDev(full, out.FromDev))
+		out.Full, _, _, _, _ = r.dryRun(ctx, head, a, fromDev(full, out.FromDev))
 	}
 	if out.FirstBuild && out.Estimate != nil {
 		out.Incremental = r.later(ctx, head, a, run, out.FromDev)
@@ -437,7 +501,7 @@ func (r *runner) later(ctx context.Context, head *project.Graph, a *project.Acti
 	reads = slices.Clone(reads)
 	for {
 		sql := fromDev(q, reads)
-		est, _, reason, err := r.dryRun(ctx, head, a, sql)
+		est, _, reason, _, err := r.dryRun(ctx, head, a, sql)
 		if err == nil {
 			return est
 		}
@@ -591,7 +655,7 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 	inBatches(ctx, compare, dryRunBatch, func(i int) {
 		if a := b.g.Actions[items[i].a.ID]; a != nil {
 			if run, _ := counted(a); run != nil {
-				estimated[i].Base, _, _, _ = r.dryRun(ctx, b.g, a, run)
+				estimated[i].Base, _, _, _, _ = r.dryRun(ctx, b.g, a, run)
 			}
 		}
 		mu.Lock()

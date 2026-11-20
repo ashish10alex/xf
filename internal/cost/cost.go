@@ -97,12 +97,25 @@ type Action struct {
 	// dev, as they aren't where the dry runs look (Deps.InDev): the
 	// estimate is of dev's data.
 	FromDev []DevRead `json:"fromDev,omitempty"`
+	// LeftOutDML is, when Estimate was dry run without the DML in its
+	// pre_operations, the write BigQuery refused to plan.
+	LeftOutDML *Write `json:"leftOutDML,omitempty"`
 	// AddedColumn is, when Reason is a column the dry run didn't find,
 	// the changed action this one reads that makes it on this branch: its
 	// table in BigQuery has it once a run of the branch builds it.
 	AddedColumn *AddedColumn `json:"addedColumn,omitempty"`
 
 	schema []warehouse.Column // what the dry run returned, while Run works
+}
+
+// Write is a write to a table a dry run was refused, as BigQuery checks
+// the permission a DML statement needs even when it only plans it.
+type Write struct {
+	// Table is the project.dataset.name written to.
+	Table string `json:"table"`
+	// Permission is the one BigQuery said is missing:
+	// "bigquery.tables.updateData".
+	Permission string `json:"permission"`
 }
 
 // AddedColumn is a column a changed action makes on this branch, which its

@@ -185,6 +185,21 @@ func FirstBuildNote(a Action, o Options) string {
 	return "first run: full build; later runs not known until dev has the table"
 }
 
+// LeftOutNote is the note on an estimate dry run without the DML in its
+// pre_operations: "DML in pre_operations left out: dry running it needs
+// bigquery.tables.updateData on its own table". It is "" when none was.
+func LeftOutNote(a Action) string {
+	w := a.LeftOutDML
+	if w == nil {
+		return ""
+	}
+	table := impact.ShortTable(w.Table)
+	if strings.EqualFold(w.Table, a.Name) || strings.EqualFold(w.Table, a.DryRunAs) {
+		table = "its own table"
+	}
+	return "DML in pre_operations left out: dry running it needs " + w.Permission + " on " + table
+}
+
 // IncrementalText is what a first build's later runs scan and cost each,
 // "4.20 GiB · $0.026"; "" when that isn't known.
 func IncrementalText(a Action, o Options) string {
@@ -507,6 +522,9 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 		if a.FirstBuild {
 			row.notes = append(row.notes, o.paint("("+FirstBuildNote(a, o)+")", ansiDim))
 		}
+		if note := LeftOutNote(a); note != "" {
+			row.notes = append(row.notes, o.paint("("+note+")", ansiDim))
+		}
 		for _, d := range a.FromDev {
 			row.notes = append(row.notes, o.paint("(reads "+impact.ShortTable(d.Table)+" from dev)", ansiDim))
 		}
@@ -670,6 +688,9 @@ func Markdown(r *Report, o Options) string {
 			}
 			if a.FirstBuild {
 				notes = append(notes, "new: its first run is a full build, counted")
+			}
+			if note := LeftOutNote(a); note != "" {
+				notes = append(notes, cell(note))
 			}
 			for _, d := range a.FromDev {
 				notes = append(notes, fmt.Sprintf("reads `%s` from dev", cell(impact.ShortTable(d.Table))))
@@ -851,7 +872,10 @@ type jsonAction struct {
 	// scans, sized on dev's copy of the table.
 	Incremental *jsonEstimate `json:"incremental,omitempty"`
 	// FromDev are tables the branch adds that were read from dev.
-	FromDev    []DevRead     `json:"fromDev,omitempty"`
+	FromDev []DevRead `json:"fromDev,omitempty"`
+	// LeftOutDML is, when bytes were dry run without the DML in the
+	// action's pre_operations, the write BigQuery refused to plan.
+	LeftOutDML *Write        `json:"leftOutDML,omitempty"`
 	New        bool          `json:"new"`
 	Base       *jsonEstimate `json:"base,omitempty"`
 	DeltaBytes *int64        `json:"deltaBytes"`
@@ -944,7 +968,7 @@ func JSON(r *Report, o Options) ([]byte, error) {
 	waits := waitsByAction(r)
 	for _, a := range r.Actions {
 		ja := jsonAction{WaitsOn: waits[a.Name], WaitsOnColumn: a.AddedColumn, Name: a.Name, DryRunAs: a.DryRunAs, File: a.FileName, Type: a.Type, New: a.New, FullRefresh: est(a.Full), Base: est(a.Base),
-			FirstBuild: a.FirstBuild, Incremental: est(a.Incremental), FromDev: a.FromDev, Warnings: []jsonWarning{}, Error: a.Reason}
+			FirstBuild: a.FirstBuild, Incremental: est(a.Incremental), FromDev: a.FromDev, LeftOutDML: a.LeftOutDML, Warnings: []jsonWarning{}, Error: a.Reason}
 		if a.Estimate != nil {
 			usd := o.USD(a.Estimate.Bytes)
 			ja.Bytes, ja.Accuracy, ja.USD = &a.Estimate.Bytes, a.Estimate.Accuracy, &usd

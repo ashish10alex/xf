@@ -46,6 +46,17 @@ func TestDryRunQueries(t *testing.T) {
 				if strings.Contains(g.SQL, "ALTER TABLE") {
 					t.Errorf("query %d includes post_operations: %q", i, g.SQL)
 				}
+				// A query after pre_operations keeps them apart, to be dry
+				// run without some (cost leaves out DML it may not write).
+				hasPre := strings.HasPrefix(w.prefix, "DECLARE")
+				if hasPre != (len(g.PreOps) > 0) {
+					t.Errorf("query %d pre_operations %q", i, g.PreOps)
+				}
+				if hasPre {
+					if sql, _ := project.Script(append(append([]string{}, g.PreOps...), g.Query)); sql != g.SQL || g.Query == "" {
+						t.Errorf("query %d: pre_operations %q and query %q make %q, not its SQL", i, g.PreOps, g.Query, sql)
+					}
+				}
 			}
 		})
 	}

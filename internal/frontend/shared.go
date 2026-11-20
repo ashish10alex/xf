@@ -610,6 +610,9 @@ func CostReport(r *cost.Report) CostView {
 		case a.FirstBuild:
 			notes = append(notes, "new: its first run is a full build, counted; incremental runs not known until dev has the table")
 		}
+		if note := cost.LeftOutNote(a); note != "" {
+			notes = append(notes, note)
+		}
 		for _, d := range a.FromDev {
 			note := "reads dev's " + impact.ShortTable(d.Dev)
 			if built := RelTime(r.CheckedAt, d.BuiltAt); built != "" {

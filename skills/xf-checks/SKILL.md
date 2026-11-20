@@ -57,7 +57,7 @@ Give each question 2 to 4 options with your recommendation first, drawn from the
   - `deltaBytes`: the change against the merge-base; `new: true` when the merge-base has no such action.
   - `warnings` of kind `missing_partition_filter`: the query reads `table` without filtering on its partition `column`, so it scans every partition. The fix is a `WHERE` on that column.
   - An incremental table counts its incremental run, with `fullRefresh` beside it. `firstBuild: true` means its table isn't built yet, so the first run is a full build; `laterBytes` at the top level is each run after that.
-  - `dryRunAs`: the table the dry run read for it, prod's under `prodCompilerOptions`. `fromDev`: tables the branch adds that were read from dev, so their sizes are dev's.
+  - `dryRunAs`: the table the dry run read for it, prod's under `prodCompilerOptions`. `fromDev`: tables the branch adds that were read from dev, so their sizes are dev's. `leftOutDML`: it was dry run without the DML in its pre_operations, as BigQuery wouldn't plan a write to that `table` without the `permission`; its bytes are the query's alone.
 - Sizes are binary units, as BigQuery bills: 1 GiB is 2³⁰ bytes, priced per TiB at `usdPerTib`.
 
 ## Reading `xf impact --json`

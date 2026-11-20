@@ -13,6 +13,11 @@ type DryRunQuery struct {
 	// "incremental"); it is empty for every other action.
 	Label string
 	SQL   string
+	// PreOps and Query are, when SQL is a query after its
+	// pre_operations, those statements and the query: SQL is Script of
+	// them. Both are empty for every other script.
+	PreOps []string
+	Query  string
 }
 
 // DryRunQueries returns what to dry-run for the action, following the VS
@@ -37,20 +42,28 @@ func (a *Action) DryRunQueries() []DryRunQuery {
 			out = append(out, DryRunQuery{Label: label, SQL: sql})
 		}
 	}
+	// addQuery adds query after the statements of pre.
+	addQuery := func(label string, pre []string, query string) {
+		n := len(out)
+		add(label, append(slices.Clone(pre), query)...)
+		if len(out) > n && slices.ContainsFunc(pre, func(s string) bool { return strings.TrimSpace(s) != "" }) {
+			out[n].PreOps, out[n].Query = slices.Clone(pre), query
+		}
+	}
 	pre := a.PreOps
 	if a.RawOps {
 		pre = nil
 	}
 	switch a.Kind {
 	case KindTable, KindView, KindMaterializedView:
-		add("", append(slices.Clone(pre), a.Query)...)
+		addQuery("", pre, a.Query)
 	case KindIncremental:
 		if !a.HasIncrementalVariant() {
-			add("", append(slices.Clone(pre), a.Query)...)
+			addQuery("", pre, a.Query)
 			break
 		}
-		add("full", append(slices.Clone(pre), a.Query)...)
-		add("incremental", append(a.IncrementalPreOps, a.IncrementalQuery)...)
+		addQuery("full", pre, a.Query)
+		addQuery("incremental", a.IncrementalPreOps, a.IncrementalQuery)
 	case KindAssertion, KindSnapshot, KindTest:
 		add("", a.Query)
 	case KindOperation:

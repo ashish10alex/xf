@@ -961,3 +961,78 @@ func TestRunTellsADryRunWaitingOnAColumnTheBranchAdds(t *testing.T) {
 		t.Errorf("JSON %v:\n%s", err, data)
 	}
 }
+
+// BigQuery checks that the caller may write to the table a DML statement
+// writes to even when it only plans it: refused that for the DML in an
+// action's pre_operations, the action is dry run without it, and says so.
+// Refused for any other statement, the reason names the write.
+func TestRunLeavesOutPreOperationsDMLItMayNotWrite(t *testing.T) {
+	refused := func(table string) error {
+		return &warehouse.APIError{Status: 403, Message: "Access Denied: Table acme:marts." + table + ": Permission bigquery.tables.updateData denied on table acme:marts." + table + " (or it may not exist)."}
+	}
+	snap := action("snap", project.KindIncremental, "select * from raw.stock")
+	snap.IncrementalPreOps = []string{"\n  -- keep one a day\n  DELETE FROM `acme.marts.snap` WHERE day = current_date()"}
+	snap.IncrementalQuery = "select * from raw.stock where 1 = 1"
+	declared := action("declared", project.KindTable, "select * from raw.stock where day = d")
+	declared.PreOps = []string{"DECLARE d DATE DEFAULT current_date()", "INSERT INTO `acme.marts.log` VALUES (d)"}
+	op := action("purge", project.KindOperation, "")
+	op.Queries = []string{"DELETE FROM `acme.marts.snap` WHERE true"}
+	bq := &fakeBQ{
+		dryRuns: map[string]*warehouse.Check{
+			snap.Query: precise(3 * gib), snap.IncrementalQuery: precise(gib),
+			"DECLARE d DATE DEFAULT current_date();\nselect * from raw.stock where day = d;": {Bytes: 2 * gib, Accuracy: warehouse.AccuracyPrecise, StatementType: "SCRIPT"},
+		},
+		failures: map[string]error{
+			"-- keep one a day\n  DELETE FROM `acme.marts.snap` WHERE day = current_date();\nselect * from raw.stock where 1 = 1;":     refused("snap"),
+			"DECLARE d DATE DEFAULT current_date();\nINSERT INTO `acme.marts.log` VALUES (d);\nselect * from raw.stock where day = d;": refused("log"),
+			op.Queries[0]: refused("snap"),
+		},
+	}
+	r, err := Run(context.Background(), changed(changes.ReasonSQL, snap, declared, op), Head{Graph: graph(snap, declared, op)}, Deps{
+		DryRun: bq.dryRun,
+		Base:   func(context.Context) (*project.Graph, error) { return graph(snap, declared, op), nil },
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := find(t, r, "snap")
+	if s.Estimate == nil || s.Estimate.Bytes != gib || s.Full == nil || s.Full.Bytes != 3*gib || s.Reason != "" {
+		t.Errorf("snap %+v: its incremental run without the DELETE", s)
+	}
+	if want := (&Write{Table: "acme.marts.snap", Permission: "bigquery.tables.updateData"}); !reflect.DeepEqual(s.LeftOutDML, want) {
+		t.Errorf("snap left out %+v, want %+v", s.LeftOutDML, want)
+	}
+	if d, ok := s.Delta(); !ok || d != 0 {
+		t.Errorf("snap's merge-base dry run left out the DML too: delta %d, %v", d, ok)
+	}
+	if got := LeftOutNote(s); got != "DML in pre_operations left out: dry running it needs bigquery.tables.updateData on its own table" {
+		t.Errorf("note %q", got)
+	}
+	// A DECLARE the query needs stays.
+	if d := find(t, r, "declared"); d.Estimate == nil || d.Estimate.Bytes != 2*gib || LeftOutNote(d) != "DML in pre_operations left out: dry running it needs bigquery.tables.updateData on marts.log" {
+		t.Errorf("declared %+v", d)
+	}
+	// An operation's DML is what it runs: nothing to leave out.
+	if p := find(t, r, "purge"); p.Estimate != nil || p.Reason != "dry run failed: it writes to marts.snap, and BigQuery checks bigquery.tables.updateData on it even in a dry run" {
+		t.Errorf("purge %+v", p)
+	}
+	text := Text(r, Options{})
+	for _, want := range []string{
+		"(DML in pre_operations left out: dry running it needs bigquery.tables.updateData on its own table)",
+		"? marts.purge  dry run failed: it writes to marts.snap, and BigQuery checks bigquery.tables.updateData on it even in a dry run",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("no %q in Text:\n%s", want, text)
+		}
+	}
+	if md := Markdown(r, Options{}); !strings.Contains(md, "DML in pre_operations left out: dry running it needs bigquery.tables.updateData on its own table") {
+		t.Errorf("Markdown:\n%s", md)
+	}
+	data, err := JSON(r, Options{})
+	if err != nil || !strings.Contains(string(data), `"leftOutDML": {
+        "table": "acme.marts.snap",
+        "permission": "bigquery.tables.updateData"
+      }`) {
+		t.Errorf("JSON %v:\n%s", err, data)
+	}
+}

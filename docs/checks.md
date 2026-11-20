@@ -101,6 +101,10 @@ The report lists them with the most bytes first:
 - **⚠ no partition filter** marks a query that reads a partitioned table by name and never names its partition column (`_PARTITIONTIME` or `_PARTITIONDATE` for a table partitioned by ingestion time), so nothing can be pruned.
   It is a check of the compiled SQL's text: a column that is selected but not filtered on passes, and a table read through a view isn't judged, since the view may filter it.
   A table created with `require_partition_filter` fails its dry run instead, and shows under "Not estimated" with BigQuery's message.
+- **DML in pre_operations.** BigQuery checks that you may write to the table a `DELETE`, `INSERT`, `UPDATE`, `MERGE` or `TRUNCATE` writes to even in a dry run, which plans it and writes nothing.
+  With `prodCompilerOptions`, that is often a prod table you may read but not write to, such as the `DELETE FROM ${self()}` an incremental table runs before its query.
+  When BigQuery refuses that, xf dry runs the action again without those pre_operations, keeping any others (a `DECLARE` its query needs), and notes that the DML was left out and the permission it needs.
+  An operation's statements are what it runs, so one refused that way is listed as not estimated, naming the table and permission.
 - **Not estimated** lists the actions BigQuery gave no figure for, with the reason: a query that doesn't compile against the tables as they are, or a script (an operation, or a table with `pre_operations`), which BigQuery rarely estimates.
   They aren't in the total.
   One that reads tables the branch adds and no run has built yet is listed under each of them: BigQuery names only the first it doesn't find, so xf dry runs the others alone to see which are built.
@@ -632,6 +636,7 @@ For dbt, install dbt and its packages (`dbt deps`) instead of the `dataform` CLI
 `bytes`, `usd` and `deltaBytes` are `null` when there is no figure, never 0; `accuracy` is BigQuery's (`PRECISE`, `UPPER_BOUND`, `LOWER_BOUND`, `UNKNOWN`); `totalBound` is `lower` or `upper` when the total is a bound; `gate` is there with `--fail-over`; `baseError` says why no action has a `base`; `unsetSetting` names the setting that would dry run against prod's tables (`prodCompilerOptions`, or `dbtProdTarget`) when nothing sets it.
 
 `baseTotalBytes` is what the same actions scanned at the merge-base, a new action counting nothing, and `deltaTotalBytes` how many more the branch scans; both are `null` when the merge-base couldn't be compiled or an action other than a new one has no `base`.
+An action dry run without the DML in its pre_operations has `leftOutDML`: the `table` it writes to and the `permission` BigQuery said you haven't got (`bigquery.tables.updateData`).
 `dryRunIn` is the project the dry runs ran in, with their location (left out when they ran in more than one), and an action's `dryRunAs` is the table they read for it when that isn't its `name` (prod's, with `prodCompilerOptions`).
 When an incremental table's first build is in the total, `laterBytes`, `laterUsd` and `laterBound` give each run after the first, with its incremental run instead.
 
