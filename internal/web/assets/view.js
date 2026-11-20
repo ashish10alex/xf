@@ -788,7 +788,8 @@ function TermBody({ focused }) {
 
 // termTabs are the terminal's tabs in the log pane's title: one for each
 // shell, named after the command running in it, else its shell (zsh),
-// × on the one shown, and + for another.
+// and numbered where two share a name (termLabel), × on the one shown,
+// and + for another.
 function termTabs() {
   const shown = S.logTab === 'term' ? st.activeTerm() : -1;
   const pick = (id) => (e) => { e.stopPropagation(); S.logTab = 'term'; S.termId = id; st.setFocus('log'); redraw(); };

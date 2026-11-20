@@ -76,7 +76,18 @@ test('closing the shell shown shows the one before it, or after the first, the o
 
 test('each tab is named after what runs in it, "terminal" before it has a name', () => {
   setTerms({ ids: [1, 2, 3], names: ['zsh', 'dbt', ''] });
-  assert.deepEqual([1, 2, 3, 9].map(termLabel), ['zsh', 'dbt', 'terminal', 'terminal']);
+  assert.deepEqual([1, 2, 3].map(termLabel), ['zsh', 'dbt', 'terminal']);
   setTerms({ ids: [2] });
   assert.equal(termLabel(2), 'terminal', 'a list with no names names nothing');
+});
+
+test('tabs that share a name are numbered by their place, which a neighbour\'s command doesn\'t move', () => {
+  setTerms({ ids: [4, 6, 8], names: ['zsh', 'dbt', 'zsh'] });
+  assert.deepEqual(S.terms.map(termLabel), ['zsh 1', 'dbt', 'zsh 3']);
+  setTerms({ ids: [4, 6, 8], names: ['zsh', 'zsh', 'zsh'] });
+  assert.deepEqual(S.terms.map(termLabel), ['zsh 1', 'zsh 2', 'zsh 3']);
+  setTerms({ ids: [4, 8], names: ['', ''] });
+  assert.deepEqual(S.terms.map(termLabel), ['terminal 1', 'terminal 2']);
+  setTerms({ ids: [4, 8], names: ['zsh', 'node'] });
+  assert.deepEqual(S.terms.map(termLabel), ['zsh', 'node'], 'no number once the names differ');
 });

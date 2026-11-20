@@ -69,8 +69,15 @@ export function setTerms(v) {
 }
 
 // termLabel is shell id's tab's name: the command running in it, else
-// its shell's (zsh); "terminal" for one not started or ended.
-export const termLabel = (id) => S.termNames[id] || 'terminal';
+// its shell's (zsh); "terminal" for one not started or ended. A name
+// another tab shares too gets the tab's place, counted from 1, so it
+// stays put when a neighbour's command starts or ends: zsh 1 │ dbt │ zsh 3.
+export function termLabel(id) {
+  const name = (id) => S.termNames[id] || 'terminal';
+  const n = name(id);
+  if (S.terms.filter((other) => name(other) === n).length < 2) return n;
+  return n + ' ' + (S.terms.indexOf(id) + 1);
+}
 
 // newTerm opens another shell, shows it and gives it the keys.
 export async function newTerm() {
