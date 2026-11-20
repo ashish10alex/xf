@@ -13,12 +13,14 @@ Run them in [GitHub Actions or GitLab CI](#in-ci), give them to [a coding agent]
 $ xf cost --fail-over 1TB
 4 changed actions in feat/orders-v2 vs origin/main @ 4e1c9a2 (working tree)
 dry run in analytics-prod (US) · compiled with prodCompilerOptions
-⚠ marts.fct_order_items      1.42 TiB   $8.89  new                   [MISSING PARTITION FILTER: order_date on staging.order_lines]
-✓ marts.fct_orders         214.08 GiB   $1.31  -96.12 GiB (-$0.587)  (was 310.20 GiB · $1.89)
-✓ marts.agg_daily_revenue   38.50 GiB  $0.235  +12.75 GiB (+$0.078)  (was 25.75 GiB · $0.157)
-✓ marts.dim_customers        4.67 GiB  $0.028  no change
-────────────────────────────────────────────────────────────
-Total scanned: 1.67 TiB | Estimated cost: $10.46
+
+  action                           origin/main       feat/orders-v2                change
+⚠ marts.fct_order_items              —             1.42 TiB   $8.87          new           [MISSING PARTITION FILTER: order_date on staging.order_lines]
+✓ marts.fct_orders          310.20 GiB   $1.89   214.08 GiB   $1.31   -96.12 GiB  -$0.587
+✓ marts.agg_daily_revenue    25.75 GiB  $0.157    38.50 GiB  $0.235   +12.75 GiB  +$0.078
+✓ marts.dim_customers         4.67 GiB  $0.029     4.67 GiB  $0.029    no change
+─────────────────────────────────────────────────────────────────────────────────────────
+  total                     340.62 GiB   $2.08     1.67 TiB  $10.45    +1.34 TiB   +$8.37
 ✗ Gate failed: 1.67 TiB exceeds the limit of 1.00 TiB
 ```
 

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -87,7 +88,7 @@ const (
 
 // paint wraps s in the ANSI styles, when o.Color is set and s isn't empty.
 func (o Options) paint(s string, styles ...string) string {
-	if !o.Color || s == "" {
+	if !o.Color || s == "" || len(styles) == 0 {
 		return s
 	}
 	return "\x1b[" + strings.Join(styles, ";") + "m" + s + "\x1b[0m"
@@ -333,8 +334,10 @@ func waitsByAction(r *Report) map[string][]string {
 	return out
 }
 
-// Text is the report for a terminal: a line per action, most bytes first,
-// the total, and how it compares with o.Threshold.
+// Text is the report for a terminal: a table of the estimated actions,
+// most bytes first, with what each scanned and cost at the merge-base, on
+// the branch, and the change; their total; the actions not estimated, with
+// why; and how the total compares with o.Threshold.
 func Text(r *Report, o Options) string {
 	if r.PastRuns != nil {
 		return pastText(r, o)
@@ -359,19 +362,42 @@ func Text(r *Report, o Options) string {
 	if len(actions) == 0 && hidden > 0 {
 		b.WriteString("Nothing needs attention.\n")
 	}
-	var nameW, sizeW, costW, deltaW int
+	var estimated, others []Action
 	for _, a := range actions {
-		nameW = max(nameW, utf8.RuneCountInString(impact.ShortTable(a.Name)))
 		if a.Estimate != nil {
-			sizeW = max(sizeW, utf8.RuneCountInString(Size(*a.Estimate)))
-			costW = max(costW, len(FormatUSD(o.USD(a.Estimate.Bytes))))
-			deltaW = max(deltaW, utf8.RuneCountInString(ChangeText(a, o)))
+			estimated = append(estimated, a)
+		} else {
+			others = append(others, a)
 		}
 	}
-	waits := waitsByAction(r)
-	for _, a := range actions {
-		name := impact.ShortTable(a.Name)
-		if a.Estimate == nil {
+	t := costTable(r, estimated, o)
+	if len(estimated) > 0 {
+		b.WriteString("\n" + t.line(t.header, o) + "\n")
+		for _, row := range t.rows {
+			b.WriteString(t.line(row, o) + "\n")
+		}
+	}
+	if line := HiddenLine(hidden, o); line != "" {
+		b.WriteString(o.paint(line, ansiDim) + "\n")
+	}
+	if len(estimated) > 0 {
+		b.WriteString(o.paint(strings.Repeat("─", max(t.width(), 60)), ansiDim) + "\n")
+		b.WriteString(t.line(t.total, o) + "\n")
+	} else {
+		b.WriteString(o.paint(strings.Repeat("─", 60), ansiDim) + "\n")
+		b.WriteString(o.paint(TotalLine(r, o), ansiBold) + "\n")
+	}
+	if later := LaterLine(r, o); later != "" {
+		b.WriteString(later + "\n")
+	}
+	if len(others) > 0 {
+		b.WriteString("\n" + o.paint("Not estimated, so not in the total:", ansiBold) + "\n")
+		nameW := 0
+		for _, a := range others {
+			nameW = max(nameW, utf8.RuneCountInString(impact.ShortTable(a.Name)))
+		}
+		waits := waitsByAction(r)
+		for _, a := range others {
 			why := a.WhyNot()
 			if w := waits[a.Name]; len(w) > 0 {
 				var short []string
@@ -383,50 +409,13 @@ func Text(r *Report, o Options) string {
 					why = "waits on a new table no run has built yet: " + short[0]
 				}
 			}
-			b.WriteString(o.paint("?", ansiYellow) + " " + pad(name, nameW) + "  " + o.paint("not estimated: "+why, ansiDim) + "\n")
-			continue
+			b.WriteString(o.paint("?", ansiYellow) + " " + pad(impact.ShortTable(a.Name), nameW) + "  " + o.paint(why, ansiDim) + "\n")
 		}
-		mark, warn := o.paint("✓", ansiGreen), len(a.Unfiltered) > 0
-		if warn {
-			mark = o.paint("⚠", ansiYellow)
-		}
-		size := padLeft(Size(*a.Estimate), sizeW)
-		if warn {
-			size = o.paint(size, ansiBold, ansiYellow)
-		} else {
-			size = o.paint(size, ansiBold)
-		}
-		parts := []string{mark + " " + pad(name, nameW), size, o.paint(padLeft(FormatUSD(o.USD(a.Estimate.Bytes)), costW), ansiDim)}
-		if deltaW > 0 {
-			text := ChangeText(a, o)
-			parts = append(parts, o.paintDelta(a, text)+strings.Repeat(" ", deltaW-utf8.RuneCountInString(text)))
-		}
-		if was := WasText(a, o); was != "" {
-			parts = append(parts, o.paint("(was "+was+")", ansiDim))
-		}
-		if a.Full != nil {
-			parts = append(parts, o.paint("(full refresh "+Size(*a.Full)+" · "+FormatUSD(o.USD(a.Full.Bytes))+")", ansiDim))
-		}
-		if a.FirstBuild {
-			parts = append(parts, o.paint("("+FirstBuildNote(a, o)+")", ansiDim))
-		}
-		for _, d := range a.FromDev {
-			parts = append(parts, o.paint("(reads "+impact.ShortTable(d.Table)+" from dev)", ansiDim))
-		}
-		for _, u := range a.Unfiltered {
-			parts = append(parts, o.paint(fmt.Sprintf("[MISSING PARTITION FILTER: %s on %s]", u.Column, impact.ShortTable(u.Table)), ansiYellow))
-		}
-		b.WriteString(strings.TrimRight(strings.Join(parts, "  "), " ") + "\n")
-	}
-	if line := HiddenLine(hidden, o); line != "" {
-		b.WriteString(o.paint(line, ansiDim) + "\n")
-	}
-	b.WriteString(o.paint(strings.Repeat("─", 60), ansiDim) + "\n")
-	b.WriteString(o.paint(TotalLine(r, o), ansiBold) + "\n")
-	if later := LaterLine(r, o); later != "" {
-		b.WriteString(later + "\n")
 	}
 	if gate := GateLine(r, o); gate != "" {
+		if len(others) > 0 {
+			b.WriteString("\n")
+		}
 		if r.Exceeds(o.Threshold) {
 			b.WriteString(o.paint("✗ "+gate, ansiBold, ansiRed) + "\n")
 		} else {
@@ -434,6 +423,176 @@ func Text(r *Report, o Options) string {
 		}
 	}
 	return b.String()
+}
+
+// tcell is a cell of Text's table: its text and ANSI styles.
+type tcell struct {
+	text   string
+	styles []string
+}
+
+func cellOf(text string, styles ...string) tcell { return tcell{text, styles} }
+
+// trow is a row of Text's table: a mark, the action's name, a cell per
+// figure column, and notes after them that need no column.
+type trow struct {
+	header bool   // the labels over the columns
+	mark   string // painted already
+	name   tcell
+	cells  []tcell
+	notes  []string // painted already
+}
+
+// ttable is Text's table: a group of two figure columns, bytes and
+// dollars, per run compared (the merge-base, when known, and the branch),
+// then the change, when known; and a total row under them.
+type ttable struct {
+	header trow
+	rows   []trow
+	total  trow
+	groups []string // the label over each group of two columns
+	widths []int    // the name's, then each figure column's
+}
+
+// costTable lays out the estimated actions of r.
+func costTable(r *Report, estimated []Action, o Options) ttable {
+	withBase := r.Comparison != nil && r.BaseError == ""
+	head := "estimate"
+	t := ttable{groups: []string{head}}
+	if c := r.Comparison; c != nil {
+		head = c.HeadRef
+		t.groups = []string{head}
+	}
+	if withBase {
+		t.groups = []string{r.Comparison.BaseRef, head, "change"}
+	}
+	for _, a := range estimated {
+		row := trow{mark: o.paint("✓", ansiGreen), name: cellOf(impact.ShortTable(a.Name))}
+		warn := len(a.Unfiltered) > 0
+		if warn {
+			row.mark = o.paint("⚠", ansiYellow)
+		}
+		if withBase {
+			switch {
+			case a.New:
+				row.cells = append(row.cells, cellOf("—", ansiDim), cellOf(""))
+			case a.Base != nil:
+				row.cells = append(row.cells, cellOf(Size(*a.Base), ansiDim), cellOf(FormatUSD(o.USD(a.Base.Bytes)), ansiDim))
+			default:
+				row.cells = append(row.cells, cellOf("?", ansiDim), cellOf(""))
+			}
+		}
+		size := cellOf(Size(*a.Estimate), ansiBold)
+		if warn {
+			size.styles = []string{ansiBold, ansiYellow}
+		}
+		row.cells = append(row.cells, size, cellOf(FormatUSD(o.USD(a.Estimate.Bytes)), ansiDim))
+		if withBase {
+			d, ok := a.Delta()
+			style := map[bool]string{true: ansiRed, false: ansiGreen}[d > 0]
+			switch {
+			case a.New:
+				row.cells = append(row.cells, cellOf("new", ansiCyan), cellOf(""))
+			case !ok:
+				row.cells = append(row.cells, cellOf(""), cellOf(""))
+			case d == 0:
+				row.cells = append(row.cells, cellOf("no change", ansiDim), cellOf(""))
+			default:
+				row.cells = append(row.cells, cellOf(DeltaText(a), style), cellOf(SignedUSD(o.USD(d)), style))
+			}
+		}
+		if a.Full != nil {
+			row.notes = append(row.notes, o.paint("(full refresh "+Size(*a.Full)+" · "+FormatUSD(o.USD(a.Full.Bytes))+")", ansiDim))
+		}
+		if a.FirstBuild {
+			row.notes = append(row.notes, o.paint("("+FirstBuildNote(a, o)+")", ansiDim))
+		}
+		for _, d := range a.FromDev {
+			row.notes = append(row.notes, o.paint("(reads "+impact.ShortTable(d.Table)+" from dev)", ansiDim))
+		}
+		for _, u := range a.Unfiltered {
+			row.notes = append(row.notes, o.paint(fmt.Sprintf("[MISSING PARTITION FILTER: %s on %s]", u.Column, impact.ShortTable(u.Table)), ansiYellow))
+		}
+		t.rows = append(t.rows, row)
+	}
+
+	total, bound := r.Total()
+	t.total = trow{mark: " ", name: cellOf("total", ansiBold)}
+	baseTotal, baseKnown := r.BaseTotal()
+	if withBase {
+		if baseKnown {
+			t.total.cells = append(t.total.cells, cellOf(warehouse.FormatBytes(baseTotal), ansiDim), cellOf(FormatUSD(o.USD(baseTotal)), ansiDim))
+		} else {
+			t.total.cells = append(t.total.cells, cellOf("?", ansiDim), cellOf(""))
+		}
+	}
+	t.total.cells = append(t.total.cells, cellOf(bound+warehouse.FormatBytes(total), ansiBold), cellOf(bound+FormatUSD(o.USD(total)), ansiBold))
+	if withBase {
+		d := total - baseTotal
+		switch {
+		case !baseKnown:
+			t.total.cells = append(t.total.cells, cellOf(""), cellOf(""))
+		case d == 0:
+			t.total.cells = append(t.total.cells, cellOf("no change", ansiDim), cellOf(""))
+		case d < 0:
+			t.total.cells = append(t.total.cells, cellOf("-"+warehouse.FormatBytes(-d), ansiGreen), cellOf(SignedUSD(o.USD(d)), ansiGreen))
+		default:
+			t.total.cells = append(t.total.cells, cellOf("+"+warehouse.FormatBytes(d), ansiRed), cellOf(SignedUSD(o.USD(d)), ansiRed))
+		}
+	}
+
+	t.widths = make([]int, 1+2*len(t.groups))
+	for _, row := range append(slices.Clone(t.rows), t.total) {
+		t.widths[0] = max(t.widths[0], utf8.RuneCountInString(row.name.text))
+		for i, c := range row.cells {
+			t.widths[i+1] = max(t.widths[i+1], utf8.RuneCountInString(c.text))
+		}
+	}
+	t.widths[0] = max(t.widths[0], len("action"))
+	// A group's label longer than its two columns widens the first.
+	for g, label := range t.groups {
+		if short := utf8.RuneCountInString(label) - (t.widths[1+2*g] + 2 + t.widths[2+2*g]); short > 0 {
+			t.widths[1+2*g] += short
+		}
+	}
+	t.header = trow{header: true, mark: " ", name: cellOf("action", ansiDim)}
+	for _, label := range t.groups {
+		t.header.cells = append(t.header.cells, cellOf(""), cellOf(label, ansiDim))
+	}
+	return t
+}
+
+// width is how wide the table's figures are, without notes.
+func (t ttable) width() int {
+	w := 2 + t.widths[0]
+	for g := range t.groups {
+		w += 3 + t.widths[1+2*g] + 2 + t.widths[2+2*g]
+	}
+	return w
+}
+
+// line is row laid out in t's columns: the name left-aligned, each figure
+// right-aligned, two spaces between a group's columns and three between
+// groups. A header row's label spans its group, right-aligned.
+func (t ttable) line(row trow, o Options) string {
+	var b strings.Builder
+	b.WriteString(row.mark + " " + o.paint(row.name.text, row.name.styles...) + strings.Repeat(" ", t.widths[0]-utf8.RuneCountInString(row.name.text)))
+	for g := range t.groups {
+		first, second := row.cells[2*g], row.cells[2*g+1]
+		b.WriteString("   ")
+		if row.header {
+			// Its label is over the whole group.
+			span := t.widths[1+2*g] + 2 + t.widths[2+2*g]
+			b.WriteString(strings.Repeat(" ", span-utf8.RuneCountInString(second.text)) + o.paint(second.text, second.styles...))
+			continue
+		}
+		b.WriteString(strings.Repeat(" ", t.widths[1+2*g]-utf8.RuneCountInString(first.text)) + o.paint(first.text, first.styles...))
+		b.WriteString("  " + strings.Repeat(" ", t.widths[2+2*g]-utf8.RuneCountInString(second.text)) + o.paint(second.text, second.styles...))
+	}
+	for _, n := range row.notes {
+		b.WriteString("  " + n)
+	}
+	return strings.TrimRight(b.String(), " ")
 }
 
 // runCell is a run's scans and cost in a Markdown table, "**4.20 GiB** ·

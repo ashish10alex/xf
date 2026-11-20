@@ -541,18 +541,23 @@ When a run fails, the engine's log is `xf-<hash>-<tool>-<variant>-v<n>.log` in `
 
 ## Query cost in CI/CD
 
-`xf cost` estimates what a pull request's changed actions would scan and prints a line for each, with progress on stderr.
+`xf cost` estimates what a pull request's changed actions would scan and prints them as a table, with progress on stderr: each action's bytes and dollars at the merge-base, on the branch, and the change, with a total row under them. The actions BigQuery gave no figure for follow the table, with why.
 It works in Dataform and dbt projects, always checks afresh, and starts and stops its own `xf serve` as `xf impact` does.
 
 ```text
 $ xf cost --fail-over 100GB
 4 changed actions in feature/v2-marts vs origin/main @ 1125280 (working tree)
-⚠ marts.fct_order_items  ≤ 4.20 TiB  $26.25  +4.20 TiB  (full refresh 9.00 TiB)  [MISSING PARTITION FILTER: event_date on raw.events]
-✓ marts.dim_customers      1.80 GiB  $0.011  new
-✓ staging.stg_pageviews  420.00 MiB  $0.003  no change
-? ops.audit_log          not estimated: BigQuery gives no estimate for a script
-────────────────────────────────────────────────────────────
-Total scanned: ≤ 4.20 TiB | Estimated cost: ≤ $26.26
+
+  action                         origin/main       feature/v2-marts               change
+⚠ marts.fct_order_items     3.00 GiB  $0.018   ≤ 4.20 TiB    $26.25   +4.20 TiB  +$26.23  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
+✓ marts.dim_customers              —             1.80 GiB    $0.011         new
+✓ staging.stg_pageviews   420.00 MiB  $0.003   420.00 MiB    $0.003   no change
+────────────────────────────────────────────────────────────────────────────────────────
+  total                     3.41 GiB  $0.021   ≤ 4.20 TiB  ≤ $26.26   +4.20 TiB  +$26.24
+
+Not estimated, so not in the total:
+? ops.audit_log  BigQuery gives no estimate for a script
+
 ✗ Gate failed: 4.20 TiB exceeds the limit of 100.00 GiB
 ```
 
@@ -567,7 +572,7 @@ What each column means is under [Check what your branch would cost](#check-what-
 The limit is on the total bytes, not the dollars, so the price never decides a build.
 An action that couldn't be estimated is left out of the total and never trips the limit; `xf cost` says how many there were on stderr.
 A missing partition filter is a warning only.
-If the merge-base can't be compiled, the report has no change column, stderr says why, and the exit code is the same as with one.
+If the merge-base can't be compiled, the report has no merge-base or change columns, stderr says why, and the exit code is the same as with one.
 
 | Flag | |
 |---|---|

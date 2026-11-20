@@ -383,19 +383,24 @@ func testReport() *Report {
 func TestText(t *testing.T) {
 	got := Text(testReport(), Options{Threshold: 100 * gib})
 	want := `4 changed actions in feat/v2 vs origin/main @ abc1234 (working tree)
-⚠ marts.fct_order_items  ≤ 4.20 TiB  $26.25  +4.20 TiB (+$26.23)  (was 3.00 GiB · $0.018)  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
-✓ marts.dim_customers      1.80 GiB  $0.011  new
-✓ marts.stg_pageviews    420.00 MiB  $0.003  no change
-? marts.load             not estimated: BigQuery gives no estimate for a script
-────────────────────────────────────────────────────────────
-Total scanned: ≤ 4.20 TiB | Estimated cost: ≤ $26.26
+
+  action                         origin/main                feat/v2               change
+⚠ marts.fct_order_items     3.00 GiB  $0.018   ≤ 4.20 TiB    $26.25   +4.20 TiB  +$26.23  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
+✓ marts.dim_customers              —             1.80 GiB    $0.011         new
+✓ marts.stg_pageviews     420.00 MiB  $0.003   420.00 MiB    $0.003   no change
+────────────────────────────────────────────────────────────────────────────────────────
+  total                     3.41 GiB  $0.021   ≤ 4.20 TiB  ≤ $26.26   +4.20 TiB  +$26.24
+
+Not estimated, so not in the total:
+? marts.load  BigQuery gives no estimate for a script
+
 ✗ Gate failed: 4.20 TiB exceeds the limit of 100.00 GiB
 `
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 	// Another price changes the dollars, never the gate.
-	if cheap := Text(testReport(), Options{Threshold: 100 * gib, USDPerTiB: 1}); !strings.Contains(cheap, "Estimated cost: ≤ $4.20") || !strings.Contains(cheap, "✗ Gate failed") {
+	if cheap := Text(testReport(), Options{Threshold: 100 * gib, USDPerTiB: 1}); !strings.Contains(cheap, "≤ $4.20   +4.20 TiB  +$4.20\n") || !strings.Contains(cheap, "✗ Gate failed") {
 		t.Errorf("at $1 per TiB:\n%s", cheap)
 	}
 	if strings.Contains(Text(testReport(), Options{}), "Gate") {
@@ -435,10 +440,11 @@ func TestTextInColor(t *testing.T) {
 		t.Errorf("without its escapes:\n%s\nwant:\n%s", stripped, plain)
 	}
 	for _, want := range []string{
-		"\x1b[33m⚠\x1b[0m marts.fct_order_items", "\x1b[1;33m≤ 4.20 TiB\x1b[0m", "\x1b[31m+4.20 TiB (+$26.23)\x1b[0m",
+		"\x1b[33m⚠\x1b[0m marts.fct_order_items", "\x1b[1;33m≤ 4.20 TiB\x1b[0m", "\x1b[31m+4.20 TiB\x1b[0m  \x1b[31m+$26.23\x1b[0m",
 		"\x1b[33m[MISSING PARTITION FILTER: event_date on raw.events]\x1b[0m",
 		"\x1b[32m✓\x1b[0m marts.dim_customers", "\x1b[36mnew\x1b[0m",
-		"\x1b[33m?\x1b[0m marts.load", "\x1b[2mnot estimated: BigQuery gives no estimate for a script\x1b[0m",
+		"\x1b[33m?\x1b[0m marts.load", "\x1b[2mBigQuery gives no estimate for a script\x1b[0m",
+		"\x1b[2m3.00 GiB\x1b[0m  \x1b[2m$0.018\x1b[0m", "\x1b[1mtotal\x1b[0m",
 		"\x1b[1;31m✗ Gate failed: 4.20 TiB exceeds the limit of 100.00 GiB\x1b[0m",
 	} {
 		if !strings.Contains(got, want) {
@@ -818,7 +824,7 @@ func TestRunListsEveryNewTableADryRunWaitsOn(t *testing.T) {
 	if len(s) != 1 || !slices.Equal(s[0].Waits, []string{"acme.marts.b_new", "acme.marts.a_new"}) {
 		t.Fatalf("skipped %+v: the table BigQuery named first, then the others", s)
 	}
-	if text := Text(r, Options{}); !strings.Contains(text, "not estimated: waits on 2 new tables no run has built yet: marts.b_new, marts.a_new") {
+	if text := Text(r, Options{}); !strings.Contains(text, "? marts.out  waits on 2 new tables no run has built yet: marts.b_new, marts.a_new") {
 		t.Errorf("Text:\n%s", text)
 	}
 	data, err := JSON(r, Options{})
@@ -877,12 +883,16 @@ func TestExplanation(t *testing.T) {
 func TestAttentionListsOnlyWhatNeedsALook(t *testing.T) {
 	got := Text(testReport(), Options{Attention: true})
 	want := `4 changed actions in feat/v2 vs origin/main @ abc1234 (working tree)
-⚠ marts.fct_order_items  ≤ 4.20 TiB  $26.25  +4.20 TiB (+$26.23)  (was 3.00 GiB · $0.018)  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
-✓ marts.dim_customers      1.80 GiB  $0.011  new
-? marts.load             not estimated: BigQuery gives no estimate for a script
+
+  action                       origin/main                feat/v2               change
+⚠ marts.fct_order_items   3.00 GiB  $0.018   ≤ 4.20 TiB    $26.25   +4.20 TiB  +$26.23  (full refresh 9.00 TiB · $56.25)  [MISSING PARTITION FILTER: event_date on raw.events]
+✓ marts.dim_customers            —             1.80 GiB    $0.011         new
 Not shown: 1 more action, estimated with partition filters and scanning less than 1.00 GiB more than at the merge-base; the total counts it.
-────────────────────────────────────────────────────────────
-Total scanned: ≤ 4.20 TiB | Estimated cost: ≤ $26.26
+──────────────────────────────────────────────────────────────────────────────────────
+  total                   3.41 GiB  $0.021   ≤ 4.20 TiB  ≤ $26.26   +4.20 TiB  +$26.24
+
+Not estimated, so not in the total:
+? marts.load  BigQuery gives no estimate for a script
 `
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
@@ -935,8 +945,8 @@ func TestRunTellsADryRunWaitingOnAColumnTheBranchAdds(t *testing.T) {
 	}
 	text := Text(r, Options{})
 	for _, want := range []string{
-		"? marts.dates     not estimated: waits on a column this branch adds that no run has built yet: week2 of marts.combined",
-		"? marts.typo      not estimated: dry run failed: Unrecognized name: wek2",
+		"? marts.dates  waits on a column this branch adds that no run has built yet: week2 of marts.combined",
+		"? marts.typo   dry run failed: Unrecognized name: wek2",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("no %q in Text:\n%s", want, text)
