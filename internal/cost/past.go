@@ -33,6 +33,14 @@ type PastRuns struct {
 	Why string `json:"why,omitempty"`
 	// Truncated says the history was read only in part.
 	Truncated bool `json:"truncated,omitempty"`
+	// NoReadRows is set when the warehouse's query history does not report
+	// rows read (Snowflake reports bytes scanned and rows produced, not rows
+	// read), so text/markdown/web omit the "Rows read" column instead of
+	// showing 0.
+	NoReadRows bool `json:"noReadRows,omitempty"`
+	// WarehouseUsed names the warehouse queried to read history when reading
+	// history itself consumes compute (Snowflake ACCOUNT_USAGE).
+	WarehouseUsed string `json:"warehouseUsed,omitempty"`
 }
 
 // PastRun is a changed model and its latest run, if it has one.
@@ -43,9 +51,9 @@ type PastRun struct {
 	// New is set on a model the merge-base doesn't have.
 	New bool `json:"new,omitempty"`
 	// Ran says a run was found; the rest is about it.
-	Ran       bool          `json:"ran"`
-	Started   time.Time     `json:"started,omitzero"`
-	Duration  time.Duration `json:"durationNs,omitempty"`
+	Ran      bool          `json:"ran"`
+	Started  time.Time     `json:"started,omitzero"`
+	Duration time.Duration `json:"durationNs,omitempty"`
 	// ReadBytes and ReadRows are what the run read. Query History counts
 	// no rows a CREATE OR REPLACE TABLE writes.
 	ReadBytes int64  `json:"readBytes,omitempty"`
@@ -124,6 +132,9 @@ func (r PastRun) NoRunText(p *PastRuns) string {
 func PastLine(r *Report, code func(string) string) string {
 	p := r.PastRuns
 	s := "Last runs from " + p.Source
+	if p.WarehouseUsed != "" {
+		s += " (read on virtual warehouse " + code(p.WarehouseUsed) + ")"
+	}
 	if p.Target != "" {
 		s += ", target " + code(p.Target)
 	}
@@ -180,6 +191,11 @@ func pastText(r *Report, o Options) string {
 			fmt.Fprintf(&b, "  %s  %s\n", name, o.paint(run.NoRunText(p), ansiDim))
 			continue
 		}
+		if p.NoReadRows {
+			fmt.Fprintf(&b, "  %s  ran %s · %s · read %s · on %s\n", name, run.When(), run.Took(),
+				warehouse.FormatBytes(run.ReadBytes), run.Warehouse)
+			continue
+		}
 		fmt.Fprintf(&b, "  %s  ran %s · %s · read %s, %s rows · on %s\n", name, run.When(), run.Took(),
 			warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.Warehouse)
 	}
@@ -211,15 +227,28 @@ func pastMarkdown(r *Report, o Options) string {
 		lines = append(lines, "Nothing to show: the branch changes no model.")
 		return strings.Join(lines, "\n") + "\n"
 	}
-	lines = append(lines, "**"+PastTotalLine(r)+"**", "",
-		"| Model | Type | Last run | Took | Read | Rows read | Warehouse |", "| --- | --- | --- | --: | --: | --: | --- |")
-	for _, run := range p.Runs {
-		if !run.Ran {
-			lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | | |", run.Name, run.Type, run.NoRunText(p)))
-			continue
+	if p.NoReadRows {
+		lines = append(lines, "**"+PastTotalLine(r)+"**", "",
+			"| Model | Type | Last run | Took | Read | Warehouse |", "| --- | --- | --- | --: | --: | --- |")
+		for _, run := range p.Runs {
+			if !run.Ran {
+				lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | |", run.Name, run.Type, run.NoRunText(p)))
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s |", run.Name, run.Type, run.When(), run.Took(),
+				warehouse.FormatBytes(run.ReadBytes), run.Warehouse))
 		}
-		lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s | %s |", run.Name, run.Type, run.When(), run.Took(),
-			warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.Warehouse))
+	} else {
+		lines = append(lines, "**"+PastTotalLine(r)+"**", "",
+			"| Model | Type | Last run | Took | Read | Rows read | Warehouse |", "| --- | --- | --- | --: | --: | --: | --- |")
+		for _, run := range p.Runs {
+			if !run.Ran {
+				lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | | |", run.Name, run.Type, run.NoRunText(p)))
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s | %s |", run.Name, run.Type, run.When(), run.Took(),
+				warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.Warehouse))
+		}
 	}
 	if line := GateLine(r, o); line != "" {
 		lines = append(lines, "", line)

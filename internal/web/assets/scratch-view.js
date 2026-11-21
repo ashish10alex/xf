@@ -72,7 +72,10 @@ function DryChip() {
     return html`<span class="error" title=${d.error}>dry run ✗ ${shortErr(d.error)}</span>`;
   }
   if (d.noDryRun) {
-    return html`<span class="chip dry" title="Databricks has no dry run. A run starts the SQL warehouse when it is stopped, and it bills while it runs.">no dry run${d.statementType && d.statementType !== 'SELECT' ? ' · ' + d.statementType : ''}${d.writes ? html` <b class="warn">changes data</b>` : ''}</span>`;
+    const tip = sc.onSf()
+      ? 'Snowflake has no dry run. A run resumes the virtual warehouse when it is suspended, and it bills while it runs.'
+      : 'Databricks has no dry run. A run starts the SQL warehouse when it is stopped, and it bills while it runs.';
+    return html`<span class="chip dry" title=${tip}>no dry run${d.statementType && d.statementType !== 'SELECT' ? ' · ' + d.statementType : ''}${d.writes ? html` <b class="warn">changes data</b>` : ''}</span>`;
   }
   const tone = sc.dryTone(d);
   const bits = [`dry run:${d.accuracy === 'UNKNOWN' ? 'unknown size' : sc.fmtBytes(d.bytes)}${d.cost ? ' ≈ ' + d.cost : ''}`];
@@ -101,7 +104,7 @@ function RunLine({ ctx = SC, cancel = sc.cancelRun, csvName = '' }) {
   const bits = [];
   switch (run.phase) {
     case 'starting': case 'running': case 'loading':
-      bits.push(html`<span class="warn">${SPIN[Math.floor(Date.now() / 90) % SPIN.length]} ${run.phase === 'loading' ? 'reading rows' : st.starting ? 'SQL warehouse starting' : 'running'} ${elapsed}</span>`);
+      bits.push(html`<span class="warn">${SPIN[Math.floor(Date.now() / 90) % SPIN.length]} ${run.phase === 'loading' ? 'reading rows' : st.starting ? (sc.onSf() ? 'virtual warehouse resuming' : 'SQL warehouse starting') : 'running'} ${elapsed}</span>`);
       if (run.phase !== 'loading') bits.push(html`<button class="link error" onClick=${() => cancel()}>cancel (ctrl+c)</button>`);
       break;
     case 'failed': case 'cancelled':
@@ -111,13 +114,13 @@ function RunLine({ ctx = SC, cancel = sc.cancelRun, csvName = '' }) {
     default:
       bits.push(html`<span class="ok">✓ ${elapsed}</span>`);
   }
-  if (run.restored) bits.push(html`<span class="dim" title=${'A recent result, read again from ' + (sc.onDbx() ? 'Databricks, which keeps it a short while' : 'BigQuery, which keeps it about 24 hours') + '. It ran ' + new Date(run.restored).toLocaleString() + (ctx === SC && SC.cur && run.sql !== SC.cur.sql ? ', from SQL that has changed since' : '')}>ran ${sc.ago(run.restored)}</span>`);
+  if (run.restored) bits.push(html`<span class="dim" title=${'A recent result, read again from ' + (sc.onDbx() ? 'Databricks, which keeps it a short while' : sc.onSf() ? 'Snowflake, which keeps it about 24 hours' : 'BigQuery, which keeps it about 24 hours') + '. It ran ' + new Date(run.restored).toLocaleString() + (ctx === SC && SC.cur && run.sql !== SC.cur.sql ? ', from SQL that has changed since' : '')}>ran ${sc.ago(run.restored)}</span>`);
   if (st.statementType && st.statementType !== 'SELECT') bits.push(html`<span>${st.statementType}</span>`);
   if (run.phase === 'done') {
     if (run.schema && run.schema.length) bits.push(html`<span>${run.total.toLocaleString()} row${run.total === 1 ? '' : 's'}${run.next ? html` <span class="dim">(${run.rows.length.toLocaleString()} loaded)</span>` : ''}</span>`);
     if (st.dmlRows >= 0) bits.push(html`<span class="ok">${st.dmlRows.toLocaleString()} row${st.dmlRows === 1 ? '' : 's'} modified</span>`);
   }
-  if (run.phase === 'done' && st && !sc.onDbx()) { // Databricks bills warehouse time, not bytes
+  if (run.phase === 'done' && st && !sc.onDemand()) { // Databricks and Snowflake bill warehouse time, not bytes
     bits.push(st.cacheHit ? html`<span class="dim">cache hit · $0</span>`
       : html`<span title=${st.cost ? 'The bytes BigQuery billed, and their on-demand price ($6.25 per TiB)' : ''}>billed ${sc.fmtBytes(st.bytesBilled)}${st.cost ? ' ≈ ' + st.cost : ''}</span>`);
   }
@@ -331,7 +334,7 @@ function FilterBar({ ctx = SC }) {
   } else {
     const vis = sc.visibleRows(run, ctx) || [];
     bits.push(html`<span>${active.length ? `${vis.length.toLocaleString()} of ${run.rows.length.toLocaleString()}${run.next ? ' loaded' : ''} rows match` : `the ${run.rows.length.toLocaleString()} loaded rows are sorted`}${active.length && sorting && run.next ? ', sorted' : ''}</span>`);
-    if (run.next && !sc.onDbx()) bits.push(html`<button class="link" title="Do it to every row in BigQuery, over the table it keeps this result in (enter in a filter)" onClick=${() => sc.searchAll(false, false, ctx)}>${what} all ${run.total.toLocaleString()} rows${run.searchBytes !== undefined && active.length ? ` (scans ${sc.fmtBytes(run.searchBytes)})` : ''}</button>`);
+    if (run.next && !sc.onDemand()) bits.push(html`<button class="link" title="Do it to every row in BigQuery, over the table it keeps this result in (enter in a filter)" onClick=${() => sc.searchAll(false, false, ctx)}>${what} all ${run.total.toLocaleString()} rows${run.searchBytes !== undefined && active.length ? ` (scans ${sc.fmtBytes(run.searchBytes)})` : ''}</button>`);
   }
   if (active.length) bits.push(html`<button class="link" onClick=${() => sc.clearFilters(ctx)}>✕ clear filters</button>`);
   if (sorting) bits.push(html`<button class="link" onClick=${() => sc.clearSort(ctx)}>✕ clear sort</button>`);
@@ -493,7 +496,7 @@ function RecentMenu() {
   const name = (id) => (SC.list.find((s) => s.id === id) || {}).from || 'scratch';
   return html`<div class="overlay-back win-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) sc.closeRecent(); }}>
     <div class="ctx-menu sc-recent" role="menu">
-      <div class="sc-recent-head dim">recent results · ${sc.onDbx() ? 'kept by Databricks a short while' : 'kept by BigQuery about 24 hours'}</div>
+      <div class="sc-recent-head dim">recent results · ${sc.onDbx() ? 'kept by Databricks a short while' : sc.onSf() ? 'kept by Snowflake about 24 hours' : 'kept by BigQuery about 24 hours'}</div>
       ${SC.recent.map((r, i) => {
         const gone = sc.recentGone(r);
         return html`<div class=${'ctx-row sc-recent-row' + (i === SC.recentCursor ? ' cur' : '') + (gone ? ' off' : '')} role="menuitem"
@@ -561,7 +564,7 @@ function growField(e) { const el = e.currentTarget; el.size = fieldSize(el.value
 function WarehouseMenu() {
   if (!SC.whOpen || !SC.standalone) return null;
   const list = S.scratchWarehouses || [];
-  const cur = sc.onDbx() ? 'databricks' : 'bigquery';
+  const cur = (S.caps && S.caps.warehouse) || 'bigquery';
   return html`<div class="overlay-back win-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) sc.closeWarehouseMenu(); }}>
     <div class="ctx-menu sc-wh-menu" role="menu">
       <div class="sc-recent-head dim">scratch warehouse</div>
@@ -609,14 +612,14 @@ export function ScratchPage() {
             <button class="run-btn" onClick=${() => sc.runScratch()} disabled=${sc.isRunning() || !SC.cur}>▶ run <kbd>${/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘↵' : 'ctrl+↵'}</kbd></button>
             <${DryChip} />
             <span class="spacer"></span>
-            ${SC.standalone && sc.onDbx() && SC.dbx && html`<span class="sc-dbx-conn">
-              ${SC.dbx.hasProfiles && html`<button class=${'tool sc-dbx-chip' + (!SC.dbx.host ? ' warn' : '')} onClick=${() => openProfilePicker()} title=${SC.dbx.host ? 'Databricks profile (' + SC.dbx.host + ') — click to switch' : 'Pick a Databricks profile from ~/.databrickscfg'}>${SC.dbx.profile || (SC.dbx.host ? 'env host' : 'pick profile')}</button>`}
-              <button class=${'tool sc-dbx-chip' + (!SC.dbx.warehouse ? ' warn' : '')} onClick=${() => openWarehousePicker(() => {})} title=${SC.dbx.warehouse ? 'SQL warehouse ' + SC.dbx.warehouse + ' — click to switch' : 'Pick a Databricks SQL warehouse'}>${SC.dbx.warehouse ? 'wh:' + SC.dbx.warehouse : 'pick warehouse'}</button>
+            ${SC.standalone && sc.onDemand() && SC.dbx && html`<span class="sc-dbx-conn">
+              ${SC.dbx.hasProfiles && html`<button class=${'tool sc-dbx-chip' + (!SC.dbx.host ? ' warn' : '')} onClick=${() => openProfilePicker()} title=${SC.dbx.host ? (sc.onSf() ? 'Snowflake connection' : 'Databricks profile') + ' (' + SC.dbx.host + ') — click to switch' : (sc.onSf() ? 'Pick a Snowflake connection from ~/.snowflake/connections.toml' : 'Pick a Databricks profile from ~/.databrickscfg')}>${SC.dbx.profile || (SC.dbx.host ? (sc.onSf() ? 'env account' : 'env host') : (sc.onSf() ? 'pick connection' : 'pick profile'))}</button>`}
+              <button class=${'tool sc-dbx-chip' + (!SC.dbx.warehouse ? ' warn' : '')} onClick=${() => openWarehousePicker(() => {})} title=${SC.dbx.warehouse ? (sc.onSf() ? 'Virtual warehouse ' : 'SQL warehouse ') + SC.dbx.warehouse + ' — click to switch' : (sc.onSf() ? 'Pick a Snowflake virtual warehouse' : 'Pick a Databricks SQL warehouse')}>${SC.dbx.warehouse ? 'wh:' + SC.dbx.warehouse : 'pick warehouse'}</button>
             </span>`}
-            ${SC.cur && sc.onDbx() && html`<span class="sc-target" title="The catalog the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen SQL warehouse">
-              <input class="sc-target-in" list="sc-projects" value=${SC.cur.project || ''} placeholder="catalog" size=${fieldSize(SC.cur.project, 'catalog')} spellcheck="false" autocomplete="off" onFocus=${() => sc.loadProjects()} onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+            ${SC.cur && sc.onDemand() && html`<span class="sc-target" title=${sc.onSf() ? "The database the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen virtual warehouse" : "The catalog the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen SQL warehouse"}>
+              <input class="sc-target-in" list="sc-projects" value=${SC.cur.project || ''} placeholder=${sc.onSf() ? 'database' : 'catalog'} size=${fieldSize(SC.cur.project, sc.onSf() ? 'database' : 'catalog')} spellcheck="false" autocomplete="off" onFocus=${() => sc.loadProjects()} onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
             </span>`}
-            ${SC.cur && !sc.onDbx() && html`<span class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
+            ${SC.cur && !sc.onDemand() && html`<span class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
               <input class="sc-target-in" list="sc-projects" value=${SC.cur.project || ''} placeholder="project" size=${fieldSize(SC.cur.project, 'project')} spellcheck="false" autocomplete="off" onFocus=${() => sc.loadProjects()} onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), SC.cur.location || '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
               <span class="dim">·</span>
               <input class="sc-target-in" value=${SC.cur.location || ''} placeholder="location" size=${fieldSize(SC.cur.location, 'location')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(SC.cur.project || '', e.currentTarget.value.trim())} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />

@@ -532,9 +532,10 @@ type CostRow struct {
 // shows it, in place of the estimates' rows.
 type CostPast struct {
 	// Line says what the runs are; Why why none was found.
-	Line string        `json:"line"`
-	Why  string        `json:"why,omitempty"`
-	Rows []CostPastRow `json:"rows"`
+	Line       string        `json:"line"`
+	Why        string        `json:"why,omitempty"`
+	NoReadRows bool          `json:"noReadRows,omitempty"`
+	Rows       []CostPastRow `json:"rows"`
 }
 
 // CostPastRow is a changed model and its last run; Note says why it has
@@ -552,11 +553,14 @@ type CostPastRow struct {
 
 func pastView(r *cost.Report) *CostPast {
 	p := r.PastRuns
-	v := &CostPast{Line: cost.PastLine(r, func(s string) string { return s }) + ".", Why: strings.ReplaceAll(p.Why, "`", ""), Rows: []CostPastRow{}}
+	v := &CostPast{Line: cost.PastLine(r, func(s string) string { return s }) + ".", Why: strings.ReplaceAll(p.Why, "`", ""), NoReadRows: p.NoReadRows, Rows: []CostPastRow{}}
 	for _, run := range p.Runs {
 		row := CostPastRow{Action: impact.ShortTable(run.Name), Type: run.Type}
 		if run.Ran {
-			row.When, row.Took, row.Read, row.ReadRows, row.Warehouse = run.When(), run.Took(), warehouse.FormatBytes(run.ReadBytes), cost.RowsText(run.ReadRows), run.Warehouse
+			row.When, row.Took, row.Read, row.Warehouse = run.When(), run.Took(), warehouse.FormatBytes(run.ReadBytes), run.Warehouse
+			if !p.NoReadRows {
+				row.ReadRows = cost.RowsText(run.ReadRows)
+			}
 		} else {
 			row.Note = run.NoRunText(p)
 		}

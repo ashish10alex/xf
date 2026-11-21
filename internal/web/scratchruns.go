@@ -83,8 +83,8 @@ func (p *projectState) writeRuns(runs []scratchRun) error {
 }
 
 func (p *projectState) currentDbxHost() string {
-	if p.onDbx.Load() && p.dbx != nil && p.dbx.Host != nil {
-		return p.dbx.Host()
+	if od := p.onDemand(); od != nil && od.Host != nil {
+		return od.Host()
 	}
 	return ""
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/lsp"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/snowflake"
 	"github.com/ashish10alex/xf/internal/warehouse"
 	"github.com/ashish10alex/xf/internal/web"
 )
@@ -138,6 +139,7 @@ type projectWarehouse struct {
 
 	mu  sync.Mutex
 	dbx *databricks.Client
+	sf  *snowflake.Client
 }
 
 func newProjectWarehouse(root, target string, load func() (config.Loaded, error)) *projectWarehouse {
@@ -169,19 +171,24 @@ func (w *projectWarehouse) client(ctx context.Context) (warehouse.Warehouse, err
 
 // clientOf is the client of the warehouse kind.
 func (w *projectWarehouse) clientOf(ctx context.Context, kind string) (warehouse.Warehouse, error) {
-	if kind == project.Databricks {
+	switch kind {
+	case project.Databricks:
 		return w.databricks(), nil
+	case project.Snowflake:
+		return w.snowflake(), nil
 	}
 	return w.bq(ctx)
 }
 
-// errOnDemand is what a check xf would run on its own gets on Databricks.
-var errOnDemand = errors.New("checks on Databricks run only when asked: xf web's Check")
+// errOnDemand is what a check xf would run on its own gets on Databricks or
+// Snowflake.
+var errOnDemand = errors.New("checks on this warehouse run only when asked: xf web's Check")
 
 // autoClient is the client of the checks xf runs on its own (dry runs on a
-// save or a compile): none for Databricks.
+// save or a compile): none for Databricks or Snowflake.
 func (w *projectWarehouse) autoClient(ctx context.Context) (warehouse.Warehouse, error) {
-	if w.kind() == project.Databricks {
+	switch w.kind() {
+	case project.Databricks, project.Snowflake:
 		return nil, errOnDemand
 	}
 	return w.bq(ctx)
@@ -256,6 +263,197 @@ func (w *projectWarehouse) webDatabricks() *web.Databricks {
 
 // host is the Databricks workspace's URL, for links.
 func (w *projectWarehouse) host() string { return w.databricks().Host() }
+
+// snowflake is the Snowflake client, made on first use. Until a virtual
+// warehouse is chosen, each use checks the settings again so a pick saved in
+// .xf/config.json takes effect on the next check.
+func (w *projectWarehouse) snowflake() *snowflake.Client {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.sf == nil {
+		w.sf = snowflake.New(w.snowflakeConnection().Config)
+	} else if w.sf.Warehouse() == "" {
+		w.sf.SetWarehouse(w.snowflakeConnection().Warehouse)
+	}
+	return w.sf
+}
+
+func (w *projectWarehouse) snowflakeConnection() snowflake.Connection {
+	var s config.Settings
+	if w.load != nil {
+		if l, err := w.load(); err == nil {
+			s = l.Settings
+		}
+	}
+	t := w.dbtTarget()
+	return snowflake.Resolve(snowflake.Setup{
+		Warehouse:            s.SnowflakeWarehouse,
+		Connection:           s.SnowflakeConnection,
+		Account:              t.Account,
+		Host:                 t.Host,
+		User:                 t.User,
+		Role:                 t.Role,
+		TargetWarehouse:      t.Warehouse,
+		Database:             t.Database,
+		Schema:               t.Schema,
+		Authenticator:        t.Authenticator,
+		Token:                t.Token,
+		Password:             t.Password,
+		PrivateKeyPath:       t.PrivateKeyPath,
+		PrivateKey:           t.PrivateKey,
+		PrivateKeyPassphrase: t.PrivateKeyPassphrase,
+	})
+}
+
+// webSnowflake is what xf web needs of a dbt project that may build in
+// Snowflake: its account client, Snowsight links and virtual warehouses.
+func (w *projectWarehouse) webSnowflake() *web.Snowflake {
+	return &web.Snowflake{
+		TargetType: w.dbtTarget().Type,
+		Client: func(ctx context.Context) (warehouse.Warehouse, error) {
+			return w.clientOf(ctx, project.Snowflake)
+		},
+		Host: func() string { return w.snowflake().Host() },
+		TableURL: func(t project.Target) string {
+			c := w.snowflake()
+			return snowflake.SnowsightURL(cmp.Or(c.Account(), c.Host()), t.Database, t.Schema, t.Name)
+		},
+		Warehouses: func(ctx context.Context) ([]web.SQLWarehouse, error) {
+			list, err := w.snowflake().Warehouses(ctx)
+			out := make([]web.SQLWarehouse, 0, len(list))
+			for _, s := range list {
+				out = append(out, web.SQLWarehouse{ID: s.Name, Name: s.Name, State: s.State, Size: s.Size, Serverless: true})
+			}
+			return out, err
+		},
+		Choose: func(name string) (string, error) {
+			file, err := config.SetProjectKey(w.root, config.KeySnowflakeWarehouse, name)
+			if err == nil {
+				w.snowflake().SetWarehouse(name)
+			}
+			return file, err
+		},
+		Chosen:         func() bool { return w.snowflake().Warehouse() != "" },
+		WarehouseID:    func() string { return w.snowflake().Warehouse() },
+		ConfigKey:      config.KeySnowflakeWarehouse,
+		CatalogName:    "Snowflake",
+		WarehouseLabel: "virtual warehouse",
+		PaletteCommand: "Snowflake: choose the virtual warehouse",
+		AuthHint:       snowflake.AuthHint,
+	}
+}
+
+var errNoSnowflakeCostWarehouse = fmt.Errorf("%w: reading Snowflake Query History runs on a virtual warehouse: set snowflakeWarehouse (xf settings, or xf web asks), or the dbt target's warehouse", warehouse.ErrNoWarehouse)
+
+// snowflakeCost is query cost on Snowflake (ADR 0044), which bills virtual
+// warehouse compute time rather than bytes scanned: each changed model's
+// latest run with target from Snowflake Query History. Unlike Databricks'
+// REST Query History API, reading Snowflake's ACCOUNT_USAGE / INFORMATION_SCHEMA
+// executes on the virtual warehouse and may resume a suspended one.
+func (w *projectWarehouse) snowflakeCost(ctx context.Context, res *changes.Result, g *project.Graph, target string, progress func(cost.Progress)) (*cost.Report, error) {
+	target = cmp.Or(target, w.dbtTarget().Name)
+	report := &cost.Report{Comparison: impact.ComparisonOf(res), Actions: []cost.Action{},
+		PastRuns: &cost.PastRuns{Source: "Snowflake Query History", Target: target, Days: snowflake.HistoryDays, NoReadRows: true, Runs: []cost.PastRun{}}}
+	var models []*project.Action
+	var changed []changes.Changed
+	for _, c := range res.Changed {
+		if a := g.Actions[c.ID]; a != nil && a.DbtName != nil && builds(a) {
+			models, changed = append(models, a), append(changed, c)
+		}
+	}
+	if len(models) > 0 {
+		sf := w.snowflake()
+		if sf.Warehouse() == "" {
+			return nil, errNoSnowflakeCostWarehouse
+		}
+		progress(cost.Progress{Phase: "Reading Snowflake Query History"})
+		h, err := sf.DbtRuns(ctx, time.Now().AddDate(0, 0, -snowflake.HistoryDays), target)
+		if err != nil {
+			return nil, err
+		}
+		report.PastRuns.Days = cmp.Or(h.Days, snowflake.HistoryDays)
+		report.PastRuns.Truncated = h.Truncated
+		report.PastRuns.WarehouseUsed = sf.Warehouse()
+		byNode := map[string]snowflake.Run{}
+		for id, r := range h.Runs {
+			byNode[nodeKey(id)] = r
+		}
+		for i, a := range models {
+			c := changed[i]
+			pr := cost.PastRun{Name: string(c.ID), FileName: c.FileName, Type: c.Type, New: slices.Contains(c.Reasons, changes.ReasonNew)}
+			n := a.DbtName
+			key := n.Package + "." + n.Name
+			if n.Version != "" {
+				key += ".v" + n.Version
+			}
+			if r, ok := byNode[key]; ok {
+				pr.Ran, pr.Started, pr.Duration, pr.ReadBytes, pr.Warehouse, pr.QueryID =
+					true, r.Started, r.Duration, r.ReadBytes, r.Warehouse, r.QueryID
+			}
+			report.PastRuns.Runs = append(report.PastRuns.Runs, pr)
+		}
+		cost.SortPastRuns(report.PastRuns.Runs)
+		if len(h.Runs) == 0 {
+			report.PastRuns.Why = snowflakeHistoryWhy(h, target)
+		}
+	}
+	report.CheckedAt = time.Now()
+	return report, nil
+}
+
+func snowflakeHistoryWhy(h *snowflake.History, target string) string {
+	days := cmp.Or(h.Days, snowflake.HistoryDays)
+	switch {
+	case h.Queries == 0:
+		return fmt.Sprintf("Query History has no dbt query of the last %d days that you can see.", days)
+	case h.Dbt == 0:
+		return fmt.Sprintf("No query of the last %d days carries dbt's query comment, which names a query's model: is `query-comment` turned off in dbt_project.yml?", days)
+	case h.Targets[target] == 0:
+		var seen []string
+		for t := range h.Targets {
+			seen = append(seen, "`"+cmp.Or(t, "(none)")+"`")
+		}
+		slices.Sort(seen)
+		return fmt.Sprintf("dbt's queries of the last %d days are of target %s, not `%s`.", days, strings.Join(seen, ", "), target)
+	}
+	return ""
+}
+
+var errNoSnowflakeImpactWarehouse = fmt.Errorf("%w: column impact checks the changed models and reads Snowflake lineage on one: set snowflakeWarehouse (xf settings, or xf web asks), or the dbt target's warehouse", warehouse.ErrNoWarehouse)
+
+// snowflakeImpact is what column impact on Snowflake works with (ADR 0044):
+// built table schemas from DESCRIBE TABLE, changed model schemas from
+// SELECT * FROM (<query>) LIMIT 0, and downstream readers from
+// SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY and OBJECT_DEPENDENCIES.
+func (w *projectWarehouse) snowflakeImpact(ctx context.Context, g *project.Graph, toProd func(string) string) (deps impact.Deps, used func() *impact.WarehouseUse, err error) {
+	c := w.snowflake()
+	if c.Warehouse() == "" {
+		return deps, nil, errNoSnowflakeImpactWarehouse
+	}
+	vw, err := c.VirtualWarehouse(ctx)
+	if err != nil {
+		return deps, nil, err
+	}
+	var checked atomic.Int64
+	tables := lineage.NewTables(c.Table)
+	readers := snowflake.NewReaders(c, g, toProd)
+	deps = impact.Deps{
+		Schema: tables.Schema,
+		DryRun: func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
+			checked.Add(1)
+			return c.Check(ctx, project, location, sql)
+		},
+		Readers:  readers,
+		OnDemand: true,
+	}
+	used = func() *impact.WarehouseUse {
+		if checked.Load() == 0 && !readers.Used() {
+			return nil
+		}
+		return &impact.WarehouseUse{Name: "Snowflake virtual warehouse `" + cmp.Or(vw.Name, c.Warehouse()) + "`", Started: vw.State != "STARTED", Lineage: "Snowflake Access History"}
+	}
+	return deps, used, nil
+}
 
 // databricksCost is query cost on Databricks (ADR 0042), which bills SQL
 // warehouse time, not bytes scanned, so nothing is estimated before a run:
@@ -397,32 +595,51 @@ func catalogTables(open func(root string) *projectWarehouse) func(root string, g
 			byRoot[root] = w
 		}
 		mu.Unlock()
-		if w == nil || g.WarehouseOr(w.dbtTarget().Type) != project.Databricks {
+		if w == nil {
 			return nil
 		}
-		c := w.databricks()
-		return &lsp.TableSource{Name: "Unity Catalog", Tables: c.Table, AuthHint: databricks.AuthHint,
-			URL: func(t project.Target) string { return databricks.CatalogURL(c.Host(), t.Database, t.Schema, t.Name) }}
+		switch g.WarehouseOr(w.dbtTarget().Type) {
+		case project.Databricks:
+			c := w.databricks()
+			return &lsp.TableSource{Name: "Unity Catalog", Tables: c.Table, AuthHint: databricks.AuthHint,
+				URL: func(t project.Target) string { return databricks.CatalogURL(c.Host(), t.Database, t.Schema, t.Name) }}
+		case project.Snowflake:
+			c := w.snowflake()
+			return &lsp.TableSource{Name: "Snowflake", Tables: c.Table, AuthHint: snowflake.AuthHint,
+				URL: func(t project.Target) string {
+					return snowflake.SnowsightURL(cmp.Or(c.Account(), c.Host()), t.Database, t.Schema, t.Name)
+				}}
+		}
+		return nil
 	}
 }
 
-// databricksTUINote is the TUI's line for a Databricks project.
-const databricksTUINote = "Databricks project: dry runs, columns and cost are off here; xf web checks models on demand"
+// databricksTUINote and snowflakeTUINote are the TUI's line for an on-demand
+// warehouse project.
+const (
+	databricksTUINote = "Databricks project: dry runs, columns and cost are off here; xf web checks models on demand"
+	snowflakeTUINote  = "Snowflake project: dry runs, columns and cost are off here; xf web checks models on demand"
+)
 
 // hideDatabricks takes the warehouse's features out of the TUI's deps for a
-// dbt project whose target is Databricks (ADR 0042): its checks bill a SQL
-// warehouse and run only when asked, which the TUI, in maintenance mode,
-// doesn't do. A project whose manifest says Databricks where its target
-// didn't gets the engine's refusal on its dry run lines instead.
+// dbt project whose target is Databricks or Snowflake (ADR 0042, ADR 0044):
+// their checks bill a warehouse and run only when asked, which the TUI, in
+// maintenance mode, doesn't do.
 func hideDatabricks(deps *frontend.Deps, b backend.Backend, root string) {
 	d, ok := b.(*dbt.Backend)
 	if !ok {
 		return
 	}
-	if t, _ := dbt.TargetOf(root, d.Target, os.Getenv); t.Type != project.Databricks {
+	var note string
+	switch t, _ := dbt.TargetOf(root, d.Target, os.Getenv); t.Type {
+	case project.Databricks:
+		note = databricksTUINote
+	case project.Snowflake:
+		note = snowflakeTUINote
+	default:
 		return
 	}
 	deps.DryRun, deps.ForgetFailedDryRuns, deps.QueryCost, deps.ColumnImpact = nil, nil, nil, nil
 	deps.Deferral, deps.SetDefer = nil, nil
-	deps.Notice = strings.TrimPrefix(deps.Notice+"; "+databricksTUINote, "; ")
+	deps.Notice = strings.TrimPrefix(deps.Notice+"; "+note, "; ")
 }

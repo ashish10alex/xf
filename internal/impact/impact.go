@@ -358,7 +358,7 @@ func Mentions(sql, identifier string) bool {
 	for i, p := range parts {
 		parts[i] = regexp.QuoteMeta(p)
 	}
-	re := regexp.MustCompile(`(?i)` + strings.Join(parts, "`?\\.`?"))
+	re := regexp.MustCompile(`(?i)` + strings.Join(parts, `["`+"`"+`]?\.["`+"`"+`]?`))
 	for from := 0; from <= len(sql); {
 		loc := re.FindStringIndex(sql[from:])
 		if loc == nil {

@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/ashish10alex/xf/internal/changes"
+	"github.com/ashish10alex/xf/internal/check"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/databricks"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/snowflake"
 	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
@@ -169,5 +171,114 @@ func TestCatalogTables(t *testing.T) {
 	}
 	if src := tablesFor(bq, &project.Graph{Warehouse: project.Databricks}); src == nil {
 		t.Error("a manifest saying Databricks didn't move the cards to Unity Catalog")
+	}
+	if src := tablesFor(bq, &project.Graph{Warehouse: project.Snowflake}); src == nil || src.Name != "Snowflake" {
+		t.Errorf("a manifest saying Snowflake = %+v, want Snowflake TableSource", src)
+	}
+}
+
+func TestSnowflakeImpactCostPreflight(t *testing.T) {
+	var statements []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		sql, _ := req["statement"].(string)
+		statements = append(statements, sql)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasPrefix(sql, "SHOW WAREHOUSES LIKE"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resultSetMetaData": map[string]any{"rowType": []map[string]any{{"name": "name"}, {"name": "state"}, {"name": "size"}}},
+				"data":              [][]string{{"COMPUTE_WH", "SUSPENDED", "X-Small"}},
+			})
+		case strings.HasPrefix(sql, "DESCRIBE TABLE"):
+			if sql != "DESCRIBE TABLE shop.marts.fct_orders" {
+				t.Errorf("DESCRIBE TABLE sql = %q, want unquoted shop.marts.fct_orders", sql)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resultSetMetaData": map[string]any{"rowType": []map[string]any{{"name": "name"}, {"name": "type"}, {"name": "kind"}, {"name": "null?"}}},
+				"data":              [][]string{{"ORDER_ID", "NUMBER(38,0)", "COLUMN", "N"}},
+			})
+		case strings.Contains(sql, "ACCESS_HISTORY"), strings.Contains(sql, "OBJECT_DEPENDENCIES"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resultSetMetaData": map[string]any{"rowType": []map[string]any{{"name": "READER"}}},
+				"data":              [][]string{},
+			})
+		case strings.HasPrefix(sql, "SELECT * FROM ("):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resultSetMetaData": map[string]any{"rowType": []map[string]any{{"name": "ORDER_ID", "type": "fixed", "precision": 38, "scale": 0, "nullable": false}}},
+				"data":              [][]string{},
+			})
+		case strings.Contains(sql, "QUERY_HISTORY"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resultSetMetaData": map[string]any{"rowType": []map[string]any{
+					{"name": "QUERY_ID"}, {"name": "QUERY_TEXT"}, {"name": "QUERY_TYPE"}, {"name": "WAREHOUSE_NAME"},
+					{"name": "START_MS"}, {"name": "TOTAL_ELAPSED_TIME"}, {"name": "BYTES_SCANNED"}, {"name": "ROWS_PRODUCED"},
+				}},
+				"data": [][]string{{
+					"q1", `/* {"app": "dbt", "target_name": "prod", "node_id": "model.shop.fct_orders"} */ CREATE OR REPLACE TABLE shop.marts.fct_orders AS SELECT 1`,
+					"CREATE_TABLE_AS_SELECT", "COMPUTE_WH", "1731000000000", "4200", "1048576", "10",
+				}},
+			})
+		}
+	}))
+	defer srv.Close()
+
+	tok := func(context.Context) (snowflake.Token, error) {
+		return snowflake.Token{Value: "pat", Type: snowflake.TokenPAT}, nil
+	}
+	pw := &projectWarehouse{sf: snowflake.New(snowflake.Config{Account: "acme-prod", Host: srv.URL, Token: tok, HTTP: srv.Client()})}
+	pw.once.Do(func() {})
+	ctx := context.Background()
+
+	// Impact and cost fail before a virtual warehouse is chosen.
+	if _, _, err := pw.snowflakeImpact(ctx, nil, nil); !errors.Is(err, warehouse.ErrNoWarehouse) {
+		t.Fatalf("impact no warehouse: %v", err)
+	}
+	id := project.ActionID("shop.marts.fct_orders")
+	g := project.NewGraph([]*project.Action{{
+		ID: id, Target: project.Target{Database: "shop", Schema: "marts", Name: "fct_orders"},
+		Kind: project.KindTable, FileName: "models/fct_orders.sql",
+		DbtName: &project.DbtName{Package: "shop", Name: "fct_orders"},
+	}})
+	res := &changes.Result{BaseRef: "origin/main", MergeBase: "abcdef1", HeadRef: "feat", Diff: changes.Diff{Changed: []changes.Changed{{ID: id, FileName: "models/fct_orders.sql", Type: "table"}}}}
+	if _, err := pw.snowflakeCost(ctx, res, g, "prod", func(cost.Progress) {}); !errors.Is(err, warehouse.ErrNoWarehouse) {
+		t.Fatalf("cost no warehouse: %v", err)
+	}
+	pw.sf.SetWarehouse("COMPUTE_WH")
+
+	// Preflight reports suspended virtual warehouse without waking it.
+	line := pw.snowflakePreflight(ctx)
+	if line.Status != check.Pass || !strings.Contains(line.Detail, "COMPUTE_WH") || !strings.Contains(line.Detail, "suspended") {
+		t.Fatalf("preflight = %+v", line)
+	}
+
+	// Impact reports WarehouseUse even when only lineage queries ran (no model checked).
+	deps, used, err := pw.snowflakeImpact(ctx, g, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deps.Readers.TableReaders(ctx, "shop.marts.fct_orders"); err != nil {
+		t.Fatalf("readers: %v", err)
+	}
+	if u := used(); u == nil || u.Name != "Snowflake virtual warehouse `COMPUTE_WH`" || !u.Started || u.Lineage != "Snowflake Access History" {
+		t.Fatalf("used after lineage only = %+v", u)
+	}
+
+	// Schema + DryRun work with lowercase unquoted dbt target names.
+	if cols, err := deps.Schema(ctx, "shop.marts.fct_orders"); err != nil || len(cols) != 1 {
+		t.Fatalf("schema = %+v, %v", cols, err)
+	}
+	if _, err := deps.DryRun(ctx, "shop", "", "select 1 as order_id"); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+
+	// Cost reports past runs from Snowflake Query History with warehouse note and NoReadRows.
+	rep, err := pw.snowflakeCost(ctx, res, g, "prod", func(cost.Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.PastRuns == nil || rep.PastRuns.Source != "Snowflake Query History" || !rep.PastRuns.NoReadRows || rep.PastRuns.WarehouseUsed != "COMPUTE_WH" || len(rep.PastRuns.Runs) != 1 || !rep.PastRuns.Runs[0].Ran || rep.PastRuns.Runs[0].ReadBytes != 1048576 {
+		t.Fatalf("cost report = %+v", rep.PastRuns)
 	}
 }

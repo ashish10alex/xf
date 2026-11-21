@@ -65,3 +65,31 @@ func TestPastRunsReport(t *testing.T) {
 		t.Error("past runs tripped a gate")
 	}
 }
+
+func TestPastRunsSnowflakeNoReadRows(t *testing.T) {
+	started := time.Date(2026, 11, 17, 6, 0, 0, 0, time.Local)
+	r := &Report{
+		Actions: []Action{},
+		PastRuns: &PastRuns{
+			Source:        "Snowflake Query History",
+			WarehouseUsed: "COMPUTE_WH",
+			Target:        "prod",
+			Days:          30,
+			NoReadRows:    true,
+			Runs: []PastRun{
+				{Name: "analytics.xf_example.fct_orders", Type: "table", Ran: true, Started: started, Duration: 12 * time.Second, ReadBytes: 2 << 20, Warehouse: "PROD_WH"},
+			},
+		},
+	}
+	text := Text(r, Options{})
+	if !strings.Contains(text, "read on virtual warehouse COMPUTE_WH") {
+		t.Errorf("text missing warehouse note:\n%s", text)
+	}
+	if strings.Contains(text, "0 rows") {
+		t.Errorf("text should omit 0 rows on Snowflake:\n%s", text)
+	}
+	md := Markdown(r, Options{})
+	if strings.Contains(md, "Rows read") || !strings.Contains(md, "read on virtual warehouse `COMPUTE_WH`") {
+		t.Errorf("markdown:\n%s", md)
+	}
+}

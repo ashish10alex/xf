@@ -41,6 +41,11 @@ const (
 	// ~/.databrickscfg profile its token comes from (ADR 0042).
 	KeyDatabricksWarehouse = "databricksWarehouse"
 	KeyDatabricksProfile   = "databricksProfile"
+	// KeySnowflakeWarehouse is the virtual warehouse a Snowflake project's
+	// checks run on, and KeySnowflakeConnection the ~/.snowflake/connections.toml
+	// connection its account and credentials come from (ADR 0044).
+	KeySnowflakeWarehouse  = "snowflakeWarehouse"
+	KeySnowflakeConnection = "snowflakeConnection"
 	KeyRunMode             = "runMode"
 	KeyDataformLocation    = "dataformLocation"
 	KeyDataformRepo        = "dataformRepo"
@@ -247,6 +252,8 @@ var Titles = map[string]string{
 	KeyDbtCompileWithHooks:  "Compile dbt v2 projects with hooks",
 	KeyDatabricksWarehouse:  "Databricks SQL warehouse",
 	KeyDatabricksProfile:    "Databricks CLI profile",
+	KeySnowflakeWarehouse:   "Snowflake virtual warehouse",
+	KeySnowflakeConnection:  "Snowflake connection",
 	KeyRunMode:              "Run mode",
 	KeyDataformLocation:     "Dataform region",
 	KeyDataformRepo:         "Dataform repository",
@@ -309,6 +316,8 @@ var Defaults = func() map[string]string {
 		KeyDbtCompileWithHooks:  "false",
 		KeyDatabricksWarehouse:  "the dbt target's http_path, else asked",
 		KeyDatabricksProfile:    "the profile with the dbt target's host, else DEFAULT",
+		KeySnowflakeWarehouse:   "the dbt target's warehouse, else asked",
+		KeySnowflakeConnection:  "the connection with the dbt target's account, else default",
 		KeyRunMode:              "cli",
 		KeyDataformLocation:     "defaultLocation of the workflow settings",
 		KeyDataformRepo:         "the origin remote's name",
@@ -349,7 +358,7 @@ var Defaults = func() map[string]string {
 }()
 
 // Keys lists every key in the order they are documented.
-var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
+var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
@@ -366,6 +375,8 @@ var Flags = map[string]string{
 	KeyDbtCompileWithHooks: "dbt-compile-with-hooks",
 	KeyDatabricksWarehouse: "databricks-warehouse",
 	KeyDatabricksProfile:   "databricks-profile",
+	KeySnowflakeWarehouse:  "snowflake-warehouse",
+	KeySnowflakeConnection: "snowflake-connection",
 	KeyRunMode:             "run-mode",
 	KeyDataformLocation:    "dataform-location",
 	KeyDataformRepo:        "dataform-repo",
@@ -433,6 +444,10 @@ type Settings struct {
 	DatabricksWarehouse string
 	// DatabricksProfile is its ~/.databrickscfg profile
 	DatabricksProfile string
+	// SnowflakeWarehouse is a Snowflake project's virtual warehouse
+	SnowflakeWarehouse string
+	// SnowflakeConnection is its ~/.snowflake/connections.toml connection
+	SnowflakeConnection string
 	RunMode           string // "cli" or "api": how r runs to start with
 	DataformLocation  string // region of the Dataform repository, for API runs
 	DataformRepo      string // name of the Dataform repository, for API runs
@@ -505,6 +520,10 @@ func (s *Settings) field(key string) *string {
 		return &s.DatabricksWarehouse
 	case KeyDatabricksProfile:
 		return &s.DatabricksProfile
+	case KeySnowflakeWarehouse:
+		return &s.SnowflakeWarehouse
+	case KeySnowflakeConnection:
+		return &s.SnowflakeConnection
 	case KeyRunMode:
 		return &s.RunMode
 	case KeyDataformLocation:

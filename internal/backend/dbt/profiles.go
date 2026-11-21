@@ -23,21 +23,33 @@ type Profile struct {
 }
 
 // Target is one of a profile's outputs: where a compile with it builds.
-// Database is BigQuery's project or Databricks' catalog and Schema the
-// dataset or schema; "" when the output doesn't say, or says with Jinja xf
-// doesn't read.
+// Database is BigQuery's project, Databricks' catalog or Snowflake's database
+// and Schema the dataset or schema; "" when the output doesn't say, or says
+// with Jinja xf doesn't read.
 type Target struct {
 	Name     string `json:"name"`
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
-	// Type is the adapter, as dbt names it: bigquery, databricks.
+	// Type is the adapter, as dbt names it: bigquery, databricks, snowflake.
 	Type string `json:"type,omitempty"`
 	// Host and HTTPPath are a Databricks output's workspace and SQL
 	// warehouse (/sql/1.0/warehouses/<id>), and Token its personal access
-	// token, never sent to a page.
+	// token (or Snowflake programmatic access / OAuth token), never sent to
+	// a page.
 	Host     string `json:"host,omitempty"`
 	HTTPPath string `json:"httpPath,omitempty"`
 	Token    string `json:"-"`
+	// Snowflake fields: account, user, role, virtual warehouse,
+	// authenticator and credentials (never sent to a page).
+	Account              string `json:"account,omitempty"`
+	User                 string `json:"user,omitempty"`
+	Role                 string `json:"role,omitempty"`
+	Warehouse            string `json:"warehouse,omitempty"`
+	Authenticator        string `json:"authenticator,omitempty"`
+	PrivateKeyPath       string `json:"-"`
+	PrivateKey           string `json:"-"`
+	PrivateKeyPassphrase string `json:"-"`
+	Password             string `json:"-"`
 }
 
 // Find is the target named name, or the profile's default for "".
@@ -177,6 +189,24 @@ func parseProfile(text string, p *Profile, getenv func(string) string) bool {
 							t.HTTPPath = v
 						case "token":
 							t.Token = v
+						case "account":
+							t.Account = v
+						case "user":
+							t.User = v
+						case "role":
+							t.Role = v
+						case "warehouse":
+							t.Warehouse = v
+						case "authenticator":
+							t.Authenticator = v
+						case "private_key_path":
+							t.PrivateKeyPath = v
+						case "private_key":
+							t.PrivateKey = v
+						case "private_key_passphrase":
+							t.PrivateKeyPassphrase = v
+						case "password":
+							t.Password = v
 						}
 					}
 					p.Targets = append(p.Targets, t)

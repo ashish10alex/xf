@@ -130,3 +130,37 @@ func TestReadProfileDatabricks(t *testing.T) {
 		t.Error("found a target the profile doesn't have")
 	}
 }
+
+func TestReadProfileSnowflake(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ProjectFile), []byte("name: shop\nprofile: shop_sf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profiles := `shop_sf:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: acme-prod
+      user: alice
+      role: TRANSFORMER
+      warehouse: COMPUTE_WH
+      database: ANALYTICS
+      schema: DEV_ALICE
+      authenticator: programmatic_access_token
+      token: "{{ env_var('SNOWFLAKE_TOKEN', 'fallback-pat') }}"
+      private_key_path: ~/.ssh/rsa_key.p8
+`
+	if err := os.WriteFile(filepath.Join(root, "profiles.yml"), []byte(profiles), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := TargetOf(root, "", func(string) string { return "" })
+	if !ok {
+		t.Fatal("TargetOf returned false")
+	}
+	if got.Type != "snowflake" || got.Account != "acme-prod" || got.User != "alice" || got.Role != "TRANSFORMER" ||
+		got.Warehouse != "COMPUTE_WH" || got.Database != "ANALYTICS" || got.Schema != "DEV_ALICE" ||
+		got.Authenticator != "programmatic_access_token" || got.Token != "fallback-pat" || got.PrivateKeyPath != "~/.ssh/rsa_key.p8" {
+		t.Fatalf("got = %+v", got)
+	}
+}

@@ -57,6 +57,7 @@ func runCheck(args []string) int {
 	fs := flag.NewFlagSet("xf check", flag.ContinueOnError)
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
+		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
 		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions)
 	pushed := fs.Bool("pushed", false, "check the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOn := fs.String("fail-on", "", "exit 1 when a column change of this `severity` or worse is found: critical or warning")

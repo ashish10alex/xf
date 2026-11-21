@@ -148,6 +148,10 @@ type Probes struct {
 	// will use and how it stands, warns when there is none (query cost
 	// needs none), and fails without credentials.
 	Databricks func(ctx context.Context) Line
+	// Warehouse, set for any other non-BigQuery warehouse (such as Snowflake,
+	// ADR 0044), probes its account and virtual warehouse in place of Google
+	// and BigQuery, starting nothing.
+	Warehouse func(ctx context.Context) Line
 	// NoAccess leaves the access probes out (xf check init, which runs as
 	// you); AsYou says the probes run outside CI, as you.
 	NoAccess, AsYou bool
@@ -171,9 +175,12 @@ func Run(ctx context.Context, p Probes) *Preflight {
 	gitLines(p, add)
 	prodLine(p, add)
 
-	if p.Databricks != nil {
+	if probe := p.Warehouse; probe != nil || p.Databricks != nil {
+		if probe == nil {
+			probe = p.Databricks
+		}
 		if !p.NoAccess {
-			add(p.Databricks(ctx))
+			add(probe(ctx))
 		}
 		if p.Comment {
 			tokenLines(ctx, p, add)

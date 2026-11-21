@@ -97,10 +97,20 @@ func clearsMeta(statementType string) bool {
 // BigQuery's, or Databricks' for ?dialect=databricks. They are no
 // project's, and are the same while xf runs.
 func (s *Server) scratchFunctions(w http.ResponseWriter, r *http.Request) {
-	all, err := bqfuncs.All()
-	if r.URL.Query().Get("dialect") == "databricks" {
-		all, err = sparkfuncs.All()
+	switch r.URL.Query().Get("dialect") {
+	case "snowflake":
+		writeJSON(w, []any{})
+		return
+	case "databricks":
+		all, err := sparkfuncs.All()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, all)
+		return
 	}
+	all, err := bqfuncs.All()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

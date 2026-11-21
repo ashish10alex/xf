@@ -858,8 +858,8 @@ func (p *projectState) sourceDiagnostics(w http.ResponseWriter, r *http.Request)
 		return os.ReadFile(name)
 	}
 	ds := diagnose.Compile(p.deps.Root, p.tool, errs, read)[abs]
-	// A Databricks project is checked only when asked, never on a save.
-	if len(ds) == 0 && p.deps.DryRun != nil && g != nil && !p.databricks() {
+	// On-demand warehouses (Databricks, Snowflake) are checked only when asked, never on a save.
+	if len(ds) == 0 && p.deps.DryRun != nil && g != nil && !p.isOnDemand() {
 		ctx, cancel := context.WithTimeout(r.Context(), sourceDryRunTimeout)
 		defer cancel()
 		deferred := p.deferredFile(ctx, g, file)

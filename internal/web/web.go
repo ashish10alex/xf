@@ -163,6 +163,9 @@ type Project struct {
 	// Databricks reaches the workspace of a dbt project that builds in
 	// Databricks (databricks.go); nil for one that can't.
 	Databricks *Databricks
+	// Snowflake reaches the account of a dbt project that builds in
+	// Snowflake (databricks.go, ADR 0044); nil for one that can't.
+	Snowflake *Snowflake
 	// ScratchWarnGB and ScratchConfirmGB are the sizes of a scratch's dry
 	// run, in GiB, at which the page turns it amber, and red and asks
 	// before running; 0 uses the defaults.
@@ -624,6 +627,7 @@ func (s *Server) scratchWarehouses() []ScratchWarehouse {
 	return []ScratchWarehouse{
 		{ID: project.BigQuery, Name: "BigQuery"},
 		{ID: project.Databricks, Name: "Databricks"},
+		{ID: project.Snowflake, Name: "Snowflake"},
 	}
 }
 

@@ -134,9 +134,10 @@ func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) eng
 		if g == nil {
 			return nil, changes.ErrWorktreeOnly
 		}
-		dbx := g.WarehouseOr(pw.dbtTarget().Type) == project.Databricks
+		whKind := g.WarehouseOr(pw.dbtTarget().Type)
+		onDemand := whKind == project.Databricks || whKind == project.Snowflake
 		var client *lineage.Client
-		if !dbx {
+		if !onDemand {
 			var err error
 			if client, err = lc(ctx); err != nil {
 				return nil, err
@@ -159,8 +160,15 @@ func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) eng
 		base := func(ctx context.Context) (*project.Graph, error) {
 			return targets.commit(ctx, target, res.MergeBase)
 		}
-		if dbx {
-			deps, used, err := pw.databricksImpact(ctx, g, toProd)
+		if onDemand {
+			var deps impact.Deps
+			var used func() *impact.WarehouseUse
+			var err error
+			if whKind == project.Snowflake {
+				deps, used, err = pw.snowflakeImpact(ctx, g, toProd)
+			} else {
+				deps, used, err = pw.databricksImpact(ctx, g, toProd)
+			}
 			if err != nil {
 				return nil, err
 			}

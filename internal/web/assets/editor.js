@@ -48,9 +48,22 @@ const dbxDialectOf = (functions) => cm.SQLDialect.define({
   builtin: functions.join(' '),
 });
 
-// warehouseSQL is the language of a query in BigQuery, or in Databricks when
-// dbx says so.
-export const warehouseSQL = (dbx, functions) => (dbx ? cm.sql({ dialect: dbxDialectOf(functions), upperCaseKeywords: false }) : bigquerySQL(functions));
+// Snowflake SQL: double-quoted identifiers, $$ strings, and Snowflake types/keywords.
+const sfTypes = sqlTypes + ' number bigint smallint tinyint double float decimal boolean binary variant object array timestamp_ntz timestamp_ltz timestamp_tz geography geometry';
+const sfDialectOf = (functions) => cm.SQLDialect.define({
+  identifierQuotes: '"',
+  doubleDollarQuotedStrings: true,
+  keywords: sqlKeywords + ' lateral flatten ilike rlike iff pivot unpivot try_cast sample tablesample',
+  types: sfTypes,
+  builtin: functions.join(' '),
+});
+
+// warehouseSQL is the language of a query in BigQuery, Databricks, or Snowflake.
+export const warehouseSQL = (wh, functions) => {
+  if (wh === 'databricks') return cm.sql({ dialect: dbxDialectOf(functions), upperCaseKeywords: false });
+  if (wh === 'snowflake') return cm.sql({ dialect: sfDialectOf(functions), upperCaseKeywords: false });
+  return bigquerySQL(functions);
+};
 
 // builtins are the names of the functions to color: one word each, and no
 // keyword or type.

@@ -19,6 +19,7 @@ import (
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/snowflake"
 	"github.com/ashish10alex/xf/internal/warehouse"
 	"github.com/ashish10alex/xf/internal/web"
 )
@@ -67,8 +68,10 @@ func normalizeScratchWarehouse(raw string) (string, error) {
 		return project.BigQuery, nil
 	case project.Databricks, "dbx":
 		return project.Databricks, nil
+	case project.Snowflake, "sf":
+		return project.Snowflake, nil
 	default:
-		return "", fmt.Errorf("--warehouse must be bigquery or databricks, not %q", raw)
+		return "", fmt.Errorf("--warehouse must be bigquery, databricks or snowflake, not %q", raw)
 	}
 }
 
@@ -80,6 +83,9 @@ func inferScratchWarehouse(sf *settingFlags, projectID, location string) string 
 	}
 	if sf.flagValue(config.KeyDatabricksProfile) != "" || sf.flagValue(config.KeyDatabricksWarehouse) != "" {
 		return project.Databricks
+	}
+	if sf.flagValue(config.KeySnowflakeConnection) != "" || sf.flagValue(config.KeySnowflakeWarehouse) != "" {
+		return project.Snowflake
 	}
 	return ""
 }
@@ -137,6 +143,22 @@ func standaloneScratch(sf *settingFlags, wh, projectID, location string, applyFl
 		deps.Table = lazyTables(dbx.Client)
 		p.Deps = deps
 		p.Databricks = dbx
+		p.ScratchDir = dir
+		return p, nil
+	}
+
+	if wh == project.Snowflake {
+		dir := filepath.Join(home, "snowflake")
+		var sfFlags *settingFlags
+		if applyFlags {
+			sfFlags = sf
+		}
+		ss := newStandaloneSnowflake(dir, sfFlags, settings.Settings)
+		wsf := ss.webSnowflake()
+		deps.Root = dir
+		deps.Table = lazyTables(wsf.Client)
+		p.Deps = deps
+		p.Snowflake = wsf
 		p.ScratchDir = dir
 		return p, nil
 	}
@@ -345,5 +367,190 @@ func (sd *standaloneDatabricks) webDatabricks() *web.Databricks {
 		},
 		SaveNote: "Saved for standalone Databricks scratch (~/.config/xf/tmp/databricks/connection.json).",
 		AuthHint: databricks.AuthHint,
+	}
+}
+
+// standaloneSnowflake manages connection and virtual warehouse state for
+// standalone Snowflake scratch (~/.config/xf/tmp/snowflake/connection.json).
+type standaloneSnowflake struct {
+	dir             string
+	flagConnection  string
+	flagWarehouse   string
+	cfgConnection   string
+	cfgWarehouse    string
+	connectionsFile string
+	getenv          func(string) string
+
+	mu         sync.Mutex
+	state      standaloneDbxState
+	connection string
+	client     *snowflake.Client
+}
+
+func newStandaloneSnowflake(dir string, sf *settingFlags, s config.Settings) *standaloneSnowflake {
+	ss := &standaloneSnowflake{
+		dir:            dir,
+		flagConnection: sf.flagValue(config.KeySnowflakeConnection),
+		flagWarehouse:  sf.flagValue(config.KeySnowflakeWarehouse),
+		cfgConnection:  s.SnowflakeConnection,
+		cfgWarehouse:   s.SnowflakeWarehouse,
+		getenv:         os.Getenv,
+	}
+	ss.state = ss.loadState()
+	ss.rebuildLocked()
+	return ss
+}
+
+func (ss *standaloneSnowflake) statePath() string { return filepath.Join(ss.dir, standaloneDbxFile) }
+
+func (ss *standaloneSnowflake) loadState() standaloneDbxState {
+	var st standaloneDbxState
+	if data, err := os.ReadFile(ss.statePath()); err == nil {
+		_ = json.Unmarshal(data, &st)
+	}
+	if st.Warehouses == nil {
+		st.Warehouses = map[string]string{}
+	}
+	return st
+}
+
+func (ss *standaloneSnowflake) saveStateLocked() (string, error) {
+	if err := os.MkdirAll(ss.dir, 0o755); err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(ss.state, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	p := ss.statePath()
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+func (ss *standaloneSnowflake) warehouseKeyLocked(conn, host string) string {
+	return cmp.Or(conn, host, "default")
+}
+
+func (ss *standaloneSnowflake) rebuildLocked() {
+	connName := cmp.Or(ss.flagConnection, ss.state.Profile, ss.cfgConnection)
+	conn := snowflake.Resolve(snowflake.Setup{
+		Connection:      connName,
+		ConnectionsFile: ss.connectionsFile,
+		Getenv:          ss.getenv,
+	})
+	if conn.Host == "" && connName == "" {
+		if list := snowflake.ListConnections(ss.connectionsFile, ss.getenv); len(list) == 1 {
+			connName = list[0].Name
+			conn = snowflake.Resolve(snowflake.Setup{
+				Connection:      connName,
+				ConnectionsFile: ss.connectionsFile,
+				Getenv:          ss.getenv,
+			})
+		}
+	}
+	key := ss.warehouseKeyLocked(conn.ConnectionName, conn.Host)
+	wh := ss.flagWarehouse
+	if wh == "" {
+		wh = ss.state.Warehouses[key]
+	}
+	if wh == "" && ss.flagConnection == "" && ss.state.Profile == "" {
+		wh = ss.cfgWarehouse
+	}
+	if wh != "" {
+		conn.Warehouse = wh
+	}
+	ss.connection = conn.ConnectionName
+	ss.client = snowflake.New(conn.Config)
+}
+
+func (ss *standaloneSnowflake) currentClient() *snowflake.Client {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	return ss.client
+}
+
+func (ss *standaloneSnowflake) webSnowflake() *web.Snowflake {
+	return &web.Snowflake{
+		TargetType: project.Snowflake,
+		Client: func(ctx context.Context) (warehouse.Warehouse, error) {
+			return ss.currentClient(), nil
+		},
+		Host: func() string { return ss.currentClient().Host() },
+		TableURL: func(t project.Target) string {
+			c := ss.currentClient()
+			return snowflake.SnowsightURL(cmp.Or(c.Account(), c.Host()), t.Database, t.Schema, t.Name)
+		},
+		Warehouses: func(ctx context.Context) ([]web.SQLWarehouse, error) {
+			list, err := ss.currentClient().Warehouses(ctx)
+			out := make([]web.SQLWarehouse, 0, len(list))
+			for _, s := range list {
+				out = append(out, web.SQLWarehouse{ID: s.Name, Name: s.Name, State: s.State, Size: s.Size, Serverless: true})
+			}
+			return out, err
+		},
+		Choose: func(name string) (string, error) {
+			ss.mu.Lock()
+			defer ss.mu.Unlock()
+			if ss.state.Warehouses == nil {
+				ss.state.Warehouses = map[string]string{}
+			}
+			key := ss.warehouseKeyLocked(ss.connection, ss.client.Host())
+			ss.state.Warehouses[key] = name
+			ss.flagWarehouse = ""
+			file, err := ss.saveStateLocked()
+			if err != nil {
+				return "", err
+			}
+			ss.client.SetWarehouse(name)
+			return file, nil
+		},
+		Chosen:      func() bool { return ss.currentClient().Warehouse() != "" },
+		WarehouseID: func() string { return ss.currentClient().Warehouse() },
+		Profiles: func() ([]web.DatabricksProfile, string) {
+			raw := snowflake.ListConnections(ss.connectionsFile, ss.getenv)
+			out := make([]web.DatabricksProfile, 0, len(raw))
+			for _, p := range raw {
+				out = append(out, web.DatabricksProfile{Name: p.Name, Host: cmp.Or(p.Account, p.Host)})
+			}
+			ss.mu.Lock()
+			cur := ss.connection
+			ss.mu.Unlock()
+			return out, cur
+		},
+		ChooseProfile: func(name string) (string, error) {
+			raw := snowflake.ListConnections(ss.connectionsFile, ss.getenv)
+			found := false
+			for _, p := range raw {
+				if p.Name == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return "", fmt.Errorf("no Snowflake connection %q in ~/.snowflake/connections.toml", name)
+			}
+			ss.mu.Lock()
+			defer ss.mu.Unlock()
+			ss.state.Profile = name
+			ss.flagConnection = ""
+			ss.flagWarehouse = ""
+			if _, err := ss.saveStateLocked(); err != nil {
+				return "", err
+			}
+			ss.rebuildLocked()
+			return "switched to Snowflake connection " + name, nil
+		},
+		SaveNote:       "Saved for standalone Snowflake scratch (~/.config/xf/tmp/snowflake/connection.json).",
+		ConfigKey:      config.KeySnowflakeWarehouse,
+		CatalogName:    "Snowflake",
+		WarehouseLabel: "virtual warehouse",
+		PaletteCommand: "Snowflake: choose the virtual warehouse",
+		AuthHint:       snowflake.AuthHint,
 	}
 }

@@ -1,0 +1,13 @@
+name: xf_snowflake_example
+version: "1.0.0"
+config-version: 2
+profile: xf_snowflake_example
+
+model-paths: ["models"]
+
+models:
+  xf_snowflake_example:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

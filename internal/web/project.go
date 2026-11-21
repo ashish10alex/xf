@@ -119,11 +119,13 @@ type projectState struct {
 	scratchDirAbs                         string
 	scratchDefProject, scratchDefLocation string
 	standalone, startScratch              bool
-	// dbx reaches a Databricks project's workspace; nil for none. onDbx
-	// says the project builds in Databricks now, for links made without
-	// the lock.
+	// dbx and sf reach a Databricks or Snowflake project's workspace; nil for
+	// none. onDbx and onSf say which warehouse the project builds in now, for
+	// lock-free reads.
 	dbx   *Databricks
+	sf    *Snowflake
 	onDbx atomic.Bool
+	onSf  atomic.Bool
 	// startCheck is the Checks page's tab the next page to start opens on.
 	startCheck string
 	// sourceAutosaveMs is how long the source pane waits after an edit
@@ -295,7 +297,9 @@ func (p *projectState) setState(st engine.State) {
 		}
 	}
 	p.st = st
-	p.onDbx.Store(p.databricksLocked())
+	wk := p.warehouseKindLocked()
+	p.onDbx.Store(wk == project.Databricks)
+	p.onSf.Store(wk == project.Snowflake)
 	v := p.stateViewLocked()
 	p.mu.Unlock()
 	p.hub.send("state", v)
@@ -568,11 +572,11 @@ func (p *projectState) capsLocked() capabilities {
 		Branches: d.Branches != nil, Terminal: termSupported, Watch: d.WatchWorkflow != nil, Defer: p.deferCaps(),
 		Inspector: p.warehouse != nil && d.DryRun != nil && !p.standalone, Warehouse: project.BigQuery,
 	}
-	if p.databricksLocked() {
+	if wk := p.warehouseKindLocked(); wk == project.Databricks || wk == project.Snowflake {
 		// Scratch queries, the inspector and column impact (I) run on the
-		// SQL warehouse when asked; nothing dry runs, and cost (C) is the
-		// changed models' past runs (ADR 0042).
-		c.Warehouse, c.Check, c.DryRun = project.Databricks, true, false
+		// SQL/virtual warehouse when asked; nothing dry runs, and cost (C) is
+		// the changed models' past runs (ADR 0042, ADR 0044).
+		c.Warehouse, c.Check, c.DryRun = wk, true, false
 		c.Defer = false
 		c.Scratch = p.hasWarehouseLocked()
 		c.Inspector = c.Scratch && !p.standalone
@@ -1051,7 +1055,7 @@ func (p *projectState) action(w http.ResponseWriter, r *http.Request) {
 		auth = auth || failed
 		v.Pane = append(v.Pane, paneAction{actionRef: ref, Details: details})
 	}
-	if auth && !p.databricksLocked() {
+	if auth && !p.isOnDemandLocked() {
 		v.Auth = "dry runs need Google credentials: " + warehouse.AuthHint + ", then c"
 	}
 	for _, d := range byLineageKind(g.Dependencies(a.ID)) {
@@ -1204,8 +1208,8 @@ func (p *projectState) startLookupsLocked(g *project.Graph, actions []*project.A
 // yet (or an old one), returning what to run once the lock is let go.
 func (p *projectState) startDryRunsLocked(g *project.Graph, actions []*project.Action) []func() {
 	var starts []func()
-	// A Databricks project is checked only when asked (databricks.go).
-	if dry := p.deps.DryRun; dry != nil && p.st.Outdated == "" && g.Notice == "" && !p.databricksLocked() {
+	// An on-demand warehouse (Databricks, Snowflake) is checked only when asked.
+	if dry := p.deps.DryRun; dry != nil && p.st.Outdated == "" && g.Notice == "" && !p.isOnDemandLocked() {
 		now := p.deps.Now()
 		for _, a := range actions {
 			proj, location := g.DryRunTarget(a)
@@ -1248,7 +1252,7 @@ func (p *projectState) detailsLocked(g *project.Graph, a *project.Action, increm
 	if c, ok := p.st.Changes.Find(a.ID); ok {
 		details = append(details, detail{Label: "changed", Value: c.ReasonsText() + " " + p.st.Changes.Comparison(), Tone: "warn"})
 	}
-	if p.databricksLocked() {
+	if p.isOnDemandLocked() {
 		proj, location := g.DryRunTarget(a)
 		for _, q := range a.DryRunQueries() {
 			d := detail{Label: q.Label, Dry: true, Tone: "dim"}
@@ -1349,20 +1353,25 @@ func (p *projectState) columnsLocked(g *project.Graph, a *project.Action, increm
 	why := func(reason string, failed bool) columnsView {
 		return columnsView{Fields: []warehouse.Column{}, Reason: reason, Failed: failed}
 	}
-	dbx := p.databricksLocked()
+	od := p.onDemandLocked()
+	onDemand := od != nil
 	switch {
 	case a.Kind.External():
 		return p.externalColumnsLocked(a)
-	case dbx && g.Notice != "":
-		return why("not compiled: Databricks can't check this project's SQL", false)
-	case dbx && len(a.DryRunQueries()) == 0:
+	case onDemand && g.Notice != "":
+		whName := "Databricks"
+		if p.warehouseKindLocked() == project.Snowflake {
+			whName = "Snowflake"
+		}
+		return why("not compiled: "+whName+" can't check this project's SQL", false)
+	case onDemand && len(a.DryRunQueries()) == 0:
 		if e := p.tables[tableRefOf(a)]; e != nil && e.done && e.tbl != nil && len(e.tbl.Schema) > 0 {
 			v := p.describedLocked(a, e.tbl.Schema)
-			v.Note = "the built table's, from Unity Catalog"
+			v.Note = "the built table's, from " + od.catalogName()
 			return v
 		}
 		return why(a.Kind.String()+": nothing to check, so no columns", false)
-	case dbx:
+	case onDemand:
 	case p.deps.DryRun == nil:
 		return why("no dry runs here, so no columns", false)
 	case g.Notice != "":
@@ -1382,7 +1391,7 @@ func (p *projectState) columnsLocked(g *project.Graph, a *project.Action, increm
 		return why("waiting for the compile…", false)
 	}
 	proj, location := g.DryRunTarget(a)
-	if dbx {
+	if onDemand {
 		return p.checkColumnsLocked(a, p.dry[dryRunKey(proj, location, q.SQL)], p.tables[tableRefOf(a)])
 	}
 	if proj == "" {

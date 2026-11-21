@@ -30,6 +30,7 @@ func (t Target) ID() ActionID {
 const (
 	BigQuery   = "bigquery"
 	Databricks = "databricks"
+	Snowflake  = "snowflake"
 )
 
 // ConsoleURL opens the table or view in the BigQuery console.

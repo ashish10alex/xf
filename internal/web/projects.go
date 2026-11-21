@@ -25,19 +25,24 @@ import (
 // projectHeader is the header a page's requests name its project in.
 const projectHeader = "X-Xf-Project"
 
-// Standalone scratch workspace keys: one per warehouse, so BigQuery and
-// Databricks scratches stay open side by side with separate folders and
-// recent runs. "scratch" aliases ScratchKeyBigQuery for old URLs.
+// Standalone scratch workspace keys: one per warehouse, so BigQuery,
+// Databricks and Snowflake scratches stay open side by side with separate
+// folders and recent runs. "scratch" aliases ScratchKeyBigQuery for old URLs.
 const (
 	ScratchKeyBigQuery   = "scratch-bigquery"
 	ScratchKeyDatabricks = "scratch-databricks"
+	ScratchKeySnowflake  = "scratch-snowflake"
 )
 
 func scratchKeyFor(wh string) string {
-	if wh == project.Databricks {
+	switch wh {
+	case project.Databricks:
 		return ScratchKeyDatabricks
+	case project.Snowflake:
+		return ScratchKeySnowflake
+	default:
+		return ScratchKeyBigQuery
 	}
-	return ScratchKeyBigQuery
 }
 
 func scratchWarehouseOfKey(key string) (string, bool) {
@@ -46,6 +51,8 @@ func scratchWarehouseOfKey(key string) (string, bool) {
 		return project.BigQuery, true
 	case ScratchKeyDatabricks:
 		return project.Databricks, true
+	case ScratchKeySnowflake:
+		return project.Snowflake, true
 	}
 	return "", false
 }
@@ -251,10 +258,10 @@ func (s *Server) ensure(key string) (*openProject, error) {
 }
 
 // ensureScratch returns the open standalone scratch workspace for wh
-// ("bigquery" or "databricks"), opening it when it isn't open yet.
+// ("bigquery", "databricks" or "snowflake"), opening it when it isn't open yet.
 func (s *Server) ensureScratch(wh string) (*openProject, error) {
-	if wh != project.BigQuery && wh != project.Databricks {
-		return nil, errors.New("unknown warehouse: " + wh + " (want bigquery or databricks)")
+	if wh != project.BigQuery && wh != project.Databricks && wh != project.Snowflake {
+		return nil, errors.New("unknown warehouse: " + wh + " (want bigquery, databricks or snowflake)")
 	}
 	key := scratchKeyFor(wh)
 	s.mu.Lock()
@@ -334,9 +341,12 @@ func (s *Server) adoptWithKey(opened *Project, forcedKey string) *openProject {
 	p.setScratch(opened)
 	if p.standalone {
 		p.tool = "scratch"
-		if forcedKey == ScratchKeyDatabricks || (forcedKey == "" && p.onDbx.Load()) {
+		switch {
+		case forcedKey == ScratchKeyDatabricks || (forcedKey == "" && p.onDbx.Load()):
 			p.name = "Scratch · Databricks"
-		} else {
+		case forcedKey == ScratchKeySnowflake || (forcedKey == "" && p.onSf.Load()):
+			p.name = "Scratch · Snowflake"
+		default:
 			p.name = "Scratch · BigQuery"
 		}
 	}
@@ -353,9 +363,12 @@ func (s *Server) adoptWithKey(opened *Project, forcedKey string) *openProject {
 	if forcedKey != "" {
 		op.key = forcedKey
 	} else if p.standalone {
-		if p.onDbx.Load() {
+		switch {
+		case p.onDbx.Load():
 			op.key = ScratchKeyDatabricks
-		} else {
+		case p.onSf.Load():
+			op.key = ScratchKeySnowflake
+		default:
 			op.key = ScratchKeyBigQuery
 		}
 	}

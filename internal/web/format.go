@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ashish10alex/xf/internal/format"
+	"github.com/ashish10alex/xf/internal/project"
 )
 
 // The source pane and Scratch format their text (ADR 0024): the SQL with
@@ -38,8 +39,11 @@ func (p *projectState) formatText(w http.ResponseWriter, r *http.Request) {
 	}
 	root := p.deps.Root
 	o := format.Options{Root: root, Dir: root}
-	if p.databricks() {
+	switch p.warehouseKind() {
+	case project.Databricks:
 		o.Dialect = "databricks"
+	case project.Snowflake:
+		o.Dialect = "snowflake"
 	}
 	run := format.SQLX
 	switch {

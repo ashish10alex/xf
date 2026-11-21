@@ -488,8 +488,8 @@ async function start(keys) {
     const runs = await post('/api/inspector/run', { key: IN.v.key, rows });
     Object.assign(IN.v.runs, runs);
   } catch (e) {
-    // A Databricks project with no SQL warehouse yet: pick one, then run.
-    if (sc.onDbx() && /^no SQL warehouse chosen/.test(e.message)) openWarehousePicker(() => start(keys));
+    // A Databricks or Snowflake project with no warehouse yet: pick one, then run.
+    if (sc.onDemand() && /^no (SQL|virtual) warehouse chosen/.test(e.message)) openWarehousePicker(() => start(keys));
     else say(e.message);
   }
   redraw();

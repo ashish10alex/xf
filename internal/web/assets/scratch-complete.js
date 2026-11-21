@@ -11,7 +11,7 @@
 
 import * as cm from './vendor/codemirror.mjs';
 import { get, copy, openLink } from './state.js';
-import { SC, fmtBytes, onClearMeta, onDbx, site } from './scratch.js';
+import { SC, fmtBytes, onClearMeta, onDbx, onSf, onDemand, site } from './scratch.js';
 import { functionOptions, clauseOptions, inPivotAggregate, valueOptions, isFunctionName, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 
 const TTL = 5 * 60 * 1000;
@@ -155,8 +155,9 @@ function cteNames(clean) {
 
 // KEYWORDS are left out of the editor's words.
 const KEYWORDS = new Set([...NOT_ALIAS, ...'with recursive distinct by asc desc null true false case if all any exists between like rows range over current row unbounded preceding following interval struct array cast safe_cast extract date datetime time timestamp int64 float64 numeric bignumeric bool string bytes json geography insert into values update delete merge create replace table view temp temporary declare begin commit rollback'.split(' ')]);
-// DBX_KEYWORDS are Databricks SQL's words left out too.
+// DBX_KEYWORDS and SF_KEYWORDS are dialect-specific words left out too.
 const DBX_KEYWORDS = new Set('int bigint smallint tinyint long short double float decimal boolean binary void map timestamp_ntz variant try_cast lateral qualify pivot unpivot'.split(' '));
+const SF_KEYWORDS = new Set('number bigint smallint tinyint double float decimal boolean binary variant object array timestamp_ntz timestamp_ltz timestamp_tz geography geometry lateral flatten ilike rlike iff qualify pivot unpivot try_cast sample'.split(' '));
 
 // words are the names written anywhere in the editor but the one being
 // typed at [from, to): backticked names, keywords and functions left out.
@@ -165,8 +166,9 @@ export function words(sql, from, to) {
   const out = new Map();
   for (const m of text.replace(/`[^`\n]*`?/g, (x) => ' '.repeat(x.length)).matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
     const w = m[0];
-    if (w.length < 2 || KEYWORDS.has(w.toLowerCase()) || (onDbx() && DBX_KEYWORDS.has(w.toLowerCase())) || out.has(w.toLowerCase()) || isFunctionName(w)) continue;
-    out.set(w.toLowerCase(), w);
+    const lo = w.toLowerCase();
+    if (w.length < 2 || KEYWORDS.has(lo) || (onDbx() && DBX_KEYWORDS.has(lo)) || (onSf() && SF_KEYWORDS.has(lo)) || out.has(lo) || isFunctionName(w)) continue;
+    out.set(lo, w);
   }
   return [...out.values()];
 }
@@ -174,12 +176,12 @@ export function words(sql, from, to) {
 // ---- completion ----
 
 const PLAIN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-// quoteIdent backticks a name that needs it: GoogleSQL escapes a backtick
-// in one with a backslash, Databricks by doubling it.
-export const quoteIdent = (s) => (PLAIN.test(s) ? s : '`' + s.replace(/`/g, onDbx() ? '``' : '\\`') + '`');
+// quoteIdent quotes a name that needs it: GoogleSQL uses backticks with \`,
+// Databricks uses backticks doubled, Snowflake uses double quotes doubled.
+export const quoteIdent = (s) => (PLAIN.test(s) ? s : onSf() ? '"' + s.replace(/"/g, '""') + '"' : '`' + s.replace(/`/g, onDbx() ? '``' : '\\`') + '`');
 // refText names a table as a FROM takes it: in one pair of backticks for
-// BigQuery, part by part for Databricks, where `a.b.c` is one name.
-const refText = (r) => onDbx() ? [r.project, r.dataset, r.table].map(quoteIdent).join('.') : '`' + r.project + '.' + r.dataset + '.' + r.table + '`';
+// BigQuery, part by part for Databricks and Snowflake.
+const refText = (r) => onDemand() ? [r.project, r.dataset, r.table].map(quoteIdent).join('.') : '`' + r.project + '.' + r.dataset + '.' + r.table + '`';
 
 // field walks path down the fields of a table's schema.
 function walk(fields, path) {
@@ -268,33 +270,34 @@ export async function tableOptions(tok, tokStart, clean) {
     return !!ts;
   };
   if (parts.length === 1) {
-    const dbx = onDbx();
+    const od = onDemand();
+    const sf = onSf();
     const [ms, ds, ps] = await Promise.all([models(), proj ? datasets(proj) : null, projects()]);
     for (const n of cteNames(clean)) options.push({ label: n, detail: 'cte', type: 'class', boost: 5, apply: applyAt(tokStart, quoteIdent(n)) });
     for (const m of ms || []) {
       options.push({ label: m.dataset + '.' + m.name, detail: m.kind, type: 'class', boost: 3, info: m.description || undefined,
         apply: applyAt(tokStart, refText({ project: m.project, dataset: m.dataset, table: m.name })) });
     }
-    const projBoost = dbx || ticked ? 2 : 1;
+    const projBoost = od || ticked ? 2 : 1;
     for (const p of ps || []) {
-      const insert = dbx ? quoteIdent(p) + '.' : (ticked || !PLAIN.test(p) ? '`' + p + '.' : p + '.');
-      options.push({ label: p, detail: dbx ? 'catalog' : 'project', type: 'namespace', boost: projBoost, apply: applyAt(tokStart, insert, true) });
+      const insert = od ? quoteIdent(p) + '.' : (ticked || !PLAIN.test(p) ? '`' + p + '.' : p + '.');
+      options.push({ label: p, detail: sf ? 'database' : od ? 'catalog' : 'project', type: 'namespace', boost: projBoost, apply: applyAt(tokStart, insert, true) });
     }
     for (const d of ds || []) {
-      const insert = dbx ? quoteIdent(d) + '.' : lead + d + '.';
-      options.push({ label: d, detail: dbx ? 'schema' : 'dataset', type: 'namespace', boost: 1, apply: applyAt(tokStart, insert, true) });
+      const insert = od ? quoteIdent(d) + '.' : lead + d + '.';
+      options.push({ label: d, detail: od ? 'schema' : 'dataset', type: 'namespace', boost: 1, apply: applyAt(tokStart, insert, true) });
     }
     return { from, options };
   }
   if (parts.length === 2) {
-    const dbx = onDbx();
+    const od = onDemand();
     const ds = (proj && (await datasets(proj))) || [];
     if (ds.includes(parts[0])) {
       await addTables(proj, parts[0]);
-    } else { // the first part is a project or catalog
+    } else { // the first part is a project, catalog, or database
       for (const d of (await datasets(parts[0])) || []) {
-        const insert = dbx ? quoteIdent(parts[0]) + '.' + quoteIdent(d) + '.' : lead + parts[0] + '.' + d + '.';
-        options.push({ label: d, detail: dbx ? 'schema' : 'dataset', type: 'namespace', apply: applyAt(tokStart, insert, true) });
+        const insert = od ? quoteIdent(parts[0]) + '.' + quoteIdent(d) + '.' : lead + parts[0] + '.' + d + '.';
+        options.push({ label: d, detail: od ? 'schema' : 'dataset', type: 'namespace', apply: applyAt(tokStart, insert, true) });
       }
     }
     return { from, options };
@@ -542,7 +545,7 @@ async function columnOptions(tok, tokStart, sql, pos) {
     }
     // SAFE. comes before a function, in BigQuery; on Databricks it may be a
     // schema.
-    if (qual.length === 1 && first === 'safe' && !onDbx()) return { from, options: await functionOptions(1) };
+    if (qual.length === 1 && first === 'safe' && !onDemand()) return { from, options: await functionOptions(1) };
     // Anything else, such as a CTE, offers everything below.
   }
   const names = new Set();
@@ -654,9 +657,11 @@ function el(tag, cls, text) {
 }
 
 // consoleURL is the table's page, as u opens it: the server's (Catalog
-// Explorer for Databricks), else the BigQuery console's.
-const consoleURL = (c) => c.url || 'https://console.cloud.google.com/bigquery?project=' + encodeURIComponent(c.project) +
-  `&ws=!1m5!1m4!4m3!1s${encodeURIComponent(c.project)}!2s${encodeURIComponent(c.dataset)}!3s${encodeURIComponent(c.table)}`;
+// Explorer for Databricks, Snowsight for Snowflake), else the BigQuery
+// console's. Empty for on-demand warehouses when the server has no URL
+// (e.g. locator-style Snowflake accounts).
+const consoleURL = (c) => c.url || (onDemand() ? '' : 'https://console.cloud.google.com/bigquery?project=' + encodeURIComponent(c.project) +
+  `&ws=!1m5!1m4!4m3!1s${encodeURIComponent(c.project)}!2s${encodeURIComponent(c.dataset)}!3s${encodeURIComponent(c.table)}`);
 
 // flash shows a button's done text for a moment.
 function flash(btn, text) {
@@ -682,14 +687,21 @@ export function cardDOM(card) {
   const kind = (mdl && mdl.kind) || (d && d.type && d.type.toLowerCase().replace('_', ' ')) || '';
   if (kind) bar.append(el('span', 'sc-card-kind', kind));
   const actions = el('div', 'sc-card-actions');
-  const where = onDbx() ? 'Catalog Explorer' : 'BigQuery';
+  const where = onDbx() ? 'Catalog Explorer' : onSf() ? 'Snowsight' : 'BigQuery';
   const ref = refText(card);
-  const openBtn = el('button', 'sc-card-link sc-card-open', '↗\u00a0bigquery');
+  const url = consoleURL(card);
   const nameBtn = el('button', 'sc-card-link sc-card-copyname', '⧉\u00a0name');
-  if (onDbx()) openBtn.textContent = '↗\u00a0catalog';
-  openBtn.title = 'Open in ' + where + ' (u, on a card K showed or you clicked in)';
   nameBtn.title = 'Copy ' + ref + ' (y, on a card K showed or you clicked in)';
-  actions.append(openBtn, el('span', 'sc-card-sep', ' · '), nameBtn);
+  if (url) {
+    const openBtn = el('button', 'sc-card-link sc-card-open', '↗\u00a0bigquery');
+    if (onDbx()) openBtn.textContent = '↗\u00a0catalog';
+    else if (onSf()) openBtn.textContent = '↗\u00a0snowsight';
+    openBtn.title = 'Open in ' + where + ' (u, on a card K showed or you clicked in)';
+    openBtn.addEventListener('click', () => openLink(url));
+    actions.append(openBtn, el('span', 'sc-card-sep', ' · '), nameBtn);
+  } else {
+    actions.append(nameBtn);
+  }
   const search = el('button', 'sc-card-link', '⌕\u00a0filter');
   search.title = 'Filter the columns (f, on a card K showed or you clicked in)';
   const copyBtn = el('button', 'sc-card-link', '⧉\u00a0columns');
@@ -698,14 +710,17 @@ export function cardDOM(card) {
   root.append(bar);
 
   // One line: when it does not fit, project.dataset gives way, never the table.
-  const name = el('a', 'sc-card-nameline');
-  name.href = consoleURL(card);
-  name.target = '_blank';
-  name.rel = 'noopener';
-  name.title = full + ': open in ' + where;
+  const name = url ? el('a', 'sc-card-nameline') : el('span', 'sc-card-nameline');
+  if (url) {
+    name.href = url;
+    name.target = '_blank';
+    name.rel = 'noopener';
+    name.title = full + ': open in ' + where;
+  } else {
+    name.title = full;
+  }
   name.append(el('span', 'sc-card-qual', `${card.project}.${card.dataset}.`), el('span', 'sc-card-name', card.table));
   root.append(name);
-  openBtn.addEventListener('click', () => openLink(name.href));
   // Quoted, as y copies it, so it pastes into a FROM.
   nameBtn.addEventListener('click', () => {
     copy(ref, 'copied ' + ref);

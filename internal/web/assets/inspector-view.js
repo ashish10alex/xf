@@ -102,7 +102,7 @@ function Body({ v }) {
       ${v.defer && html`<span class=${'ins-defer' + (v.deferError ? ' warn' : '')} title="Rows read what their dry run reads: a table not built in dev is read from prod">
         defer to prod ${v.deferLoading ? html`<span class="dim">${spin()} working out what it reads from prod…</span>` : v.deferError ? '· ' + v.deferError : 'on'}</span>`}
       <span class="spacer"></span>
-      ${!sc.onDbx() && html`<button class="run-btn" disabled=${!ticked} onClick=${ins.dryRunAll}>Dry run all <span class="dim">${ticked}</span></button>`}
+      ${!sc.onDemand() && html`<button class="run-btn" disabled=${!ticked} onClick=${ins.dryRunAll}>Dry run all <span class="dim">${ticked}</span></button>`}
       <button class="run-btn" disabled=${!ticked} onClick=${ins.askRunAll}>Run all <span class="dim">${ticked}</span></button>
       ${running && html`<button class="run-btn danger" onClick=${() => ins.cancelRuns()}><span class="verb">Cancel runs</span> <span class="dim">ctrl+c</span></button>`}
       ${z && html`<button class="link" title="Show every section again" onClick=${ins.zoom}>zoomed: ${z === 'top' ? IN.tab : z} · unzoom (z or esc)</button>`}
@@ -170,8 +170,11 @@ function Dry({ k }) {
   const now = ins.dryOf(k);
   const noFilter = !ins.filterOf(k).trim();
   if (d && d.pending) return html`<span class="dim">${spin()}</span>`;
-  if (sc.onDbx()) {
-    return html`<span class="dim" title="Databricks has no dry run. A run starts the SQL warehouse when it is stopped, and it bills while it runs.">no dry run</span>${noFilter ? html` <span class="warn" title="No filter: a full table scan">⚠</span>` : ''}`;
+  if (sc.onDemand()) {
+    const tip = sc.onSf()
+      ? 'Snowflake has no dry run. A run resumes the virtual warehouse when it is suspended, and it bills while it runs.'
+      : 'Databricks has no dry run. A run starts the SQL warehouse when it is stopped, and it bills while it runs.';
+    return html`<span class="dim" title=${tip}>no dry run</span>${noFilter ? html` <span class="warn" title="No filter: a full table scan">⚠</span>` : ''}`;
   }
   if (!now) {
     return html`<button class="link" onClick=${() => ins.dryRun(k)}>dry run</button>${noFilter ? html` <span class="warn" title="No filter: a full table scan">⚠</span>` : ''}`;
@@ -203,7 +206,7 @@ function Acts({ n }) {
   return html`${act('schema', 'Its columns', ins.openSchema)}
     ${act('scratch', 'Open the query in a new scratch', ins.openInScratch)}
     ${act('copy', 'Copy the query', ins.copyQuery)}
-    ${n.url && act(sc.onDbx() ? 'catalog' : 'bq', 'Open the table in ' + (sc.onDbx() ? 'Catalog Explorer' : 'the BigQuery console'), ins.openTable)}
+    ${n.url && act(sc.onDbx() ? 'catalog' : sc.onSf() ? 'snowsight' : 'bq', 'Open the table in ' + (sc.onDbx() ? 'Catalog Explorer' : sc.onSf() ? 'Snowsight' : 'the BigQuery console'), ins.openTable)}
     ${n.file && act('file', 'Open ' + n.file + ' (leaves the page)', ins.openFile)}`;
 }
 
@@ -358,7 +361,7 @@ function Result() {
   let body;
   if (!r) body = html`<div class="dim pad">not run yet: <button class="link" onClick=${() => ins.runRow(k)}>run</button> it, or tick rows and Run all${d && d.ok ? dry : ''}</div>`;
   else if (r.phase === 'queued') body = html`<div class="dim pad">queued: up to 4 queries run at once</div>`;
-  else if (r.phase === 'running') body = html`<div class="warn pad">${spin()} running in ${sc.onDbx() ? "the SQL warehouse" : "BigQuery"}…</div>`;
+  else if (r.phase === 'running') body = html`<div class="warn pad">${spin()} running in ${sc.onDbx() ? 'the SQL warehouse' : sc.onSf() ? 'the virtual warehouse' : 'BigQuery'}…</div>`;
   else if (r.phase === 'cancelled') body = html`<div class="dim pad">the query was cancelled</div>`;
   else if (r.phase === 'failed') body = html`<pre class="sc-error">${r.error}</pre>`;
   else if (!run || run.phase === 'running' || run.phase === 'loading' || run.phase === 'starting') body = html`<div class="dim pad">${spin()} reading rows…</div>`;
@@ -458,8 +461,8 @@ function Confirm({ c }) {
   const n = c.keys.length - (c.failed || []).length;
   return html`<${Modal} title=${one ? 'run ' + name(c.keys[0]) + '?' : `run ${c.keys.length} queries?`} cls="confirm amber" onClose=${ins.dismissConfirm}>
     ${c.pending ? html`<p class="dim">${spin()} dry running ${one ? 'it' : 'them'} first…</p>` : html`
-      ${n > 0 && sc.onDbx() && html`<p>${one ? 'It runs' : 'They run'} on the SQL warehouse, which starts when it is stopped and bills while it runs.</p>`}
-      ${n > 0 && !sc.onDbx() && html`<p>${one ? 'It scans' : n < c.keys.length ? `The ${n} that can run scan` : 'They scan'} <b>${sc.fmtBytes(c.total)}</b>${c.cost ? html`, about <b>$${c.cost.toFixed(c.cost < 1 ? 3 : 2)}</b> on demand` : ''}${c.unknown ? ' (some sizes BigQuery could not estimate)' : ''}.</p>`}
+      ${n > 0 && sc.onDemand() && html`<p>${one ? 'It runs' : 'They run'} on the ${sc.onSf() ? 'virtual' : 'SQL'} warehouse, which ${sc.onSf() ? 'resumes when it is suspended' : 'starts when it is stopped'} and bills while it runs.</p>`}
+      ${n > 0 && !sc.onDemand() && html`<p>${one ? 'It scans' : n < c.keys.length ? `The ${n} that can run scan` : 'They scan'} <b>${sc.fmtBytes(c.total)}</b>${c.cost ? html`, about <b>$${c.cost.toFixed(c.cost < 1 ? 3 : 2)}</b> on demand` : ''}${c.unknown ? ' (some sizes BigQuery could not estimate)' : ''}.</p>`}
       ${c.noFilter.length > 0 && html`<p class="warn">⚠ full scan, with no filter: ${c.noFilter.map(name).join(', ')}</p>`}
       ${c.failed.length > 0 && html`<p class="error">✗ their dry run failed, so they won't run: ${c.failed.map(name).join(', ')}</p>`}
       ${!one && html`<p class="dim">At most 4 run at once; ctrl+c cancels them.</p>`}`}

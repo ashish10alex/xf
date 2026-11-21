@@ -20,39 +20,64 @@ import (
 // check's line says so while it waits. A built table's columns come from
 // Unity Catalog, which wakes no warehouse, as the table lookups do.
 
-// Databricks is how xf web reaches a Databricks project's workspace.
+// Snowflake is the configuration of a Snowflake workspace, sharing Databricks'
+// on-demand warehouse interface (ADR 0044).
+type Snowflake = Databricks
+
+// Databricks is how xf web reaches an on-demand warehouse project (Databricks
+// or Snowflake): its client, links, warehouses and standalone profiles.
 type Databricks struct {
 	// TargetType is the type of the dbt target the project compiles with,
 	// which says the warehouse until a compile does.
 	TargetType string
-	// Client is the workspace's client; it checks on the SQL warehouse,
-	// and is a warehouse.Waker.
+	// Client is the workspace's client; it checks on the SQL/virtual
+	// warehouse, and is a warehouse.Waker.
 	Client func(ctx context.Context) (warehouse.Warehouse, error)
-	// Host is the workspace's URL, for Catalog Explorer links; "" when not
-	// known.
+	// Host is the workspace's URL, for links; "" when not known.
 	Host func() string
-	// Warehouses lists the workspace's SQL warehouses for the form a check
-	// shows when none is chosen; Choose saves the pick to the project's
-	// config file (databricksWarehouse), used from the next check, and
-	// answers with the file.
+	// TableURL, when set, overrides the table link (Snowsight for Snowflake).
+	TableURL func(project.Target) string
+	// Warehouses lists the workspace's SQL or virtual warehouses for the form
+	// a check shows when none is chosen; Choose saves the pick to the
+	// project's config file, used from the next check, and answers with the
+	// file.
 	Warehouses func(ctx context.Context) ([]SQLWarehouse, error)
 	Choose     func(id string) (file string, err error)
-	// Chosen says a SQL warehouse is chosen; nil says one is.
+	// Chosen says a SQL/virtual warehouse is chosen; nil says one is.
 	Chosen func() bool
-	// WarehouseID returns the currently chosen SQL warehouse ID, "" for none.
+	// WarehouseID returns the currently chosen SQL/virtual warehouse ID or name, "" for none.
 	WarehouseID func() string
-	// Profiles lists available ~/.databrickscfg profiles and returns the
-	// active profile name; nil when profile switching isn't offered (dbt
-	// projects follow profiles.yml).
+	// Profiles lists available CLI profiles/connections and returns the active
+	// name; nil when profile switching isn't offered (dbt projects follow
+	// profiles.yml).
 	Profiles func() (profiles []DatabricksProfile, current string)
-	// ChooseProfile switches the active ~/.databrickscfg profile for
-	// standalone Databricks scratch.
+	// ChooseProfile switches the active profile/connection for standalone
+	// scratch.
 	ChooseProfile func(name string) (message string, err error)
-	// SaveNote explains where a chosen SQL warehouse is saved, shown in the
+	// SaveNote explains where a chosen warehouse is saved, shown in the
 	// warehouse picker; "" uses the default project-config note.
 	SaveNote string
+	// ConfigKey is the project config key Choose writes (default databricksWarehouse).
+	ConfigKey string
+	// CatalogName names where built table columns come from (default Unity Catalog).
+	CatalogName string
+	// WarehouseLabel names the compute resource (default "SQL warehouse").
+	WarehouseLabel string
+	// PaletteCommand names the command that picks a warehouse.
+	PaletteCommand string
 	// AuthHint says how to sign in, for a check without credentials.
 	AuthHint string
+}
+
+func (d *Databricks) configKey() string { return cmp.Or(d.ConfigKey, "databricksWarehouse") }
+func (d *Databricks) catalogName() string {
+	return cmp.Or(d.CatalogName, "Unity Catalog")
+}
+func (d *Databricks) warehouseLabel() string {
+	return cmp.Or(d.WarehouseLabel, "SQL warehouse")
+}
+func (d *Databricks) paletteCommand() string {
+	return cmp.Or(d.PaletteCommand, "Databricks: choose the SQL warehouse")
 }
 
 // DatabricksProfile is a ~/.databrickscfg profile listed by the profile picker.
@@ -74,16 +99,77 @@ type SQLWarehouse struct {
 // checkTimeout bounds a check, which may wait for a warehouse to start.
 const checkTimeout = 10 * time.Minute
 
+// targetTypeLocked is the dbt target type known before a compile finishes.
+func (p *projectState) targetTypeLocked() string {
+	if p.sf != nil && p.sf.TargetType != "" {
+		return p.sf.TargetType
+	}
+	if p.dbx != nil && p.dbx.TargetType != "" {
+		return p.dbx.TargetType
+	}
+	return ""
+}
+
+// warehouseKindLocked says which warehouse the project builds in now.
+func (p *projectState) warehouseKindLocked() string {
+	k := p.st.Graph.WarehouseOr(p.targetTypeLocked())
+	switch k {
+	case project.Databricks:
+		if p.dbx != nil {
+			return project.Databricks
+		}
+	case project.Snowflake:
+		if p.sf != nil {
+			return project.Snowflake
+		}
+	}
+	return project.BigQuery
+}
+
+func (p *projectState) warehouseKind() string {
+	switch {
+	case p.onDbx.Load():
+		return project.Databricks
+	case p.onSf.Load():
+		return project.Snowflake
+	default:
+		return project.BigQuery
+	}
+}
+
+// onDemandLocked returns the active on-demand warehouse config (Databricks or
+// Snowflake), or nil for BigQuery.
+func (p *projectState) onDemandLocked() *Databricks {
+	switch p.warehouseKindLocked() {
+	case project.Databricks:
+		return p.dbx
+	case project.Snowflake:
+		return p.sf
+	}
+	return nil
+}
+
+func (p *projectState) onDemand() *Databricks {
+	switch {
+	case p.onDbx.Load():
+		return p.dbx
+	case p.onSf.Load():
+		return p.sf
+	}
+	return nil
+}
+
+func (p *projectState) isOnDemandLocked() bool { return p.onDemandLocked() != nil }
+func (p *projectState) isOnDemand() bool       { return p.onDbx.Load() || p.onSf.Load() }
+
 // databricksLocked says the project builds in Databricks: its graph says
 // so, or before a compile its dbt target.
 func (p *projectState) databricksLocked() bool {
-	return p.dbx != nil && p.st.Graph.WarehouseOr(p.dbx.TargetType) == project.Databricks
+	return p.warehouseKindLocked() == project.Databricks
 }
 
 func (p *projectState) databricks() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.databricksLocked()
+	return p.onDbx.Load()
 }
 
 // checkAction runs the on-demand check of an action's SQL, as compiled:
@@ -96,8 +182,8 @@ func (p *projectState) checkAction(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if p.databricks() && p.dbx.Chosen != nil && !p.dbx.Chosen() {
-		writeJSON(w, okView{Kind: "warehouse", Message: "choose the SQL warehouse checks run on"})
+	if od := p.onDemand(); od != nil && od.Chosen != nil && !od.Chosen() {
+		writeJSON(w, okView{Kind: "warehouse", Message: "choose the " + od.warehouseLabel() + " checks run on"})
 		return
 	}
 	p.mu.Lock()
@@ -106,10 +192,11 @@ func (p *projectState) checkAction(w http.ResponseWriter, r *http.Request) {
 	if g != nil {
 		a = g.Actions[project.ActionID(req.ID)]
 	}
+	od := p.onDemandLocked()
 	why := ""
 	switch {
-	case !p.databricksLocked():
-		why = "checks are on Databricks; this project dry runs on its own"
+	case od == nil:
+		why = "checks are on Databricks and Snowflake; this project dry runs on its own"
 	case g == nil || a == nil:
 		why = "no such action"
 	case g.Notice != "":
@@ -135,8 +222,7 @@ func (p *projectState) checkAction(w http.ResponseWriter, r *http.Request) {
 		}
 		e = &dryEntry{loading: true, asked: true}
 		p.dry[key] = e
-		// The model's query alone: DESCRIBE QUERY takes one statement,
-		// not the script of its hooks.
+		// The model's query alone: single-statement check, not hooks.
 		sql := a.Query
 		if q.Label == "incremental" {
 			sql = a.IncrementalQuery
@@ -151,13 +237,13 @@ func (p *projectState) checkAction(w http.ResponseWriter, r *http.Request) {
 	}
 	p.hub.send("detail", nil)
 	p.hub.send("state", v)
-	go p.runChecks(entries, proj, location, sqls)
+	go p.runChecks(od, entries, proj, location, sqls)
 	writeJSON(w, okView{OK: true})
 }
 
-// runChecks checks sqls on the SQL warehouse, telling the page each answer,
-// and first whether the warehouse is starting.
-func (p *projectState) runChecks(entries []*dryEntry, proj, location string, sqls []string) {
+// runChecks checks sqls on the SQL/virtual warehouse, telling the page each
+// answer, and first whether the warehouse is starting.
+func (p *projectState) runChecks(od *Databricks, entries []*dryEntry, proj, location string, sqls []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 	defer cancel()
 	finish := func(e *dryEntry, res *warehouse.Check, err error) {
@@ -168,7 +254,7 @@ func (p *projectState) runChecks(entries []*dryEntry, proj, location string, sql
 		p.hub.send("detail", nil)
 		p.hub.send("state", v)
 	}
-	c, err := p.dbx.Client(ctx)
+	c, err := od.Client(ctx)
 	if err == nil {
 		if wk, ok := c.(warehouse.Waker); ok {
 			up, werr := wk.Running(ctx)
@@ -195,24 +281,29 @@ func (p *projectState) runChecks(entries []*dryEntry, proj, location string, sql
 	}
 }
 
-// checkDetailLocked is the line under a Databricks model's row for one of
+// checkDetailLocked is the line under an on-demand model's row for one of
 // its queries: not checked yet, checking (and the warehouse starting), or
 // what the check said.
 func (p *projectState) checkDetailLocked(e *dryEntry, label string) detail {
+	od := p.onDemandLocked()
+	whLabel, authHint := "SQL warehouse", ""
+	if od != nil {
+		whLabel, authHint = od.warehouseLabel(), od.AuthHint
+	}
 	d := detail{Label: cmp.Or(label, "check"), Dry: true, Tone: "dim"}
 	starting := startingNote(e)
 	switch {
 	case e == nil || !e.asked:
-		d.Value = "not checked · K checks on the SQL warehouse"
+		d.Value = "not checked · K checks on the " + whLabel
 	case e.loading:
 		d.Value = "checking…" + starting
 		if starting != "" {
 			d.Tone = "warn"
 		}
 	case errors.Is(e.err, warehouse.ErrNoWarehouse):
-		d.Value, d.Tone = "no SQL warehouse chosen: K picks one", "warn"
+		d.Value, d.Tone = "no "+whLabel+" chosen: K picks one", "warn"
 	case errors.Is(e.err, warehouse.ErrAuth):
-		d.Value, d.Tone = "no credentials: "+p.dbx.AuthHint, "warn"
+		d.Value, d.Tone = "no credentials: "+authHint, "warn"
 	case e.err != nil:
 		msg := e.err.Error()
 		if apiErr, ok := errors.AsType[*warehouse.APIError](e.err); ok {
@@ -226,7 +317,7 @@ func (p *projectState) checkDetailLocked(e *dryEntry, label string) detail {
 }
 
 // startingNote is what the check's line adds while e's check waits for the
-// SQL warehouse to start: it bills from then (ADR 0042).
+// warehouse to start: it bills from then (ADR 0042).
 func startingNote(e *dryEntry) string {
 	if e != nil && e.woke {
 		return " · warehouse starting"
@@ -234,10 +325,15 @@ func startingNote(e *dryEntry) string {
 	return ""
 }
 
-// checkColumnsLocked is a Databricks model's columns: its check's, when
-// one has answered for the SQL as it is, else its built table's from Unity
-// Catalog, else why there are none.
+// checkColumnsLocked is an on-demand model's columns: its check's, when
+// one has answered for the SQL as it is, else its built table's from its
+// catalog, else why there are none.
 func (p *projectState) checkColumnsLocked(a *project.Action, e *dryEntry, built *tableEntry) columnsView {
+	od := p.onDemandLocked()
+	whLabel, catName, authHint := "SQL warehouse", "Unity Catalog", ""
+	if od != nil {
+		whLabel, catName, authHint = od.warehouseLabel(), od.catalogName(), od.AuthHint
+	}
 	why := func(reason string, failed bool) columnsView {
 		return columnsView{Fields: []warehouse.Column{}, Reason: reason, Failed: failed}
 	}
@@ -249,19 +345,19 @@ func (p *projectState) checkColumnsLocked(a *project.Action, e *dryEntry, built 
 		v.Note = "from the check of the SQL as compiled at " + e.at.Local().Format("15:04")
 		return v
 	case e != nil && e.asked && e.done && errors.Is(e.err, warehouse.ErrNoWarehouse):
-		return why("no SQL warehouse chosen: K picks one", true)
+		return why("no "+whLabel+" chosen: K picks one", true)
 	case e != nil && e.asked && e.done:
 		return why("✗ "+firstLine(checkMessage(e.err))+" — press e for details", true)
 	case built != nil && built.done && built.err == nil && built.tbl != nil && len(built.tbl.Schema) > 0:
 		v := p.describedLocked(a, built.tbl.Schema)
-		v.Note = "the built table's, from Unity Catalog · K checks the edited SQL's"
+		v.Note = "the built table's, from " + catName + " · K checks the edited SQL's"
 		return v
 	case built == nil || !built.done:
 		return why("looking up the built table…", false)
 	case warehouse.IsNotFound(built.err):
-		return why("not built yet · K checks its SQL on the SQL warehouse for its columns", false)
+		return why("not built yet · K checks its SQL on the "+whLabel+" for its columns", false)
 	case errors.Is(built.err, warehouse.ErrAuth):
-		return why("no credentials: "+p.dbx.AuthHint, true)
+		return why("no credentials: "+authHint, true)
 	case built.err != nil:
 		return why("✗ "+firstLine(checkMessage(built.err)), true)
 	}
@@ -305,37 +401,41 @@ func (p *projectState) catalogURL(t project.Target) string {
 }
 
 // tableURL is where u opens a table: Catalog Explorer for Databricks,
-// else the BigQuery console.
+// Snowsight for Snowflake, else the BigQuery console.
 func (p *projectState) tableURL(t project.Target) string {
-	if p.onDbx.Load() {
+	if od := p.onDemand(); od != nil {
+		if od.TableURL != nil {
+			return od.TableURL(t)
+		}
 		return p.catalogURL(t)
 	}
 	return t.ConsoleURL()
 }
 
-// databricksWarehouses lists the SQL warehouses for the form.
+// databricksWarehouses lists the SQL or virtual warehouses for the form.
 func (p *projectState) databricksWarehouses(w http.ResponseWriter, r *http.Request) {
-	if p.dbx == nil || p.dbx.Warehouses == nil {
-		http.Error(w, "not a Databricks project", http.StatusNotFound)
+	od := p.onDemand()
+	if od == nil || od.Warehouses == nil {
+		http.Error(w, "not an on-demand warehouse project", http.StatusNotFound)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
-	list, err := p.dbx.Warehouses(ctx)
+	list, err := od.Warehouses(ctx)
 	cur := ""
-	if p.dbx.WarehouseID != nil {
-		cur = p.dbx.WarehouseID()
+	if od.WarehouseID != nil {
+		cur = od.WarehouseID()
 	}
 	v := struct {
 		Warehouses []SQLWarehouse `json:"warehouses"`
 		Current    string         `json:"current,omitempty"`
 		SaveNote   string         `json:"saveNote,omitempty"`
 		Error      string         `json:"error,omitempty"`
-	}{Warehouses: nonNil(list), Current: cur, SaveNote: p.dbx.SaveNote}
+	}{Warehouses: nonNil(list), Current: cur, SaveNote: od.SaveNote}
 	if err != nil {
 		v.Error = err.Error()
 		if errors.Is(err, warehouse.ErrAuth) {
-			v.Error = "no credentials: " + p.dbx.AuthHint
+			v.Error = "no credentials: " + od.AuthHint
 		}
 	}
 	writeJSON(w, v)
@@ -350,11 +450,12 @@ func (p *projectState) chooseDatabricksWarehouse(w http.ResponseWriter, r *http.
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if p.dbx == nil || p.dbx.Choose == nil || req.ID == "" {
+	od := p.onDemand()
+	if od == nil || od.Choose == nil || req.ID == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	file, err := p.dbx.Choose(req.ID)
+	file, err := od.Choose(req.ID)
 	if err != nil {
 		writeJSON(w, okView{Message: err.Error()})
 		return
@@ -370,27 +471,28 @@ func (p *projectState) chooseDatabricksWarehouse(w http.ResponseWriter, r *http.
 	if p.standalone {
 		p.hub.send("databricks", map[string]any{"warehouse": req.ID})
 	}
-	msg := "databricksWarehouse saved to " + file
+	msg := od.configKey() + " saved to " + file
 	if p.standalone {
-		msg = "SQL warehouse saved to " + file
+		msg = od.warehouseLabel() + " saved to " + file
 	}
 	writeJSON(w, okView{OK: true, Message: msg})
 }
 
-// databricksProfiles lists the ~/.databrickscfg profiles available to
-// standalone Databricks scratch and reports the current connection state.
+// databricksProfiles lists the CLI profiles/connections available to
+// standalone Databricks or Snowflake scratch and reports the current state.
 func (p *projectState) databricksProfiles(w http.ResponseWriter, r *http.Request) {
-	if p.dbx == nil || p.dbx.Profiles == nil {
-		http.Error(w, "profile switching is only available for standalone Databricks scratch", http.StatusNotFound)
+	od := p.onDemand()
+	if od == nil || od.Profiles == nil {
+		http.Error(w, "profile switching is only available for standalone scratch", http.StatusNotFound)
 		return
 	}
-	profiles, current := p.dbx.Profiles()
+	profiles, current := od.Profiles()
 	host, wh := "", ""
-	if p.dbx.Host != nil {
-		host = p.dbx.Host()
+	if od.Host != nil {
+		host = od.Host()
 	}
-	if p.dbx.WarehouseID != nil {
-		wh = p.dbx.WarehouseID()
+	if od.WarehouseID != nil {
+		wh = od.WarehouseID()
 	}
 	writeJSON(w, struct {
 		Profiles     []DatabricksProfile `json:"profiles"`
@@ -405,13 +507,12 @@ func (p *projectState) databricksProfiles(w http.ResponseWriter, r *http.Request
 		Host:         host,
 		Warehouse:    wh,
 		NeedsProfile: host == "",
-		AuthHint:     p.dbx.AuthHint,
+		AuthHint:     od.AuthHint,
 	})
 }
 
-// chooseDatabricksProfile switches the active ~/.databrickscfg profile for
-// standalone Databricks scratch, clearing cached metadata from the previous
-// workspace.
+// chooseDatabricksProfile switches the active CLI profile/connection for
+// standalone scratch, clearing cached metadata from the previous workspace.
 func (p *projectState) chooseDatabricksProfile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
@@ -419,11 +520,12 @@ func (p *projectState) chooseDatabricksProfile(w http.ResponseWriter, r *http.Re
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if p.dbx == nil || p.dbx.ChooseProfile == nil || req.Name == "" {
+	od := p.onDemand()
+	if od == nil || od.ChooseProfile == nil || req.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	msg, err := p.dbx.ChooseProfile(req.Name)
+	msg, err := od.ChooseProfile(req.Name)
 	if err != nil {
 		writeJSON(w, okView{Message: err.Error()})
 		return
@@ -433,15 +535,15 @@ func (p *projectState) chooseDatabricksProfile(w http.ResponseWriter, r *http.Re
 	clear(p.dry)
 	p.mu.Unlock()
 	host, wh := "", ""
-	if p.dbx.Host != nil {
-		host = p.dbx.Host()
+	if od.Host != nil {
+		host = od.Host()
 	}
-	if p.dbx.WarehouseID != nil {
-		wh = p.dbx.WarehouseID()
+	if od.WarehouseID != nil {
+		wh = od.WarehouseID()
 	}
 	chosen := wh != ""
-	if p.dbx.Chosen != nil {
-		chosen = p.dbx.Chosen()
+	if od.Chosen != nil {
+		chosen = od.Chosen()
 	}
 	p.hub.send("databricks", map[string]any{
 		"profile":      req.Name,

@@ -333,12 +333,18 @@ func TestDatabricksInspector(t *testing.T) {
 }
 
 func TestDialect(t *testing.T) {
-	bq, dbx := dialect{}, dialect{databricks: true}
+	bq, dbx, sf := dialect{}, dialect{warehouse: project.Databricks}, dialect{warehouse: project.Snowflake}
 	if got := bq.table("p", "d", "t"); got != "`p.d.t`" {
 		t.Errorf("BigQuery table = %s", got)
 	}
 	if got := dbx.table("main", "my schema", "t"); got != "main.`my schema`.t" {
 		t.Errorf("Databricks table = %s", got)
+	}
+	if got := sf.table("SHOP", "my schema", "ORDERS"); got != `SHOP."my schema".ORDERS` {
+		t.Errorf("Snowflake table = %s", got)
+	}
+	if got := sf.ident(`a"b`); got != `"a""b"` {
+		t.Errorf("Snowflake ident = %s", got)
 	}
 	if got := dbx.ident("a`b"); got != "`a``b`" {
 		t.Errorf("Databricks ident = %s", got)

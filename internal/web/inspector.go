@@ -347,7 +347,7 @@ func (p *projectState) inspectorDryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := p.dialect()
-	if d.databricks {
+	if d.onDemand() {
 		writeJSON(w, noDryRun(v, inspectorSQL(d, req.Table, req.Filter)))
 		return
 	}
@@ -407,9 +407,9 @@ func (p *projectState) inspectorRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if p.onDbx.Load() && p.dbx.Chosen != nil && !p.dbx.Chosen() {
+	if od := p.onDemand(); od != nil && od.Chosen != nil && !od.Chosen() {
 		// Each row would fail alone; the page asks for one and runs them.
-		writeError(w, queryError(warehouse.ErrNoWarehouse))
+		writeError(w, p.queryError(warehouse.ErrNoWarehouse))
 		return
 	}
 	def := p.scratchDefaults(r.Context())

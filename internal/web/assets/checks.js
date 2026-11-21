@@ -272,7 +272,7 @@ export function recheckShowing() {
   const which = S.checks;
   const o = which && S[which];
   if (!o || S.overlay || o.loading || o.err || !checkStale(o)) return;
-  if (which === 'impact' && S.caps.warehouse === 'databricks') { redraw(); return; }
+  if ((which === 'impact' && S.caps.warehouse === 'databricks') || S.caps.warehouse === 'snowflake') { redraw(); return; }
   openCheck(which, true);
 }
 

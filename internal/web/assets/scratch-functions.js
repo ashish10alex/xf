@@ -16,8 +16,11 @@
 import * as cm from './vendor/codemirror.mjs';
 import { S, get } from './state.js';
 
-// dialect is the SQL of the open project: 'databricks' or 'bigquery'.
-export const dialect = () => (S.caps && S.caps.warehouse === 'databricks' ? 'databricks' : 'bigquery');
+// dialect is the SQL of the open project: 'databricks', 'snowflake', or 'bigquery'.
+export const dialect = () => {
+  const w = S.caps && S.caps.warehouse;
+  return w === 'databricks' || w === 'snowflake' ? w : 'bigquery';
+};
 const onBigQuery = () => dialect() === 'bigquery';
 
 // loaded is each dialect's functions once they are here, { list, byName },

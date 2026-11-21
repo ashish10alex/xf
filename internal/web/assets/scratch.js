@@ -555,9 +555,9 @@ export async function runScratch(force) {
     run.job = await post('/api/scratch/run', { id: SC.cur.id, sql });
   } catch (e) {
     run.phase = 'failed'; run.error = e.message; run.ended = Date.now();
-    // A Databricks project with no SQL warehouse yet: pick one, then run.
-    if (onDbx() && /^no Databricks workspace/.test(e.message) && SC.dbx && SC.dbx.hasProfiles) openProfilePicker(() => runScratch(true));
-    else if (onDbx() && /^no SQL warehouse chosen/.test(e.message)) openWarehousePicker(() => runScratch(true));
+    // A Databricks or Snowflake project with no warehouse/profile yet: pick one, then run.
+    if (onDemand() && /^no (Databricks workspace|Snowflake account)/.test(e.message) && SC.dbx && SC.dbx.hasProfiles) openProfilePicker(() => runScratch(true));
+    else if (onDemand() && /^no (SQL|virtual) warehouse chosen/.test(e.message)) openWarehousePicker(() => runScratch(true));
     redraw();
     return;
   }
@@ -695,15 +695,18 @@ export function dismissConfirm() { SC.confirm = null; redraw(); }
 
 // ---- the result ----
 
-// onDbx says the project builds in Databricks (ADR 0042): its queries run
-// on a SQL warehouse, with no dry run, job page or table of the result.
+// onDbx and onSf identify on-demand warehouses (ADR 0042, ADR 0044): their
+// queries run on a SQL or virtual warehouse, with no dry run, job page or
+// result table to filter server-side.
 export const onDbx = () => !!S.caps && S.caps.warehouse === 'databricks';
+export const onSf = () => !!S.caps && S.caps.warehouse === 'snowflake';
+export const onDemand = () => onDbx() || onSf();
 // site is the warehouse's name, as the page words where a query runs.
-export const site = () => onDbx() ? 'Databricks' : 'BigQuery';
+export const site = () => onDbx() ? 'Databricks' : onSf() ? 'Snowflake' : 'BigQuery';
 
-// jobURL is a job's page in the BigQuery console; '' on Databricks.
+// jobURL is a job's page in the BigQuery console; '' on Databricks or Snowflake.
 export function jobURL(job) {
-  if (!job || onDbx()) return '';
+  if (!job || onDemand()) return '';
   const loc = job.location ? job.location : '';
   return `https://console.cloud.google.com/bigquery?project=${encodeURIComponent(job.project)}&j=bq:${encodeURIComponent(loc)}:${encodeURIComponent(job.id)}&page=queryresults`;
 }
@@ -957,14 +960,18 @@ export function scratchCommands() {
   add('Scratch: new empty query', SC.standalone ? 'n' : '', newDraft);
   if (!SC.standalone && S.view && S.sel) add('Scratch: new query from the selected model', 'n', askNew, S.view.name);
   if (cur && !cur.draft) add('Scratch: delete this scratch', 'd', () => { toResults(); SC.delAsk = cur.id; }, cur.id);
-  if (cur) add(onDbx() ? 'Scratch: change its catalog' : 'Scratch: change its project or location', '', () => {
+  if (cur) add(onDbx() ? 'Scratch: change its catalog' : onSf() ? 'Scratch: change its database' : 'Scratch: change its project or location', '', () => {
     toResults();
     setTimeout(() => { const el = document.querySelector('.sc-target-in'); if (el) { el.focus(); el.select(); } }, 0);
   }, [cur.project, cur.location].filter(Boolean).join(' · '));
   if (onDbx() && SC.dbx && SC.dbx.hasProfiles) {
     add('Databricks: choose profile (~/.databrickscfg)', '', () => openProfilePicker(), SC.dbx.profile || '');
   }
+  if (onSf() && SC.dbx && SC.dbx.hasProfiles) {
+    add('Snowflake: choose connection (~/.snowflake/connections.toml)', '', () => openProfilePicker(), SC.dbx.profile || '');
+  }
   if (onDbx()) add('Databricks: choose the SQL warehouse queries run on', '', () => openWarehousePicker(() => {}), SC.dbx && SC.dbx.warehouse ? SC.dbx.warehouse : '');
+  if (onSf()) add('Snowflake: choose the virtual warehouse queries run on', '', () => openWarehousePicker(() => {}), SC.dbx && SC.dbx.warehouse ? SC.dbx.warehouse : '');
   if (cur && ed && ed.format) add('Format: query with sqlfluff', vimOn() ? ':format' : '', () => ed.format());
   add('Tables: refresh what is known of tables and columns', ':refresh', refreshMeta);
   if (SC.recent.length) add('Results: recent results', 'h', toggleRecent, SC.recent.length + ' kept');
@@ -1068,12 +1075,12 @@ hooks.startScratch = (standalone) => {
   SC.standalone = !!standalone;
   SC.whOpen = false;
   const sb = S.boot && S.boot.scratch;
-  SC.dbx = sb && onDbx()
+  SC.dbx = sb && onDemand()
     ? { profile: sb.profile || '', host: sb.host || '', warehouse: sb.warehouse || '', hasProfiles: !!sb.hasProfiles, needsProfile: !!sb.needsProfile }
     : null;
   S.overlay = null;
   openScratchView(null, { draft: true }).then(() => {
-    if (SC.standalone && onDbx() && SC.dbx && SC.dbx.needsProfile) openProfilePicker();
+    if (SC.standalone && onDemand() && SC.dbx && SC.dbx.needsProfile) openProfilePicker();
   });
 };
 hooks.dbxUpdated = (u) => {
@@ -1104,7 +1111,7 @@ export function toggleWarehouseMenu() {
   if (!SC.standalone || !S.scratchWarehouses || S.scratchWarehouses.length < 2) return;
   SC.whOpen = !SC.whOpen;
   if (SC.whOpen) {
-    const cur = onDbx() ? 'databricks' : 'bigquery';
+    const cur = (S.caps && S.caps.warehouse) || 'bigquery';
     SC.whCursor = Math.max(0, S.scratchWarehouses.findIndex((w) => w.id !== cur));
     if (ed) ed.blur();
   }
@@ -1325,7 +1332,7 @@ export async function searchAll(confirm, auto, ctx = SC) {
   const terms = activeFilters(ctx);
   const sort = ctx.sort;
   if (!run || !run.rowsJob || !run.schema || (!terms.length && !sort)) return;
-  if (onDbx()) return; // Databricks keeps no table of a result to search
+  if (onDemand()) return; // Databricks and Snowflake keep no table of a result to search
   dropSearch(run);
   const job = run.rowsJob;
   const key = filtersKey(ctx);

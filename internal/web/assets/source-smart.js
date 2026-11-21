@@ -190,7 +190,7 @@ async function refAt(state, pos) {
   if (!hit.hasTable) return { hit, make: withDefer(() => noteDOM(hit, noSchema(hit))) };
   const read = (h && readsProd(h) && prodTable(h)) || hit;
   const card = await tableCard(read, true);
-  if (!card) return { hit, make: withDefer(() => noteDOM(read, 'no schema: the table could not be looked up (is ' + (S.caps.warehouse === 'databricks' ? 'Databricks' : 'BigQuery') + ' signed in?)')) };
+  if (!card) return { hit, make: withDefer(() => noteDOM(read, 'no schema: the table could not be looked up (is ' + (S.caps.warehouse === 'databricks' ? 'Databricks' : S.caps.warehouse === 'snowflake' ? 'Snowflake' : 'BigQuery') + ' signed in?)')) };
   return { hit, make: withDefer(() => cardDOM(card)) };
 }
 

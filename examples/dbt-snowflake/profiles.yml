@@ -1,0 +1,25 @@
+# Builds in a Snowflake account and reads the TPC-H tables of
+# SNOWFLAKE_SAMPLE_DATA. Nothing personal is written here: connection values
+# come from the environment.
+#
+#   SNOWFLAKE_ACCOUNT    account identifier, e.g. orgname-accountname
+#   SNOWFLAKE_USER       Snowflake username
+#   SNOWFLAKE_TOKEN      programmatic access token (or configure private_key_path)
+#   SNOWFLAKE_WAREHOUSE  virtual warehouse name, e.g. COMPUTE_WH;
+#                        unset, xf web asks which warehouse to use
+#   SNOWFLAKE_DATABASE   database to build in (default: ANALYTICS)
+#   SNOWFLAKE_ROLE       role to run as (optional)
+xf_snowflake_example:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', 'acme-example') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', 'xf_user') }}"
+      authenticator: programmatic_access_token
+      token: "{{ env_var('SNOWFLAKE_TOKEN', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', '') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', '') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ANALYTICS') }}"
+      schema: xf_example
+      threads: 4

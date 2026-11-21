@@ -59,6 +59,8 @@ var settingMetas = map[string]settingMeta{
 	config.KeyDbtCompileWithHooks:  {"Tool", "bool", nil, false},
 	config.KeyDatabricksWarehouse:  {"Running", "text", nil, false},
 	config.KeyDatabricksProfile:    {"Running", "text", nil, false},
+	config.KeySnowflakeWarehouse:   {"Running", "text", nil, false},
+	config.KeySnowflakeConnection:  {"Running", "text", nil, false},
 	config.KeyEditor:               {"Editor & look", "text", nil, true},
 	config.KeyTheme:                {"Editor & look", "choice", themes, true},
 	config.KeyWebTheme:             {"Editor & look", "choice", webThemes(""), true},
@@ -105,7 +107,7 @@ var (
 		config.KeyTablePrefix, config.KeySchemaSuffix, config.KeyDatabaseSuffix, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions,
 		config.KeySqlfluffBin, config.KeySqlfluffConfig}
 	dbtOnly = []string{config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
-		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile}
+		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection}
 )
 
 // settingsKeys are the keys the page lists for a project of tool, in the

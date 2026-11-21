@@ -106,16 +106,16 @@ type scratchBoot struct {
 
 func (p *projectState) scratchBootLocked() scratchBoot {
 	b := scratchBoot{Standalone: p.standalone, Start: p.startScratch}
-	if p.standalone && p.databricksLocked() && p.dbx != nil {
-		if p.dbx.Host != nil {
-			b.Host = p.dbx.Host()
+	if od := p.onDemandLocked(); p.standalone && od != nil {
+		if od.Host != nil {
+			b.Host = od.Host()
 		}
-		if p.dbx.WarehouseID != nil {
-			b.Warehouse = p.dbx.WarehouseID()
+		if od.WarehouseID != nil {
+			b.Warehouse = od.WarehouseID()
 		}
-		if p.dbx.Profiles != nil {
+		if od.Profiles != nil {
 			b.HasProfiles = true
-			_, b.Profile = p.dbx.Profiles()
+			_, b.Profile = od.Profiles()
 			b.NeedsProfile = b.Host == ""
 		}
 	}
@@ -475,12 +475,16 @@ func init() {
 	}
 }
 
-// dialect is how the SQL xf web writes names things: in GoogleSQL, or in
-// Databricks SQL when databricks is set.
-type dialect struct{ databricks bool }
+// dialect is how the SQL xf web writes names things: in GoogleSQL,
+// Databricks SQL, or Snowflake SQL.
+type dialect struct{ warehouse string }
+
+func (d dialect) isDatabricks() bool { return d.warehouse == project.Databricks }
+func (d dialect) isSnowflake() bool  { return d.warehouse == project.Snowflake }
+func (d dialect) onDemand() bool     { return d.isDatabricks() || d.isSnowflake() }
 
 // dialectLocked is the project's warehouse's.
-func (p *projectState) dialectLocked() dialect { return dialect{databricks: p.databricksLocked()} }
+func (p *projectState) dialectLocked() dialect { return dialect{warehouse: p.warehouseKindLocked()} }
 
 func (p *projectState) dialect() dialect {
 	p.mu.Lock()
@@ -488,22 +492,26 @@ func (p *projectState) dialect() dialect {
 	return p.dialectLocked()
 }
 
-// ident is a column's name, in backticks when it needs them: GoogleSQL
-// escapes a backtick in one with a backslash, Databricks by doubling it.
+// ident quotes a column or table part when it needs quoting: GoogleSQL uses
+// backticks with backslash escapes, Databricks uses backticks doubled, and
+// Snowflake uses double quotes doubled.
 func (d dialect) ident(s string) string {
 	if plainIdent.MatchString(s) && !reserved[strings.ToUpper(s)] {
 		return s
 	}
-	if d.databricks {
+	if d.isSnowflake() {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	if d.isDatabricks() {
 		return "`" + strings.ReplaceAll(s, "`", "``") + "`"
 	}
 	return "`" + strings.ReplaceAll(s, "`", "\\`") + "`"
 }
 
-// table names project.dataset.table: in one pair of backticks for
-// BigQuery, part by part for Databricks, where `a.b.c` is one name.
+// table names project.dataset.table: in one pair of backticks for BigQuery,
+// part by part for Databricks and Snowflake.
 func (d dialect) table(proj, dataset, table string) string {
-	if d.databricks {
+	if d.onDemand() {
 		return d.ident(proj) + "." + d.ident(dataset) + "." + d.ident(table)
 	}
 	return "`" + proj + "." + dataset + "." + table + "`"
@@ -513,6 +521,9 @@ func (d dialect) table(proj, dataset, table string) string {
 func (d dialect) tableID(id string) string {
 	parts := strings.SplitN(id, ".", 3)
 	if len(parts) != 3 {
+		if d.isSnowflake() {
+			return d.ident(id)
+		}
 		return "`" + id + "`"
 	}
 	return d.table(parts[0], parts[1], parts[2])
@@ -614,9 +625,9 @@ func (p *projectState) scratchDryRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, v)
 		return
 	}
-	if p.dialect().databricks {
-		// The page dry runs as the SQL is typed; Databricks' stand-ins for
-		// a dry run would keep the SQL warehouse up, billing.
+	if p.dialect().onDemand() {
+		// The page dry runs as the SQL is typed; Databricks and Snowflake
+		// checks would wake billed warehouses while typing.
 		writeJSON(w, noDryRun(v, req.SQL))
 		return
 	}
@@ -678,11 +689,11 @@ type jobRequest struct {
 	SQL string `json:"sql"`
 }
 
-// bq is the project's warehouse client: Databricks' for a project that
-// builds there (ADR 0042), else BigQuery's.
+// bq is the project's warehouse client: Databricks' or Snowflake's for a
+// project that builds there (ADR 0042, ADR 0044), else BigQuery's.
 func (p *projectState) bq(ctx context.Context) (warehouse.Warehouse, error) {
-	if p.onDbx.Load() && p.dbx.Client != nil {
-		return p.dbx.Client(ctx)
+	if od := p.onDemand(); od != nil && od.Client != nil {
+		return od.Client(ctx)
 	}
 	if p.warehouse == nil {
 		return nil, errors.New("no BigQuery access here")
@@ -692,8 +703,8 @@ func (p *projectState) bq(ctx context.Context) (warehouse.Warehouse, error) {
 
 // hasWarehouseLocked says whether bq has a client to give.
 func (p *projectState) hasWarehouseLocked() bool {
-	if p.databricksLocked() {
-		return p.dbx.Client != nil
+	if od := p.onDemandLocked(); od != nil {
+		return od.Client != nil
 	}
 	return p.warehouse != nil
 }
@@ -713,7 +724,7 @@ func (p *projectState) scratchRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proj, ok := p.scratchProject(r.Context(), f.Project)
-	if !ok && !p.onDbx.Load() {
+	if !ok && !p.isOnDemand() {
 		writeError(w, errors.New("no project to run in: set project=… in the first line of the scratch"))
 		return
 	}
@@ -726,13 +737,13 @@ func (p *projectState) scratchRun(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	ref, err := c.StartQuery(ctx, warehouse.QueryOptions{Project: proj, Location: f.Location, SQL: req.SQL, Labels: map[string]string{scratchLabel: "true"}})
 	if err != nil {
-		writeError(w, queryError(err))
+		writeError(w, p.queryError(err))
 		return
 	}
 	writeJSON(w, ref)
 }
 
-// queryError words a BigQuery error as its message, which carries the
+// queryError words a warehouse error as its message, which carries the
 // line and column of a mistake in the SQL.
 func queryError(err error) error {
 	if apiErr, ok := errors.AsType[*warehouse.APIError](err); ok {
@@ -744,17 +755,29 @@ func queryError(err error) error {
 	return err
 }
 
-// rowsError is queryError, saying so when a result is gone: BigQuery
-// keeps a query's result for about a day, and a recent run opened again
-// may be older; Databricks keeps one for a shorter while.
+func (p *projectState) queryError(err error) error {
+	if errors.Is(err, warehouse.ErrNoWarehouse) {
+		if od := p.onDemand(); od != nil {
+			return fmt.Errorf("no %s chosen: pick one with the palette's “%s”", od.warehouseLabel(), od.paletteCommand())
+		}
+	}
+	return queryError(err)
+}
+
+// rowsError is queryError, saying so when a result is gone: BigQuery and
+// Snowflake keep a query's result for about a day, Databricks for a shorter
+// while.
 func (p *projectState) rowsError(err error) error {
 	if apiErr, ok := errors.AsType[*warehouse.APIError](err); ok && apiErr.Status == http.StatusNotFound {
-		if p.onDbx.Load() {
+		switch p.warehouseKind() {
+		case project.Databricks:
 			return errors.New("Databricks no longer has this result: run the query again")
+		case project.Snowflake:
+			return errors.New("Snowflake no longer has this result (it keeps one for about 24 hours): run the query again")
 		}
 		return errors.New("BigQuery no longer has this result (it keeps one for about 24 hours): run the query again")
 	}
-	return queryError(err)
+	return p.queryError(err)
 }
 
 func jobRefOf(r *http.Request) (warehouse.JobRef, bool) {
@@ -936,8 +959,10 @@ func (p *projectState) scratchCSV(w http.ResponseWriter, r *http.Request) {
 // setScratch gives the project what scratch queries run with.
 func (p *projectState) setScratch(o *Project) {
 	p.warehouse, p.scratchWarnGB, p.scratchConfirmGB = o.Warehouse, o.ScratchWarnGB, o.ScratchConfirmGB
-	p.dbx = o.Databricks
-	p.onDbx.Store(p.dbx != nil && p.dbx.TargetType == project.Databricks)
+	p.dbx, p.sf = o.Databricks, o.Snowflake
+	wk := p.warehouseKindLocked()
+	p.onDbx.Store(wk == project.Databricks)
+	p.onSf.Store(wk == project.Snowflake)
 	p.scratchDirAbs, p.scratchDefProject, p.scratchDefLocation = o.ScratchDir, o.ScratchProject, o.ScratchLocation
 	p.standalone, p.startScratch, p.startCheck = o.Standalone, o.StartScratch, o.StartCheck
 	p.sourceAutosaveMs = o.SourceAutosaveMs

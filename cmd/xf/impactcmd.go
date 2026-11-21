@@ -39,6 +39,7 @@ func runImpact(args []string) int {
 	fs := flag.NewFlagSet("xf impact", flag.ContinueOnError)
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
+		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
 		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions)
 	pushed := fs.Bool("pushed", false, "compare the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOn := fs.String("fail-on", "", "exit 1 when a change of this `severity` or worse is found: critical or warning")

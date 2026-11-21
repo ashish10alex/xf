@@ -1631,10 +1631,14 @@ function CheckHeader({ which, o, verb }) {
     if (!o.report) {
       out.push(html`<div class="dim">${which === 'impact' && S.caps.warehouse === 'databricks'
         ? 'Plans every changed model with DESCRIBE QUERY on the SQL warehouse, which starts if it is stopped and bills while it runs, compares it with its table in Unity Catalog, then asks Unity Catalog who reads the columns it drops or retypes. The first time today, this also compiles the merge-base.'
+        : which === 'impact' && S.caps.warehouse === 'snowflake'
+        ? 'Checks every changed model on the Snowflake virtual warehouse (which resumes if suspended and bills while it runs), compares it with its built table, then queries Snowflake Access History and Object Dependencies for downstream readers. The first time today, this also compiles the merge-base.'
         : which === 'impact'
         ? 'Dry runs every changed table, view and incremental table, compares it with the table in BigQuery, then asks Dataplex who reads the columns it drops or retypes. The first time today, this also compiles the merge-base.'
         : S.caps.warehouse === 'databricks'
         ? 'Reads each changed model\'s latest run from Databricks Query History, which starts no SQL warehouse: Databricks bills warehouse time, so nothing is estimated before a run.'
+        : S.caps.warehouse === 'snowflake'
+        ? 'Reads each changed model\'s latest run from Snowflake Query History on the virtual warehouse (which resumes if suspended and bills while it runs): Snowflake bills virtual warehouse time, so nothing is estimated before a run.'
         : 'Dry runs every changed action with a query, as it is on the branch and as it was at the merge-base. Dry runs are free and run nothing. The first time today, this also compiles the merge-base.'}</div>`);
     }
   } else if (o.err) {
@@ -1793,11 +1797,11 @@ function PastRuns({ o, r }) {
       <p class="total"><b>${r.total}</b></p>
       ${r.empty ? html`<p class="dim">${r.empty}</p>` : wrapTable(html`<table class="grid">
         <thead><tr><th>Model</th><th>Type</th><th title="When its latest build with this target started">Last run</th><th class="num">Took</th>
-          <th class="num" title="What the run read">Read</th><th class="num" title="The rows the run read">Rows read</th><th>Warehouse</th></tr></thead>
+          <th class="num" title="What the run read">Read</th>${!p.noReadRows && html`<th class="num" title="The rows the run read">Rows read</th>`}<th>Warehouse</th></tr></thead>
         <tbody>${p.rows.map((x) => x.note
-          ? html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td><td class="dim" colspan="5">${x.note}</td></tr>`
+          ? html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td><td class="dim" colspan=${p.noReadRows ? 4 : 5}>${x.note}</td></tr>`
           : html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td><td>${x.when}</td><td class="num">${x.took}</td>
-            <td class="num">${x.read}</td><td class="num">${x.readRows}</td><td class="dim">${x.warehouse}</td></tr>`)}</tbody>
+            <td class="num">${x.read}</td>${!p.noReadRows && html`<td class="num">${x.readRows}</td>`}<td class="dim">${x.warehouse}</td></tr>`)}</tbody>
       </table>`)}
       <p class="dim small">${r.footnote}</p>
     </div>`;

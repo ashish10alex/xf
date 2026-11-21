@@ -39,6 +39,7 @@ func runCost(args []string) int {
 	fs := flag.NewFlagSet("xf cost", flag.ContinueOnError)
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
+		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
 		config.KeyDefaultBranch, config.KeyProdCompilerOptions)
 	pushed := fs.Bool("pushed", false, "estimate the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOver := fs.String("fail-over", "", "exit 1 when the changed actions scan more than this `size` between them, e.g. 100GB (units are binary: 1 GB is 2^30 bytes)")
@@ -350,8 +351,11 @@ func dbtCost(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engin
 		if g == nil {
 			return nil, changes.ErrWorktreeOnly
 		}
-		if g.WarehouseOr(pw.dbtTarget().Type) == project.Databricks {
+		switch g.WarehouseOr(pw.dbtTarget().Type) {
+		case project.Databricks:
 			return pw.databricksCost(ctx, res, g, req.DbtProdTarget, progress)
+		case project.Snowflake:
+			return pw.snowflakeCost(ctx, res, g, req.DbtProdTarget, progress)
 		}
 		target := req.DbtProdTarget
 		deps := cost.Deps{DryRun: dryRun, Partition: partitionLookup(bq)}

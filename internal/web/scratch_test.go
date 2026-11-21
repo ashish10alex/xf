@@ -643,10 +643,10 @@ func TestStandaloneScratchMultiWarehouse(t *testing.T) {
 	t.Cleanup(ts.Close)
 	c := ts.Client()
 
-	// First picker boot lists both warehouses and pops StartScratchPicker once.
+	// First picker boot lists all three warehouses and pops StartScratchPicker once.
 	var b1, b2 bootView
 	getJSON(t, c, ts.URL+"/api/boot", &b1)
-	if len(b1.ScratchWarehouses) != 2 || !b1.StartScratchPicker {
+	if len(b1.ScratchWarehouses) != 3 || !b1.StartScratchPicker {
 		t.Fatalf("first boot = %+v", b1)
 	}
 	getJSON(t, c, ts.URL+"/api/boot", &b2)

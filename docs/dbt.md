@@ -99,3 +99,30 @@ Where xf connects:
   The profile is the `databricksProfile` setting, else the `~/.databrickscfg` profile whose host is the dbt target's (or `$DATABRICKS_HOST`'s, when xf can't read the target's), else `DEFAULT`.
 
 `examples/dbt-databricks` is a small project that reads the `samples` catalog every workspace has.
+
+## Snowflake
+
+A dbt project on the dbt-snowflake adapter builds in Snowflake ([ADR 0044](adr/0044-snowflake-is-a-third-warehouse-for-dbt.md)).
+xf knows it from the compiled manifest's adapter, and before the first compile from the `type:` of the dbt target it compiles with.
+Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the warehouse works on demand, since a Snowflake virtual warehouse bills while it runs.
+
+- **A model is checked only when you ask**: `K` in xf web, or the palette's *Snowflake: check the model*.
+  The check runs `SELECT * FROM (<query>) LIMIT 0` on the virtual warehouse for the columns it returns and any compilation error.
+  A suspended warehouse resumes for the check, and the model's `check` line notes `warehouse starting` while it waits.
+  Nothing checks on a save, a compile or in the language server.
+- **A built table's columns show without asking**, from `DESCRIBE TABLE` in Snowflake's Cloud Services layer, which resumes no virtual warehouse.
+- **Scratch queries and the dependency inspector run on the virtual warehouse** when you run them (`xf scratch --warehouse snowflake` also opens a standalone Snowflake scratch outside any project, using `~/.snowflake/connections.toml`).
+  Completion lists databases, schemas, tables and columns, uses double-quoted Snowflake identifiers, and formats with `sqlfluff --dialect snowflake`.
+- **Hover cards and `u`** read `DESCRIBE TABLE` / `SHOW OBJECTS` without resuming compute and link to Snowsight for `orgname-accountname` accounts.
+- **Column impact** (`xf impact`, `xf check`, and `I` in xf web) checks the changed models on the virtual warehouse, compares them with their built tables, and reads downstream column and table lineage from `SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY` (Enterprise Edition) and `SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES` (all editions).
+- **`xf check`'s preflight** probes the Snowflake account and virtual warehouse via `SHOW WAREHOUSES` in Cloud Services (waking nothing).
+- **Query cost** (`C`, `xf cost`, and `xf check`'s cost) is each changed model's latest run with the prod target from `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` (30 days, falling back to `INFORMATION_SCHEMA.QUERY_HISTORY` for 7 days if `ACCOUNT_USAGE` is not granted), matched by dbt's JSON query comment.
+- Defer to prod is hidden, and the TUI (in maintenance mode) hides dry runs, columns and cost with a status line note.
+
+Where xf connects:
+
+- **The account** is the dbt target's `account`, else the `~/.snowflake/connections.toml` connection's, else `$SNOWFLAKE_ACCOUNT`.
+- **The virtual warehouse** is the `snowflakeWarehouse` setting, else the dbt target's `warehouse`, else the connection's, else `$SNOWFLAKE_WAREHOUSE`. When unset, xf web lists your warehouses (`SHOW WAREHOUSES`) and saves your pick.
+- **Credentials** (Snowflake SQL API v2): `$SNOWFLAKE_TOKEN` (Programmatic Access Token), `$SNOWFLAKE_OAUTH_TOKEN`, `$SNOWFLAKE_PRIVATE_KEY` / `$SNOWFLAKE_PRIVATE_KEY_PATH` (unencrypted RSA key-pair JWT), or the dbt target's / `~/.snowflake/connections.toml`'s `token` or `private_key_path` (`snowflakeConnection` picks the connection).
+
+`examples/dbt-snowflake` is a small project that reads `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1`.

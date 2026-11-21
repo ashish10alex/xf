@@ -21,7 +21,7 @@ export async function openWarehousePicker(then) {
     W.saveNote = r.saveNote || '';
     W.error = r.error || (W.list.length ? '' : 'the workspace has no SQL warehouse you can use');
     const curIdx = W.current ? W.list.findIndex((w) => w.id === W.current) : -1;
-    const up = W.list.findIndex((w) => w.state === 'RUNNING');
+    const up = W.list.findIndex((w) => w.state === 'RUNNING' || w.state === 'STARTED');
     W.cursor = curIdx >= 0 ? curIdx : Math.max(up, 0);
   } catch (e) {
     W.error = String(e.message || e);

@@ -11,7 +11,7 @@ import { SC, setEditor, refreshMeta, scratchSay, onEdit, scheduleDry, runScratch
 import { redraw, post } from './state.js';
 
 // sqlOf is the language of the project's warehouse, its functions colored.
-const sqlOf = (functions) => warehouseSQL(dialect() === 'databricks', functions);
+const sqlOf = (functions) => warehouseSQL(dialect(), functions);
 
 // scope is the SQL a run runs: the selection, else the whole file.
 function scopeOf(view) {

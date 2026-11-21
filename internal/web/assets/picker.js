@@ -446,6 +446,7 @@ function scratchPickKey(k) {
     case 'shift+enter': pickScratchWarehouse(sp.cursor, true); return true;
     case '1': case 'b': pickScratchWarehouse(list.findIndex((w) => w.id === 'bigquery'), false); return true;
     case '2': case 'd': pickScratchWarehouse(list.findIndex((w) => w.id === 'databricks'), false); return true;
+    case '3': case 's': pickScratchWarehouse(list.findIndex((w) => w.id === 'snowflake'), false); return true;
     case 'esc': S.scratchPick = null; return true;
     case 'ctrl+c': S.scratchPick = null; if (S.overlay === 'projects') S.overlay = null; else quit(); return true;
   }

@@ -21,6 +21,7 @@ import (
 	"github.com/ashish10alex/xf/internal/gcpauth"
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
+	"github.com/ashish10alex/xf/internal/snowflake"
 	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
@@ -78,11 +79,48 @@ func preflightProbes(name, root, base string, settings config.Loaded, comment bo
 	}
 	if p.Dbt {
 		pw := newProjectWarehouse(root, settings.DbtTarget, func() (config.Loaded, error) { return settings, nil })
-		if pw.kind() == project.Databricks {
+		switch pw.kind() {
+		case project.Databricks:
 			p.Databricks = pw.preflight
+		case project.Snowflake:
+			p.Warehouse = pw.snowflakePreflight
 		}
 	}
 	return p
+}
+
+// snowflakePreflight is xf check's probe of a Snowflake project (ADR 0044):
+// its account and virtual warehouse via SHOW WAREHOUSES in Cloud Services,
+// which wakes nothing.
+func (w *projectWarehouse) snowflakePreflight(ctx context.Context) check.Line {
+	line := check.Line{Name: "Snowflake"}
+	fail := func(err error) check.Line {
+		line.Status, line.Detail = check.Fail, err.Error()
+		if errors.Is(err, warehouse.ErrAuth) {
+			line.Fix = snowflake.AuthHint
+		}
+		return line
+	}
+	c := w.snowflake()
+	acct := cmp.Or(c.Account(), c.Host())
+	if c.Warehouse() == "" {
+		if _, err := c.Warehouses(ctx); err != nil {
+			return fail(err)
+		}
+		line.Status, line.Detail = check.Warn, "signed in to "+acct+", but no virtual warehouse is chosen: column impact and query cost need one"
+		line.Fix = "set snowflakeWarehouse, or the dbt target's warehouse"
+		return line
+	}
+	vw, err := c.VirtualWarehouse(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	state := strings.ToLower(vw.State)
+	if vw.State != "STARTED" {
+		state += ": checks resume it, and it bills while it runs"
+	}
+	line.Status, line.Detail = check.Pass, fmt.Sprintf("virtual warehouse %s on %s (%s)", cmp.Or(vw.Name, c.Warehouse()), acct, state)
+	return line
 }
 
 // preflight is xf check's probe of a Databricks project (ADR 0042): its

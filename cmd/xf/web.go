@@ -52,16 +52,17 @@ func serveWeb(scratch bool, args []string) error {
 	allowHost := fs.String("allow-host", "", "also answer requests to these comma-separated `names`, such as a tailscale serve's; every request then needs the token the printed URL carries")
 	var projectFlag, locationFlag, warehouseFlag *string
 	if scratch {
-		warehouseFlag = fs.String("warehouse", "", "the `warehouse` a standalone scratch runs against: bigquery or databricks (default: the project's warehouse, or ask in the browser outside a project)")
+		warehouseFlag = fs.String("warehouse", "", "the `warehouse` a standalone scratch runs against: bigquery, databricks or snowflake (default: the project's warehouse, or ask in the browser outside a project)")
 		projectFlag = fs.String("project", "", "the BigQuery `project` a new scratch is billed to (default: the project's default, else your credentials' quota project)")
 		locationFlag = fs.String("location", "", "the `location` a new scratch runs in (default: the project's default, else BigQuery picks it from the tables)")
 		commandUsage(fs, "xf scratch [flags]",
 			"Open xf in a browser on a new empty scratch query: a SQL editor that runs in\n"+
-				"BigQuery or Databricks, with completion and documentation for tables and columns.\n"+
-				"In a Dataform or dbt project (or --dir) it keeps the scratch in .xf/tmp and knows\n"+
-				"the project's models; pass --warehouse to open a standalone scratch instead.\n"+
-				"Outside any project, --warehouse chooses BigQuery or Databricks (or omit it to\n"+
-				"pick in the browser), keeping scratches in xf's user config folder, in tmp.\n"+
+				"BigQuery, Databricks or Snowflake, with completion and documentation for tables\n"+
+				"and columns. In a Dataform or dbt project (or --dir) it keeps the scratch in\n"+
+				".xf/tmp and knows the project's models; pass --warehouse to open a standalone\n"+
+				"scratch instead. Outside any project, --warehouse chooses BigQuery, Databricks\n"+
+				"or Snowflake (or omit it to pick in the browser), keeping scratches in xf's\n"+
+				"user config folder, in tmp.\n"+
 				"It listens on 127.0.0.1 only and answers only its own page (with --allow-host,\n"+
 				"the URL it prints carries a token every request needs). ctrl+c here quits, and so\n"+
 				"does closing every browser window for 45s (--web-auto-exit-seconds; 0 is off, as\n"+
@@ -131,7 +132,7 @@ func startWeb(pf projectFlags, sf *settingFlags, o webStart) error {
 	// listed even when xf web starts in one. Outside any project, the
 	// picker opens one by its path when none is remembered yet.
 	cfg := web.Config{
-		TermEnv:  nvimTermEnv,
+		TermEnv:     nvimTermEnv,
 		Projects:    rememberedProjects,
 		Open:        func(p session.Project) (*web.Project, error) { return openWebProject(sf, p.Root, p.Backend) },
 		OpenScratch: func(wh string) (*web.Project, error) { return standaloneScratch(sf, wh, o.project, o.location, false) },
@@ -318,10 +319,11 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 	}
 	p := &web.Project{Deps: deps, Close: client.Close, Editor: ed.hook(), Warehouse: lazyClient()}
 	if d, ok := b.(*dbt.Backend); ok {
-		// A dbt project may build in Databricks (ADR 0042): xf web checks
-		// it on its SQL warehouse when asked.
+		// A dbt project may build in Databricks (ADR 0042) or Snowflake
+		// (ADR 0044): xf web checks it on its warehouse when asked.
 		pw := newProjectWarehouse(root, d.Target, func() (config.Loaded, error) { return sf.load(root) })
 		p.Databricks = pw.webDatabricks()
+		p.Snowflake = pw.webSnowflake()
 	}
 	if d, ok := b.(dataform.Backend); ok && d.Bin == "" {
 		// Opened without the CLI (openWebBackend): the page says how to

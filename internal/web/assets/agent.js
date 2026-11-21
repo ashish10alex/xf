@@ -79,7 +79,7 @@ export const log = (n = 50) => diagLines().slice(-n);
 const risky = [
   [/^Run( with|$)|^Run: query/, 'runs in the warehouse'],
   [/full refresh/i, 'a full refresh rebuilds tables'],
-  [/^Databricks: check the model/, 'starts the SQL warehouse'],
+  [/^(Databricks|Snowflake): check the model/, 'starts the warehouse'],
   [/^Defer to prod: remove/, 'drops the proxy views'],
   [/^History: clear/, 'clears the kept runs'],
   [/remove (this )?worktree|^Remove Worktree/i, 'removes a worktree'],

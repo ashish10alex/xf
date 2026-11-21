@@ -9,7 +9,9 @@ globalThis.fetch = async (path) => {
   asked.push(String(path));
   const list = String(path).includes('dialect=databricks')
     ? [fn('TIMESTAMPADD'), fn('SUM', { aggregate: true }), fn('PIVOT', { clause: true })]
-    : [fn('SAFE_CAST'), fn('SUM', { aggregate: true })];
+    : String(path).includes('dialect=snowflake')
+      ? []
+      : [fn('SAFE_CAST'), fn('SUM', { aggregate: true })];
   return new Response(JSON.stringify(list));
 };
 
@@ -35,10 +37,25 @@ test('a Databricks project gets Databricks\' functions, and SAFE. is a schema', 
   assert.deepEqual((await F.clauseOptions(9)).map((o) => o.label), ['PIVOT']);
 });
 
+test('a Snowflake project uses snowflake dialect and double-quoted identifiers', async () => {
+  S.caps = { warehouse: 'snowflake' };
+  assert.equal(F.dialect(), 'snowflake');
+  await F.loadFunctions();
+  assert.ok(!F.isFunctionName('safe_cast'));
+  assert.equal(F.functionNamed('safe.sum'), undefined);
+  const { quoteIdent } = await import('../assets/scratch-complete.js');
+  assert.equal(quoteIdent('my col'), '"my col"');
+  assert.equal(quoteIdent('a"b'), '"a""b"');
+  const { tablesSite } = await import('../assets/state.js');
+  assert.equal(tablesSite(), 'Snowsight');
+});
+
 test('each dialect is asked for once', async () => {
   S.caps = {};
   await F.loadFunctions();
   S.caps = { warehouse: 'databricks' };
   await F.loadFunctions();
-  assert.deepEqual(asked, ['/api/scratch/functions', '/api/scratch/functions?dialect=databricks']);
+  S.caps = { warehouse: 'snowflake' };
+  await F.loadFunctions();
+  assert.deepEqual(asked, ['/api/scratch/functions', '/api/scratch/functions?dialect=databricks', '/api/scratch/functions?dialect=snowflake']);
 });
