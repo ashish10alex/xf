@@ -1,6 +1,7 @@
 package project
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -133,4 +134,127 @@ func Script(stmts []string) (string, []ScriptPart) {
 		}
 	}
 	return b.String(), out
+}
+
+// StripOptions controls what StripSQL blanks out in addition to comments.
+type StripOptions struct {
+	// BlankSingleStrings blanks single-quoted string literals ('...', ”'...”', r'...', rb'...').
+	BlankSingleStrings bool
+	// BlankDoubleStrings blanks double-quoted literals ("...", """...""", r"...", rb"...").
+	// Leave false when double quotes may denote identifiers (e.g. Snowflake/ANSI SQL).
+	BlankDoubleStrings bool
+}
+
+// StripSQL blanks SQL comments (--, # and /* */) and optionally string
+// literals, leaving backticked identifiers intact. Handles triple-quoted
+// strings and raw / raw-bytes prefixes (r, rb, br).
+func StripSQL(sql string, opts StripOptions) string {
+	var b strings.Builder
+	b.Grow(len(sql))
+	for i := 0; i < len(sql); {
+		c := sql[i]
+		switch {
+		case c == '`':
+			j := i + 1
+			for j < len(sql) && sql[j] != '`' {
+				j++
+			}
+			j = min(j+1, len(sql))
+			b.WriteString(sql[i:j])
+			i = j
+		case c == '\'' || c == '"':
+			raw := isRawPrefix(sql, i)
+			quote := sql[i : i+1]
+			if strings.HasPrefix(sql[i:], strings.Repeat(quote, 3)) {
+				quote = strings.Repeat(quote, 3)
+			}
+			j := i + len(quote)
+			for j < len(sql) && !strings.HasPrefix(sql[j:], quote) {
+				if !raw && sql[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			j = min(j+len(quote), len(sql))
+			blank := (c == '\'' && opts.BlankSingleStrings) || (c == '"' && opts.BlankDoubleStrings)
+			if blank {
+				b.WriteByte(' ')
+			} else {
+				b.WriteString(sql[i:j])
+			}
+			i = j
+		case c == '#' || c == '-' && strings.HasPrefix(sql[i:], "--"):
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+		case c == '/' && strings.HasPrefix(sql[i:], "/*"):
+			if end := strings.Index(sql[i+2:], "*/"); end >= 0 {
+				i += end + 4
+			} else {
+				i = len(sql)
+			}
+			b.WriteByte(' ')
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+// StripComments blanks SQL comments (--, # and /* */), leaving strings
+// (including triple-quoted and raw strings) and quoted names intact.
+func StripComments(sql string) string {
+	return StripSQL(sql, StripOptions{})
+}
+
+func isRawPrefix(sql string, quoteIdx int) bool {
+	if quoteIdx >= 1 && (sql[quoteIdx-1] == 'r' || sql[quoteIdx-1] == 'R') && (quoteIdx == 1 || !isIdentByte(sql[quoteIdx-2])) {
+		return true
+	}
+	if quoteIdx >= 2 && (quoteIdx == 2 || !isIdentByte(sql[quoteIdx-3])) {
+		p := strings.ToLower(sql[quoteIdx-2 : quoteIdx])
+		return p == "rb" || p == "br"
+	}
+	return false
+}
+
+func isIdentByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// writeDeniedRE is BigQuery's message for a dry run of a statement that
+// writes to a table the caller may read but not write to.
+var writeDeniedRE = regexp.MustCompile(`Permission (bigquery\.tables\.(?:updateData|create|delete|update)) denied on table (\S+)`)
+
+// WriteDenied returns the table (project.dataset.table) and missing
+// permission when msg is BigQuery refusing to dry run a write statement.
+func WriteDenied(msg string) (table, permission string, ok bool) {
+	m := writeDeniedRE.FindStringSubmatch(msg)
+	if m == nil {
+		return "", "", false
+	}
+	return strings.Replace(m[2], ":", ".", 1), m[1], true
+}
+
+// dmlRE is a statement that writes to a table.
+var dmlRE = regexp.MustCompile(`(?i)^\s*(delete|insert|update|merge|truncate)\b`)
+
+// WithoutDML returns q without the pre_operations that write to a table;
+// ok is false when q has none.
+func (q *DryRunQuery) WithoutDML() (*DryRunQuery, bool) {
+	var kept []string
+	var dropped bool
+	for _, s := range q.PreOps {
+		if dmlRE.MatchString(StripComments(s)) {
+			dropped = true
+			continue
+		}
+		kept = append(kept, s)
+	}
+	if !dropped {
+		return nil, false
+	}
+	sql, _ := Script(append(slices.Clone(kept), q.Query))
+	return &DryRunQuery{Label: q.Label, SQL: sql, PreOps: kept, Query: q.Query}, true
 }

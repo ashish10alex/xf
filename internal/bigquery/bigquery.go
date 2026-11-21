@@ -86,6 +86,9 @@ func (c *Client) DefaultProject() string { return c.QuotaProject() }
 func (c *Client) CostUSD(bytes int64) float64 { return warehouse.CostUSD(bytes) }
 
 func newClient(httpClient *http.Client, baseURL, quotaProject string) *Client {
+	if httpClient == nil {
+		httpClient = warehouse.NewHTTPClient()
+	}
 	return &Client{http: httpClient, baseURL: baseURL, quotaProject: quotaProject}
 }
 
@@ -290,7 +293,7 @@ func (c *Client) Check(ctx context.Context, project, location, query string) (*w
 	if err != nil {
 		return nil, err
 	}
-	body, err := c.do(ctx, http.MethodPost, u, reqBody)
+	body, err := c.doRetryable(ctx, http.MethodPost, u, reqBody, true)
 	if err != nil {
 		return nil, err
 	}
@@ -321,23 +324,32 @@ func (c *Client) Check(ctx context.Context, project, location, query string) (*w
 }
 
 // do sends an API request (with a JSON body when body is non-nil) and
-// returns the body of a 200 response.
+// returns the body of a 200 response. GET/PUT/DELETE retry on 429 and 5xx;
+// non-idempotent POST/PATCH retry only on 429.
 func (c *Client) do(ctx context.Context, method, u string, body []byte) ([]byte, error) {
-	var r io.Reader
-	if body != nil {
-		r = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u, r)
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if quota := c.QuotaProject(); quota != "" {
-		req.Header.Set("X-Goog-User-Project", quota)
-	}
-	resp, err := c.http.Do(req)
+	idempotent := method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
+	return c.doRetryable(ctx, method, u, body, idempotent)
+}
+
+func (c *Client) doRetryable(ctx context.Context, method, u string, body []byte, idempotent bool) ([]byte, error) {
+	quota := c.QuotaProject()
+	resp, err := warehouse.DoWithRetry(ctx, c.http, func() (*http.Request, error) {
+		var r io.Reader
+		if body != nil {
+			r = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, u, r)
+		if err != nil {
+			return nil, err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if quota != "" {
+			req.Header.Set("X-Goog-User-Project", quota)
+		}
+		return req, nil
+	}, warehouse.RetryPolicy{RetryServerErrors: idempotent})
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

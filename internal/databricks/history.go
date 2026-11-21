@@ -1,12 +1,14 @@
 package databricks
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,21 +32,34 @@ const (
 	historyPage = 1000
 	// maxHistoryPages bounds a read of a busy workspace's history.
 	maxHistoryPages = 25
+	// burstGap merges consecutive build statements of the same dbt node that
+	// execute back-to-back (e.g. CREATE TEMP + MERGE) into one model run.
+	burstGap = 2 * time.Minute
+	// minRunsForEarlyExit stops paginating once every requested changed node
+	// has at least this many distinct runs in history.
+	minRunsForEarlyExit = 5
 )
 
-// Run is a statement that built a dbt node, as Query History has it.
+// Run is a dbt node's latest build burst (and cadence/medians over the window),
+// as Query History has it.
 type Run struct {
 	NodeID, Target string
 	QueryID        string
 	// Warehouse is the SQL warehouse it ran on: its name when the
 	// workspace lists it, else its ID.
-	Warehouse string
-	Started   time.Time
-	Duration  time.Duration
+	Warehouse     string
+	WarehouseSize string
+	Serverless    bool
+	Started       time.Time
+	Duration      time.Duration
 	// ReadBytes and ReadRows are what it read; ProducedRows what it wrote
 	// or returned.
 	ReadBytes, ReadRows, ProducedRows int64
 	StatementType                     string
+	StatementCount                    int
+	RunCount                          int
+	MedianDuration                    time.Duration
+	MedianReadBytes                   int64
 }
 
 // History is what a read of Query History found.
@@ -60,8 +75,13 @@ type History struct {
 	Targets map[string]int
 	// Since is how far back it read; Truncated says it stopped at its page
 	// limit, or on an error after the first page, before reaching Since.
+	// Sampled says pagination stopped early once every requested model had
+	// enough runs for median/cadence stats.
 	Since     time.Time
 	Truncated bool
+	Sampled   bool
+
+	stmts map[string][]Run
 }
 
 // dbtComment is dbt's query comment.
@@ -93,8 +113,22 @@ type historyQuery struct {
 // keeps each dbt node's latest finished build whose comment names target
 // ("" for any).
 func (c *Client) DbtRuns(ctx context.Context, since time.Time, target string) (*History, error) {
-	h := &History{Runs: map[string]Run{}, Targets: map[string]int{}, Since: since}
-	names := c.warehouseNames(ctx)
+	return c.DbtRunsFor(ctx, since, target, nil)
+}
+
+// DbtRunsFor is DbtRuns that stops paginating early once every requested node
+// in nodeIDs has enough runs for median/cadence stats, enriches runs with SQL
+// warehouse size and serverless metadata, and merges multi-statement dbt
+// bursts into a single run per build.
+func (c *Client) DbtRunsFor(ctx context.Context, since time.Time, target string, nodeIDs []string) (*History, error) {
+	h := &History{Runs: map[string]Run{}, Targets: map[string]int{}, Since: since, stmts: map[string][]Run{}}
+	warehouses := c.warehouseInfo(ctx)
+	var wanted []string
+	for _, id := range nodeIDs {
+		if id != "" {
+			wanted = append(wanted, id)
+		}
+	}
 	token := ""
 	for page := 0; ; page++ {
 		if page == maxHistoryPages {
@@ -111,16 +145,30 @@ func (c *Client) DbtRuns(ctx context.Context, since time.Time, target string) (*
 		}
 		h.Queries += len(queries)
 		for _, q := range queries {
-			h.add(q, target, names)
+			h.add(q, target, warehouses)
 		}
 		if token = next; token == "" {
 			break
 		}
+		if len(wanted) > 0 && h.enoughForAll(wanted) {
+			h.Sampled = true
+			break
+		}
 	}
+	h.finalize()
 	return h, nil
 }
 
-func (h *History) add(q historyQuery, target string, names map[string]string) {
+func (h *History) enoughForAll(wanted []string) bool {
+	for _, id := range wanted {
+		if len(groupDatabricksBursts(h.stmts[id])) < minRunsForEarlyExit {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *History) add(q historyQuery, target string, warehouses map[string]SQLWarehouse) {
 	m := dbtComment.FindStringSubmatch(q.Text)
 	if m == nil {
 		return
@@ -146,8 +194,12 @@ func (h *History) add(q historyQuery, target string, names map[string]string) {
 	if r.Warehouse == "" {
 		r.Warehouse = q.Endpoint
 	}
-	if n := names[r.Warehouse]; n != "" {
-		r.Warehouse = n
+	if info, ok := warehouses[r.Warehouse]; ok {
+		if info.Name != "" {
+			r.Warehouse = info.Name
+		}
+		r.WarehouseSize = info.Size
+		r.Serverless = info.Serverless
 	}
 	if mt := q.Metrics; mt != nil {
 		r.ReadBytes, r.ReadRows = mt.ReadBytes, mt.RowsRead
@@ -158,9 +210,95 @@ func (h *History) add(q historyQuery, target string, names map[string]string) {
 			r.Duration = time.Duration(mt.TotalTime) * time.Millisecond
 		}
 	}
-	if old, ok := h.Runs[r.NodeID]; !ok || r.Started.After(old.Started) {
-		h.Runs[r.NodeID] = r
+	h.stmts[r.NodeID] = append(h.stmts[r.NodeID], r)
+}
+
+func (h *History) finalize() {
+	for nodeID, stmts := range h.stmts {
+		bursts := groupDatabricksBursts(stmts)
+		if len(bursts) == 0 {
+			continue
+		}
+		latest := bursts[len(bursts)-1]
+		latest.RunCount = len(bursts)
+		durs := make([]time.Duration, len(bursts))
+		bytes := make([]int64, len(bursts))
+		for i, b := range bursts {
+			durs[i] = b.Duration
+			bytes[i] = b.ReadBytes
+		}
+		slices.Sort(durs)
+		slices.Sort(bytes)
+		latest.MedianDuration = medianDuration(durs)
+		latest.MedianReadBytes = medianInt64(bytes)
+		h.Runs[nodeID] = latest
 	}
+}
+
+func medianDuration(sorted []time.Duration) time.Duration {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return sorted[n/2-1]/2 + sorted[n/2]/2 + (sorted[n/2-1]%2+sorted[n/2]%2)/2
+}
+
+func medianInt64(sorted []int64) int64 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return sorted[n/2-1]/2 + sorted[n/2]/2 + (sorted[n/2-1]%2+sorted[n/2]%2)/2
+}
+
+func groupDatabricksBursts(stmts []Run) []Run {
+	if len(stmts) == 0 {
+		return nil
+	}
+	sorted := slices.Clone(stmts)
+	slices.SortStableFunc(sorted, func(a, b Run) int {
+		return cmp.Or(a.Started.Compare(b.Started), cmp.Compare(a.QueryID, b.QueryID))
+	})
+	var bursts []Run
+	cur := sorted[0]
+	cur.StatementCount = 1
+	heavyBytes := cur.ReadBytes
+	curEnd := cur.Started.Add(cur.Duration)
+	for _, s := range sorted[1:] {
+		if !s.Started.After(curEnd.Add(burstGap)) {
+			cur.Duration += s.Duration
+			cur.ReadBytes += s.ReadBytes
+			cur.ReadRows += s.ReadRows
+			cur.ProducedRows += s.ProducedRows
+			cur.StatementCount++
+			if cur.Warehouse == "" {
+				cur.Warehouse = s.Warehouse
+				cur.WarehouseSize = s.WarehouseSize
+				cur.Serverless = s.Serverless
+			}
+			if s.ReadBytes > heavyBytes || (s.ReadBytes == heavyBytes && s.Started.After(cur.Started)) {
+				heavyBytes = s.ReadBytes
+				cur.QueryID = s.QueryID
+				cur.StatementType = s.StatementType
+			}
+			if end := s.Started.Add(s.Duration); end.After(curEnd) {
+				curEnd = end
+			}
+			continue
+		}
+		bursts = append(bursts, cur)
+		cur = s
+		cur.StatementCount = 1
+		heavyBytes = s.ReadBytes
+		curEnd = s.Started.Add(s.Duration)
+	}
+	return append(bursts, cur)
 }
 
 // historyPage reads a page of finished queries since since; token is the
@@ -196,16 +334,16 @@ func (c *Client) historyPage(ctx context.Context, since time.Time, token string)
 	return raw.Res, raw.Next, nil
 }
 
-// warehouseNames are the workspace's SQL warehouses' names by ID; empty
-// when they can't be listed.
-func (c *Client) warehouseNames(ctx context.Context) map[string]string {
-	out := map[string]string{}
+// warehouseInfo returns the workspace's SQL warehouses by ID (name, size,
+// serverless); empty when they can't be listed.
+func (c *Client) warehouseInfo(ctx context.Context) map[string]SQLWarehouse {
+	out := map[string]SQLWarehouse{}
 	list, err := c.Warehouses(ctx)
 	if err != nil {
 		return out
 	}
 	for _, w := range list {
-		out[w.ID] = w.Name
+		out[w.ID] = w
 	}
 	return out
 }

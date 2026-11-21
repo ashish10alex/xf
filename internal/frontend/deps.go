@@ -108,6 +108,9 @@ type Deps struct {
 	// engine.Engine.QueryCost), telling progress how far it got; nil hides
 	// C.
 	QueryCost func(ctx context.Context, req engine.CostRequest, progress func(cost.Progress)) (*cost.Report, error)
+	// USDPerTiB is the BigQuery price in dollars of a TiB scanned (usdPerTiB);
+	// 0 uses BigQuery's on-demand price.
+	USDPerTiB float64
 	// Deferral asks the engine what defer to prod reads from prod (see
 	// engine.Engine.Deferral, ADR 0031); nil hides defer to prod.
 	Deferral func(ctx context.Context, req engine.DeferralRequest) (*engine.DeferralResult, error)
@@ -130,6 +133,9 @@ type Deps struct {
 	// DbtProdTarget is the profile target of a dbt project's prod runs
 	// (dbtProdTarget), which I compares with and C dry runs against.
 	DbtProdTarget string
+	// LineageProjects is a comma-separated list of extra GCP projects
+	// searched in Dataplex Data Lineage alongside each table's project.
+	LineageProjects string
 	// Unset is the setting that picks the tables I compares with and C dry
 	// runs against, "prodCompilerOptions" or "dbtProdTarget", when nothing
 	// sets it, not even to "": their reports then say they used the

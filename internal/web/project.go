@@ -116,6 +116,7 @@ type projectState struct {
 	// asks at, 0 for the defaults.
 	warehouse                             func(ctx context.Context) (warehouse.Warehouse, error)
 	scratchWarnGB, scratchConfirmGB       float64
+	usdPerTiB                             float64
 	scratchDirAbs                         string
 	scratchDefProject, scratchDefLocation string
 	standalone, startScratch              bool

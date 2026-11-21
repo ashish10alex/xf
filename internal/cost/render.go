@@ -20,6 +20,15 @@ type Options struct {
 	USDPerTiB float64
 	// Threshold is the total bytes the branch may scan; 0 is no limit.
 	Threshold int64
+	// DeltaThreshold is the net growth in bytes the branch may add over
+	// the merge-base (see Report.Growth); 0 is no limit.
+	DeltaThreshold int64
+	// FailOnUnfiltered fails the gate when any estimated action reads a
+	// partitioned table without naming its partition column.
+	FailOnUnfiltered bool
+	// FailOnUnestimated fails the gate when any changed action could not
+	// be estimated.
+	FailOnUnestimated bool
 	// Color colours Text with ANSI escapes, for a terminal.
 	Color bool
 	// Attention lists, in Text and Markdown, only the actions that need a
@@ -230,20 +239,75 @@ func TotalLine(r *Report, o Options) string {
 	return fmt.Sprintf("Total scanned: %s%s | Estimated cost: %s%s", bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)))
 }
 
-// GateLine says how the report's total compares with o.Threshold; "" when
-// there is none.
+// GateLine says how the report compares with the enabled gates in o; "" when
+// none is set.
 func GateLine(r *Report, o Options) string {
-	if o.Threshold <= 0 {
+	if !r.HasGate(o) {
 		return ""
 	}
+	onlyThreshold := o.Threshold > 0 && o.DeltaThreshold <= 0 && !o.FailOnUnfiltered && !o.FailOnUnestimated
 	if r.PastRuns != nil {
-		return "Gate not applied: there is no estimate to compare with " + warehouse.FormatBytes(o.Threshold) + ", only past runs"
+		if o.FailOnUnfiltered {
+			if n := r.PastRuns.UnfilteredCount(); n > 0 {
+				return "Gate failed: " + plural(n, "query", "queries") + " missing a partition/cluster filter"
+			}
+			if o.Threshold > 0 || o.DeltaThreshold > 0 || o.FailOnUnestimated {
+				return "Gate passed: no missing partition/cluster filters (byte/estimate gates do not apply to past runs)"
+			}
+			return "Gate passed: no missing partition/cluster filters"
+		}
+		if onlyThreshold {
+			return "Gate not applied: there is no estimate to compare with " + warehouse.FormatBytes(o.Threshold) + ", only past runs"
+		}
+		return "Gate not applied: there is no estimate to gate on, only past runs"
 	}
 	total, _ := r.Total()
-	if r.Exceeds(o.Threshold) {
-		return fmt.Sprintf("Gate failed: %s exceeds the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
+	if onlyThreshold {
+		if r.Exceeds(o.Threshold) {
+			return fmt.Sprintf("Gate failed: %s exceeds the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
+		}
+		return fmt.Sprintf("Gate passed: %s is within the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
 	}
-	return fmt.Sprintf("Gate passed: %s is within the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
+	var failed, passed []string
+	if o.Threshold > 0 {
+		if r.Exceeds(o.Threshold) {
+			failed = append(failed, fmt.Sprintf("%s exceeds the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold)))
+		} else {
+			passed = append(passed, fmt.Sprintf("%s is within the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold)))
+		}
+	}
+	if o.DeltaThreshold > 0 {
+		noBase := r.BaseError != "" || r.BasePending
+		if r.ExceedsDelta(o.DeltaThreshold) {
+			if noBase {
+				failed = append(failed, fmt.Sprintf("no merge-base: total of %s exceeds the delta limit of %s", warehouse.FormatBytes(r.Growth()), warehouse.FormatBytes(o.DeltaThreshold)))
+			} else {
+				failed = append(failed, fmt.Sprintf("growth of %s exceeds the delta limit of %s", warehouse.FormatBytes(r.Growth()), warehouse.FormatBytes(o.DeltaThreshold)))
+			}
+		} else if noBase {
+			passed = append(passed, fmt.Sprintf("no merge-base: total is within the delta limit of %s", warehouse.FormatBytes(o.DeltaThreshold)))
+		} else {
+			passed = append(passed, fmt.Sprintf("growth is within the delta limit of %s", warehouse.FormatBytes(o.DeltaThreshold)))
+		}
+	}
+	if o.FailOnUnfiltered {
+		if n := r.UnfilteredCount(); n > 0 {
+			failed = append(failed, plural(n, "query", "queries")+" missing a partition filter")
+		} else {
+			passed = append(passed, "no missing partition filters")
+		}
+	}
+	if o.FailOnUnestimated {
+		if n := r.Unestimated(); n > 0 {
+			failed = append(failed, plural(n, "action", "actions")+" could not be estimated")
+		} else {
+			passed = append(passed, "every action estimated")
+		}
+	}
+	if len(failed) > 0 {
+		return "Gate failed: " + strings.Join(failed, "; ")
+	}
+	return "Gate passed: " + strings.Join(passed, "; ")
 }
 
 // UnsetHint is what a report whose dry runs read the default tables says,
@@ -437,7 +501,7 @@ func Text(r *Report, o Options) string {
 		if len(others) > 0 {
 			b.WriteString("\n")
 		}
-		if r.Exceeds(o.Threshold) {
+		if r.GateTripped(o) {
 			b.WriteString(o.paint("✗ "+gate, ansiBold, ansiRed) + "\n")
 		} else {
 			b.WriteString(o.paint("✓ "+gate, ansiGreen) + "\n")
@@ -519,7 +583,11 @@ func costTable(r *Report, estimated []Action, o Options) ttable {
 			row.notes = append(row.notes, o.paint("(reads "+impact.ShortTable(d.Table)+" from dev)", ansiDim))
 		}
 		for _, u := range a.Unfiltered {
-			row.notes = append(row.notes, o.paint(fmt.Sprintf("[MISSING PARTITION FILTER: %s on %s]", u.Column, impact.ShortTable(u.Table)), ansiYellow))
+			if u.MergeTarget {
+				row.notes = append(row.notes, o.paint(fmt.Sprintf("[MISSING MERGE TARGET PARTITION FILTER: %s on %s]", u.Column, impact.ShortTable(u.Table)), ansiYellow))
+			} else {
+				row.notes = append(row.notes, o.paint(fmt.Sprintf("[MISSING PARTITION FILTER: %s on %s]", u.Column, impact.ShortTable(u.Table)), ansiYellow))
+			}
 		}
 		t.rows = append(t.rows, row)
 	}
@@ -632,7 +700,7 @@ func Markdown(r *Report, o Options) string {
 	}
 	if gate := GateLine(r, o); gate != "" {
 		mark := "✅"
-		if r.Exceeds(o.Threshold) {
+		if r.GateTripped(o) {
 			mark = "❌"
 		}
 		lines = append(lines, "", mark+" "+gate)
@@ -654,7 +722,11 @@ func Markdown(r *Report, o Options) string {
 		for _, a := range estimated {
 			var notes []string
 			for _, u := range a.Unfiltered {
-				notes = append(notes, fmt.Sprintf("⚠️ no partition filter: `%s` of `%s`", cell(u.Column), cell(impact.ShortTable(u.Table))))
+				if u.MergeTarget {
+					notes = append(notes, fmt.Sprintf("⚠️ MERGE target has no partition filter in ON: `%s` of `%s`", cell(u.Column), cell(impact.ShortTable(u.Table))))
+				} else {
+					notes = append(notes, fmt.Sprintf("⚠️ no partition filter: `%s` of `%s`", cell(u.Column), cell(impact.ShortTable(u.Table))))
+				}
 			}
 			if a.FirstBuild {
 				notes = append(notes, "new: its first run is a full build, counted")
@@ -817,9 +889,10 @@ type jsonEstimate struct {
 }
 
 type jsonWarning struct {
-	Kind   string `json:"kind"`
-	Table  string `json:"table"`
-	Column string `json:"column"`
+	Kind        string `json:"kind"`
+	Table       string `json:"table"`
+	Column      string `json:"column"`
+	MergeTarget bool   `json:"mergeTarget,omitempty"`
 }
 
 type jsonAction struct {
@@ -845,12 +918,14 @@ type jsonAction struct {
 	FromDev []DevRead `json:"fromDev,omitempty"`
 	// LeftOutDML is, when bytes were dry run without the DML in the
 	// action's pre_operations, the write BigQuery refused to plan.
-	LeftOutDML *Write        `json:"leftOutDML,omitempty"`
-	New        bool          `json:"new"`
-	Base       *jsonEstimate `json:"base,omitempty"`
-	DeltaBytes *int64        `json:"deltaBytes"`
-	Warnings   []jsonWarning `json:"warnings"`
-	Error      string        `json:"error,omitempty"`
+	LeftOutDML  *Write        `json:"leftOutDML,omitempty"`
+	New         bool          `json:"new"`
+	RenamedFrom string        `json:"renamedFrom,omitempty"`
+	Base        *jsonEstimate `json:"base,omitempty"`
+	DeltaBytes  *int64        `json:"deltaBytes"`
+	DeltaUSD    *float64      `json:"deltaUsd"`
+	Warnings    []jsonWarning `json:"warnings"`
+	Error       string        `json:"error,omitempty"`
 	// WaitsOn are, on an action not estimated as it reads tables the
 	// branch adds that no run has built yet, every such table: Error
 	// names only the first BigQuery didn't find.
@@ -861,8 +936,15 @@ type jsonAction struct {
 }
 
 type jsonGate struct {
-	ThresholdBytes int64 `json:"thresholdBytes"`
-	Exceeded       bool  `json:"exceeded"`
+	ThresholdBytes      int64 `json:"thresholdBytes,omitempty"`
+	Exceeded            bool  `json:"exceeded"`
+	Failed              bool  `json:"failed"`
+	DeltaThresholdBytes int64 `json:"deltaThresholdBytes,omitempty"`
+	DeltaExceeded       bool  `json:"deltaExceeded,omitempty"`
+	FailOnUnfiltered    bool  `json:"failOnUnfiltered,omitempty"`
+	UnfilteredExceeded  bool  `json:"unfilteredExceeded,omitempty"`
+	FailOnUnestimated   bool  `json:"failOnUnestimated,omitempty"`
+	UnestimatedExceeded bool  `json:"unestimatedExceeded,omitempty"`
 }
 
 type jsonReport struct {
@@ -890,6 +972,7 @@ type jsonReport struct {
 	// known (see Report.BaseTotal).
 	BaseTotalBytes  *int64    `json:"baseTotalBytes"`
 	DeltaTotalBytes *int64    `json:"deltaTotalBytes"`
+	DeltaTotalUSD   *float64  `json:"deltaTotalUsd"`
 	USDPerTiB       float64   `json:"usdPerTib"`
 	Unestimated     int       `json:"unestimated"`
 	Gate            *jsonGate `json:"gate,omitempty"`
@@ -930,24 +1013,36 @@ func JSON(r *Report, o Options) ([]byte, error) {
 	}
 	if base, ok := r.BaseTotal(); ok {
 		delta := total - base
-		out.BaseTotalBytes, out.DeltaTotalBytes = &base, &delta
+		deltaUSD := o.USD(delta)
+		out.BaseTotalBytes, out.DeltaTotalBytes, out.DeltaTotalUSD = &base, &delta, &deltaUSD
 	}
-	if o.Threshold > 0 {
-		out.Gate = &jsonGate{ThresholdBytes: o.Threshold, Exceeded: r.Exceeds(o.Threshold)}
+	if r.HasGate(o) {
+		out.Gate = &jsonGate{
+			ThresholdBytes:      o.Threshold,
+			Exceeded:            r.Exceeds(o.Threshold),
+			Failed:              r.GateTripped(o),
+			DeltaThresholdBytes: o.DeltaThreshold,
+			DeltaExceeded:       r.ExceedsDelta(o.DeltaThreshold),
+			FailOnUnfiltered:    o.FailOnUnfiltered,
+			UnfilteredExceeded:  o.FailOnUnfiltered && r.UnfilteredCount() > 0,
+			FailOnUnestimated:   o.FailOnUnestimated,
+			UnestimatedExceeded: o.FailOnUnestimated && r.PastRuns == nil && r.Unestimated() > 0,
+		}
 	}
 	waits := waitsByAction(r)
 	for _, a := range r.Actions {
-		ja := jsonAction{WaitsOn: waits[a.Name], WaitsOnColumn: a.AddedColumn, Name: a.Name, DryRunAs: a.DryRunAs, File: a.FileName, Type: a.Type, New: a.New, FullRefresh: est(a.Full), Base: est(a.Base),
+		ja := jsonAction{WaitsOn: waits[a.Name], WaitsOnColumn: a.AddedColumn, Name: a.Name, DryRunAs: a.DryRunAs, File: a.FileName, Type: a.Type, New: a.New, RenamedFrom: a.RenamedFrom, FullRefresh: est(a.Full), Base: est(a.Base),
 			FirstBuild: a.FirstBuild, Incremental: est(a.Incremental), FromDev: a.FromDev, LeftOutDML: a.LeftOutDML, Warnings: []jsonWarning{}, Error: a.Reason}
 		if a.Estimate != nil {
 			usd := o.USD(a.Estimate.Bytes)
 			ja.Bytes, ja.Accuracy, ja.USD = &a.Estimate.Bytes, a.Estimate.Accuracy, &usd
 		}
 		if d, ok := a.Delta(); ok {
-			ja.DeltaBytes = &d
+			dUSD := o.USD(d)
+			ja.DeltaBytes, ja.DeltaUSD = &d, &dUSD
 		}
 		for _, u := range a.Unfiltered {
-			ja.Warnings = append(ja.Warnings, jsonWarning{Kind: "missing_partition_filter", Table: u.Table, Column: u.Column})
+			ja.Warnings = append(ja.Warnings, jsonWarning{Kind: "missing_partition_filter", Table: u.Table, Column: u.Column, MergeTarget: u.MergeTarget})
 		}
 		out.Actions = append(out.Actions, ja)
 	}

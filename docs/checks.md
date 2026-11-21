@@ -222,7 +222,10 @@ A pull request from a fork gets no credentials, so the action skips it, says so 
 | `working-directory` | the project's folder, `.` by default |
 | `version` | the xf release to run, by default the action's own tag (else the latest release) |
 | `comment` | `false` to leave the pull request alone and only write the job summary and the notes |
-| `fail-on`, `fail-over` | the gates, off by default: `critical` or `warning`, and a size such as `100GB` |
+| `fail-on` | fail at this column change severity or worse: `critical`, `warning` or `unknown`. Off by default |
+| `fail-on-unchecked` | `true` to fail when a changed model failed to check (dry run or schema error; ignores operations/scripts and tables not yet built). Off by default |
+| `fail-over`, `fail-over-delta` | cost gates, off by default: fail when total scan (`fail-over`) or net scan growth over the merge-base (`fail-over-delta`) exceeds a size such as `100GB` |
+| `fail-on-unfiltered`, `fail-on-unestimated` | `true` to fail on a missing partition filter or an action that couldn't be estimated. Off by default |
 | `quiet-under` | how much a run must grow for cost alone to be worth a comment, `1GiB` by default |
 | `default-branch` | the branch to compare with, by default the pull request's base |
 | `npm-ci` | `auto` (the default: when there is a `package.json`), `true` or `false` |
@@ -246,7 +249,7 @@ xf-check:
     # XF_FAIL_ON: critical
 ```
 
-It runs on merge request pipelines in a `node` image, in the `test` stage, and takes the same settings as the action's inputs as variables (`XF_DIR`, `XF_COMMENT`, `XF_FAIL_ON`, `XF_FAIL_OVER`, `XF_QUIET_UNDER`, `XF_NPM_CI`, `XF_INSTALL_DATAFORM`, `XF_ARGS`); the template's header lists them.
+It runs on merge request pipelines in a `node` image, in the `test` stage, and takes the same settings as the action's inputs as variables (`XF_DIR`, `XF_COMMENT`, `XF_FAIL_ON`, `XF_FAIL_ON_UNCHECKED`, `XF_FAIL_OVER`, `XF_FAIL_OVER_DELTA`, `XF_FAIL_ON_UNFILTERED`, `XF_FAIL_ON_UNESTIMATED`, `XF_QUIET_UNDER`, `XF_NPM_CI`, `XF_INSTALL_DATAFORM`, `XF_ARGS`); the template's header lists them.
 Its first lines are plain `sh`, and stop with the tools the job's image lacks when it has no `bash`, `curl`, `git` or `tar`.
 Where your GitLab can't reach GitHub's raw files, `xf check init gitlab --include copy` writes a copy of the template into the repository and includes it with `local:`.
 It keeps the report (`xf-check.md`) and the Code Quality report as artifacts.
@@ -346,7 +349,7 @@ A pull request gets a comment only when there is something to say:
 
 - a column change that something still reads (🚨 or ⚠️), or whose readers couldn't be looked up (❔), or a model that couldn't be compared with its table,
 - a query without a partition filter, or an action BigQuery gave no estimate for,
-- a run that grows by `--quiet-under` (1 GiB) or more, or, when the merge-base couldn't be estimated, a total of that much,
+- a run that grows by `--quiet-under` (1 GiB) or more, or, when the merge-base couldn't be estimated (or on Databricks/Snowflake where past runs are reported instead of dry-run estimates), a total of that much,
 - a gate that tripped, or a check that couldn't be made.
 
 A pull request that changes no actions gets none.
@@ -361,8 +364,8 @@ Each project has its own comment, found by a hidden marker with its folder, so a
 | a dropped column that something reads | the first line of the diff hunk that removed it |
 | a retyped column | the first line that names it |
 | a read without a partition filter | the first line that names the table |
-| a deleted table, an action not estimated | the file's first line |
-| a cost over `--fail-over` | the check as a whole |
+| a deleted table, an action not estimated, a model that failed to check (with `--fail-on-unchecked`) | the file's first line |
+| a cost over `--fail-over` or `--fail-over-delta` | the check as a whole (and with `--fail-over-delta`, up to 5 top growing models on their file's first line) |
 
 A note is an error only for what a set gate trips; otherwise a column change or a missing partition filter is a warning, and readers that couldn't be looked up or an action not estimated a notice.
 So with no gate set nothing is red.
@@ -376,7 +379,7 @@ When one check can't be made, the report has the other and says why, and the exi
 | Exit code | Meaning |
 |---|---|
 | `0` | The report was made, and no gate tripped. |
-| `1` | `--fail-on` or `--fail-over` tripped. |
+| `1` | A gate tripped (`--fail-on`, `--fail-on-unchecked`, `--fail-over`, `--fail-over-delta`, `--fail-on-unfiltered` or `--fail-on-unestimated`). |
 | `2` | Neither check could be made (the preflight stopped them, say), or `--comment` couldn't comment; without a token the checks run first and write their reports. The reason is on stderr. |
 
 | Flag | |
@@ -384,13 +387,17 @@ When one check can't be made, the report has the other and says why, and the exi
 | `--comment` | post the report on the pull request, as above; it needs `XF_FORGE_TOKEN` (or `GITHUB_TOKEN` in GitHub Actions). A job that isn't for a pull request (a push to `main`) says so and doesn't comment |
 | `--preflight` | only run [the preflight](#the-preflight): print the checklist, and exit 0, or 2 when something would stop the checks |
 | `--codequality path` | also write the notes as a GitLab Code Quality report |
-| `--fail-on critical\|warning` | exit 1 at that column change severity or worse |
+| `--fail-on critical\|warning\|unknown` | exit 1 at that column change severity or worse (`unknown` gates on unresolved lineage too, alongside `warning` and `critical`) |
+| `--fail-on-unchecked` | exit 1 when a changed model failed to check (dry run or schema error; ignores permanent structural entries such as operations/scripts and tables not yet built) |
 | `--fail-over size` | exit 1 when the changed actions scan more than `size` between them |
+| `--fail-over-delta size` | exit 1 when the branch adds more than `size` of scan per run compared to the merge-base (when the merge-base can't be compiled, total scan is counted as growth) |
+| `--fail-on-unfiltered` | exit 1 when any estimated query reads a partitioned table without naming its partition column |
+| `--fail-on-unestimated` | exit 1 when any changed action could not be estimated |
 | `--quiet-under size` | how much a run must grow for cost alone to be worth a comment; `1GiB` by default |
 | `--output path` | write the report to `path` instead of stdout |
 | `--json` | print (or write) JSON: `impact` and `cost` hold [the impact JSON](#impact-json) and [the cost JSON](#json), `null` with `impactError` or `costError` beside when one couldn't be made; `verdict` is the first line, `worthAComment` says whether it would comment, and `preflight` holds the checklist's `lines` (each a `name`, `status`, `detail` and `fix`) |
 
-It takes `xf impact`'s and `xf cost`'s other flags too: `--usd-per-tib`, `--default-branch`, `--pushed`, `--prod-compiler-options`, `--dev-compiler-options`, and the tools' (`--dataform-bin`, `--dbt-bin`, `--dbt-target`, `--dbt-prod-target`).
+It takes `xf impact`'s and `xf cost`'s other flags too: `--usd-per-tib` (or `usdPerTiB` in `.xf/config.json`), `--lineage-projects` (or `lineageProjects`, comma-separated extra GCP projects to also search in Dataplex for cross-project readers), `--default-branch`, `--pushed`, `--prod-compiler-options`, `--dev-compiler-options`, and the tools' (`--dataform-bin`, `--dbt-bin`, `--dbt-target`, `--dbt-prod-target`).
 
 ## Column impact in CI/CD
 
@@ -419,19 +426,20 @@ Run from inside the project, it:
 It starts a `xf serve` in the background to do the work, which stops a few seconds after `xf impact` exits; there is nothing to start or clean up.
 
 On your own machine, `xf impact --web` opens xf web on the column impact tab of its Checks page, the page `I` (or **Check: column impact of changes** in the palette) opens: the check runs there with its progress, `y` copies the Markdown, `c` checks again, and xf web runs until ctrl+c as `xf web` does.
-It can't be used with `--pushed`, `--fail-on`, `--output` or `--json`.
+It can't be used with `--pushed`, `--fail-on`, `--fail-on-unchecked`, `--output`, `--json` or `--attention`.
 
 | Exit code | Meaning |
 |---|---|
-| `0` | The report was printed, and nothing reached `--fail-on`. |
-| `1` | The report was printed, and `--fail-on critical` found a 🚨 change (or `--fail-on warning` a 🚨 or ⚠️ one). |
+| `0` | The report was printed, and no gate tripped. |
+| `1` | The report was printed, and `--fail-on` tripped (`critical` on 🚨, `warning` on 🚨 or ⚠️, `unknown` on 🚨, ⚠️ or ❔) or `--fail-on-unchecked` found a model whose check failed. |
 | `2` | The check couldn't be made: compile errors, no merge-base, no credentials, and so on. The reason is on stderr. |
 
-A change whose readers couldn't be looked up (❔) never trips `--fail-on`; `xf impact` says so on stderr.
+For `--fail-on`, severity order is `low < unknown < warning < critical`: `--fail-on warning` ignores ❔ (whose readers couldn't be looked up, noted on stderr), while `--fail-on unknown` fails on ❔ as well as ⚠️ and 🚨.
 
 | Flag | |
 |---|---|
-| `--fail-on critical\|warning` | exit 1 at that severity or worse |
+| `--fail-on critical\|warning\|unknown` | exit 1 at that severity or worse (`low < unknown < warning < critical`) |
+| `--fail-on-unchecked` | exit 1 when a changed model failed to check (dry run or schema error; ignores operations/scripts and tables not yet built) |
 | `--output path` | also write the report to `path`: as Markdown, for a PR comment, or as JSON with `--json` |
 | `--json` | print JSON on stdout instead of text |
 | `--color auto\|always\|never` | colour the text, as `xf cost`'s [`--color`](#query-cost-in-cicd) does |
@@ -457,7 +465,7 @@ A change whose readers couldn't be looked up (❔) never trips `--fail-on`; `xf 
 | `unknown` | ❔ its readers couldn't be looked up |
 | `low` | ℹ️ nothing still reads it: no readers, only ones this branch probably updated, or the base branch made the change |
 
-A table's `severity` is its most urgent column's, an `unknown` counting above a `warning` as the report's marks do.
+A table's `severity` is its most urgent column's: in the report display an `unknown` mark (❔) shows above a `warning` (⚠️) so unresolved lineage stands out, whereas `--fail-on` gates in the order `unknown < warning < critical` so `--fail-on warning` doesn't fail builds on transient lineage lookup failures.
 A reader's `filePath` is set when it is an action of this project, and `changedOnBranch`, `probablyUpdated`, `stillNamed` and `deletedOnBranch` say what this branch does to it.
 `safe`, `new` and `unchecked` are the rest of the report.
 
@@ -570,19 +578,23 @@ What each column means is under [Check what your branch would cost](#check-what-
 
 | Exit code | Meaning |
 |---|---|
-| `0` | The report was printed, and the total is within `--fail-over` (or there is no limit, or nothing to estimate). |
-| `1` | The report was printed, and the total is over `--fail-over`. |
+| `0` | The report was printed, and no cost gate tripped (or none was set, or there is nothing to estimate). |
+| `1` | The report was printed, and a cost gate tripped (`--fail-over`, `--fail-over-delta`, `--fail-on-unfiltered` or `--fail-on-unestimated`). |
 | `2` | The check couldn't be made: compile errors, no merge-base, no credentials, BigQuery refused every dry run, and so on. The reason is on stderr. |
 
-The limit is on the total bytes, not the dollars, so the price never decides a build.
-An action that couldn't be estimated is left out of the total and never trips the limit; `xf cost` says how many there were on stderr.
-A missing partition filter is a warning only.
-If the merge-base can't be compiled, the report has no merge-base or change columns, stderr says why, and the exit code is the same as with one.
+Limits are on bytes, not dollars, so the price never decides a build.
+An action that couldn't be estimated is left out of the total and doesn't trip `--fail-over` unless `--fail-on-unestimated` is set; without `--fail-on-unestimated`, `xf cost` says how many there were on stderr.
+A missing partition filter is a warning unless `--fail-on-unfiltered` is set.
+If the merge-base can't be compiled, the report has no merge-base or change columns, stderr says why, and `--fail-over-delta` counts the branch's total scan as growth (and an individual action whose own base estimate failed also counts its head bytes as growth).
 
 | Flag | |
 |---|---|
 | `--fail-over size` | exit 1 when the changed actions scan more than `size` between them: `100GB`, `1.5TiB`, `500MB`. Units are binary with or without the `i` |
-| `--usd-per-tib price` | price a TiB at `price` dollars instead of 6.25, for another region's on-demand rate |
+| `--fail-over-delta size` | exit 1 when the branch adds more than `size` of scan per run compared to the merge-base (falls back to total scan when the merge-base can't be compiled) |
+| `--fail-on-unfiltered` | exit 1 when any estimated query reads a partitioned table without naming its partition column |
+| `--fail-on-unestimated` | exit 1 when any changed action could not be estimated |
+| `--usd-per-tib price` | price a TiB at `price` dollars instead of 6.25, for another region's on-demand rate (or set `usdPerTiB` in `.xf/config.json`) |
+| `--web` | open xf web on the query cost tab of its Checks page, where the check runs as `C` runs it (can't be combined with `--pushed`, cost gates, `--output`, `--json` or `--attention`) |
 | `--output path` | also write the report to `path`: as Markdown, for a PR comment, or as JSON with `--json` |
 | `--json` | print JSON on stdout instead of text |
 | `--color auto\|always\|never` | colour the text. `auto`, the default, colours a terminal and leaves a pipe, a file or a CI log plain; it also honours `NO_COLOR`. `always` is for CI systems that render ANSI colour |
@@ -618,25 +630,27 @@ For dbt, install dbt and its packages (`dbt deps`) instead of the `dataform` CLI
       "new": false,
       "base": {"bytes": 3221225472, "accuracy": "PRECISE", "usd": 0.018},
       "deltaBytes": 4614727611187,
+      "deltaUsd": 26.24,
       "warnings": [{"kind": "missing_partition_filter", "table": "acme.raw.events", "column": "event_date"}]
     },
-    {"name": "acme.ops.audit_log", "type": "operations", "bytes": null, "usd": null, "new": false, "deltaBytes": null, "warnings": [], "error": "BigQuery gives no estimate for a script"}
+    {"name": "acme.ops.audit_log", "type": "operations", "bytes": null, "usd": null, "new": false, "deltaBytes": null, "deltaUsd": null, "warnings": [], "error": "BigQuery gives no estimate for a script"}
   ],
   "totalBytes": 4620332507955,
   "totalBound": "upper",
   "totalUsd": 26.26,
   "baseTotalBytes": 3661627392,
   "deltaTotalBytes": 4616670880563,
+  "deltaTotalUsd": 26.24,
   "usdPerTib": 6.25,
   "unestimated": 1,
-  "gate": {"thresholdBytes": 107374182400, "exceeded": true},
+  "gate": {"thresholdBytes": 107374182400, "exceeded": true, "failed": true},
   "checkedAt": "2026-10-06T09:30:00Z"
 }
 ```
 
-`bytes`, `usd` and `deltaBytes` are `null` when there is no figure, never 0; `accuracy` is BigQuery's (`PRECISE`, `UPPER_BOUND`, `LOWER_BOUND`, `UNKNOWN`); `totalBound` is `lower` or `upper` when the total is a bound; `gate` is there with `--fail-over`; `baseError` says why no action has a `base`; `unsetSetting` names the setting that would dry run against prod's tables (`prodCompilerOptions`, or `dbtProdTarget`) when nothing sets it.
+`bytes`, `usd`, `deltaBytes` and `deltaUsd` are `null` when there is no figure, never 0; `accuracy` is BigQuery's (`PRECISE`, `UPPER_BOUND`, `LOWER_BOUND`, `UNKNOWN`); `totalBound` is `lower` or `upper` when the total is a bound; `gate` is present when any cost gate is enabled (`failed` says whether any gate tripped; `thresholdBytes`/`exceeded` cover `--fail-over`; `deltaThresholdBytes`/`deltaExceeded`, `failOnUnfiltered`/`unfilteredExceeded` and `failOnUnestimated`/`unestimatedExceeded` cover the other gates); `baseError` says why no action has a `base`; `unsetSetting` names the setting that would dry run against prod's tables (`prodCompilerOptions`, or `dbtProdTarget`) when nothing sets it.
 
-`baseTotalBytes` is what the same actions scanned at the merge-base, a new action counting nothing, and `deltaTotalBytes` how many more the branch scans; both are `null` when the merge-base couldn't be compiled or an action other than a new one has no `base`.
+`baseTotalBytes` is what the same actions scanned at the merge-base, a new action counting nothing, and `deltaTotalBytes` / `deltaTotalUsd` how much more the branch scans and costs; all three are `null` when the merge-base couldn't be compiled or an action other than a new one has no `base`.
 An action dry run without the DML in its pre_operations has `leftOutDML`: the `table` it writes to and the `permission` BigQuery said you haven't got (`bigquery.tables.updateData`).
 `dryRunIn` is the project the dry runs ran in, with their location (left out when they ran in more than one), and an action's `dryRunAs` is the table they read for it when that isn't its `name` (prod's, with `prodCompilerOptions`).
 When an incremental table's first build is in the total, `laterBytes`, `laterUsd` and `laterBound` give each run after the first, with its incremental run instead.

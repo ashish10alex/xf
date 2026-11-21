@@ -3,6 +3,7 @@ package impact
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -26,7 +27,7 @@ const (
 // own query on the branch, so BigQuery resolves the names: a pass means it
 // no longer reads the column, "Unrecognized name" that it does. Any other
 // failure leaves the reader as it was. progress is told after each run.
-func verifyReaders(ctx context.Context, tables []Table, g *project.Graph, deps Deps, progress func(done, total int)) {
+func verifyReaders(ctx context.Context, tables []Table, g *project.Graph, branchChanged map[project.ActionID]bool, deps Deps, progress func(done, total int)) {
 	if deps.OnDemand {
 		return // only the changed models wake a warehouse that bills
 	}
@@ -61,7 +62,7 @@ func verifyReaders(ctx context.Context, tables []Table, g *project.Graph, deps D
 	done := 0
 	progress(0, len(checks))
 	inBatches(ctx, checks, dryRunBatch, func(c check) {
-		result := checkReader(ctx, c.reader.Table, c.column, c.table, g, deps)
+		result := checkReader(ctx, c.reader.Table, c.column, c.table, g, branchChanged, deps)
 		mu.Lock()
 		if result != "" {
 			c.reader.Checked = result
@@ -80,17 +81,18 @@ func verifyReaders(ctx context.Context, tables []Table, g *project.Graph, deps D
 	}
 }
 
-// checkReader dry runs reader with changed's references swapped for its
-// query: CheckedClear when it passes, CheckedReads when BigQuery can't
-// find column, "" when there is no telling.
-func checkReader(ctx context.Context, reader, column string, changed *project.Action, g *project.Graph, deps Deps) string {
+// checkReader dry runs reader with changed's references (and any other changed
+// in-branch upstream tables) swapped for their branch queries: CheckedClear
+// when it passes, CheckedReads when BigQuery can't find column, "" when there
+// is no telling.
+func checkReader(ctx context.Context, reader, column string, changed *project.Action, g *project.Graph, branchChanged map[project.ActionID]bool, deps Deps) string {
 	a := g.Actions[project.ActionID(reader)]
 	if a == nil || a.Kind == project.KindOperation || changed.Query == "" {
 		return ""
 	}
 	queries := a.DryRunQueries() // the full rebuild: an incremental run reads the same columns and more of itself
-	project, location := g.DryRunTarget(a)
-	if len(queries) == 0 || project == "" {
+	proj, location := g.DryRunTarget(a)
+	if len(queries) == 0 || proj == "" {
 		return ""
 	}
 	reads := queries[0].SQL
@@ -103,7 +105,12 @@ func checkReader(ctx context.Context, reader, column string, changed *project.Ac
 	if !ok {
 		return ""
 	}
-	_, err := deps.DryRun(ctx, project, location, sql)
+	if len(branchChanged) > 1 {
+		if expanded, swapped := swapBranchTables(sql, a.ID, g, branchChanged, 2); swapped {
+			sql = expanded
+		}
+	}
+	_, err := deps.DryRun(ctx, proj, location, sql)
 	switch {
 	case err == nil:
 		return CheckedClear
@@ -111,6 +118,46 @@ func checkReader(ctx context.Context, reader, column string, changed *project.Ac
 		return CheckedReads
 	}
 	return ""
+}
+
+// swapBranchTables deterministically substitutes references to changed/new
+// upstream branch actions in sql with their branch queries as subqueries, up to
+// maxDepth passes (so transitive dependencies like R -> A -> B all resolve
+// cleanly without depending on map iteration order). Returns the rewritten SQL
+// and true when at least one upstream table was substituted.
+func swapBranchTables(sql string, self project.ActionID, g *project.Graph, branchChanged map[project.ActionID]bool, maxDepth int) (string, bool) {
+	if g == nil || len(branchChanged) == 0 || maxDepth <= 0 {
+		return sql, false
+	}
+	ids := make([]project.ActionID, 0, len(branchChanged))
+	for id := range branchChanged {
+		if id != self {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	cur := sql
+	anySwapped := false
+	for range maxDepth {
+		passSwapped := false
+		for _, id := range ids {
+			up := g.Actions[id]
+			if up == nil || up.Kind == project.KindOperation || strings.TrimSpace(up.Query) == "" {
+				continue
+			}
+			next, ok := swapTable(cur, up.Target, up.Query)
+			if !ok {
+				continue
+			}
+			cur = next
+			passSwapped = true
+			anySwapped = true
+		}
+		if !passSwapped {
+			break
+		}
+	}
+	return cur, anySwapped
 }
 
 // codeOnly is sql with its comments and string literals blanked out, so
@@ -240,9 +287,16 @@ func callsProcedure(stmts []string) bool {
 }
 
 // missingColumn says whether a BigQuery error is about column not being
-// there: "Unrecognized name: X", or "Name X not found inside Y".
+// there: "Unrecognized name: X", "Name X not found inside Y",
+// "Field name X does not exist in STRUCT<...>", or
+// "Column X in USING clause not found". For a dotted nested field
+// ("user.address.zip"), the leaf name ("zip") is matched as well.
 func missingColumn(message, column string) bool {
-	c := regexp.QuoteMeta(column)
-	re := regexp.MustCompile(`(?i)(unrecognized name: ` + c + `|name ` + c + ` not found inside)([^A-Za-z0-9_$]|$)`)
+	leaf := column
+	if dot := strings.LastIndexByte(column, '.'); dot >= 0 {
+		leaf = column[dot+1:]
+	}
+	c := regexp.QuoteMeta(leaf)
+	re := regexp.MustCompile("(?i)(unrecognized name: `?" + c + "`?|name `?" + c + "`? not found inside|field name `?" + c + "`? does not exist in|column `?" + c + "`? in using clause not found)([^A-Za-z0-9_$]|$)")
 	return re.MatchString(message)
 }

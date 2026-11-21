@@ -172,7 +172,7 @@ func (m *Model) showCost(r *cost.Report) {
 	if o.report == nil || !o.report.BasePending {
 		o.offset = 0
 	}
-	o.report, o.markdown = r, cost.Markdown(r, cost.Options{})
+	o.report, o.markdown = r, cost.Markdown(r, cost.Options{USDPerTiB: m.deps.USDPerTiB})
 	m.drawCost()
 }
 
@@ -180,7 +180,7 @@ func (m *Model) showCost(r *cost.Report) {
 func (m *Model) drawCost() {
 	if o := &m.cost; o.report != nil {
 		o.linesW = m.impactInner()
-		o.lines = m.styles.costReportLines(o.report, o.linesW)
+		o.lines = m.styles.costReportLines(o.report, o.linesW, cost.Options{USDPerTiB: m.deps.USDPerTiB})
 	}
 }
 
@@ -383,7 +383,7 @@ func (m Model) costBox(bodyH int) string {
 // costReportLines is the report drawn for the terminal, width wide: what
 // was compared, the total, a table of the estimated actions, most bytes
 // first, and the actions that couldn't be estimated.
-func (s styles) costReportLines(r *cost.Report, width int) []string {
+func (s styles) costReportLines(r *cost.Report, width int, o cost.Options) []string {
 	var lines []string
 	if c := r.Comparison; c != nil {
 		lines = append(lines, s.text.Render(c.HeadRef)+s.dim.Render(" vs ")+s.text.Render(c.BaseRef)+
@@ -393,7 +393,7 @@ func (s styles) costReportLines(r *cost.Report, width int) []string {
 		lines = append(lines, s.dim.Render("compiled with ")+s.text.Render(r.Compiled))
 	}
 	lines = append(lines, s.unsetHintLines(cost.UnsetHint(r), width)...)
-	lines = append(lines, "", s.text.Bold(true).Render(cost.TotalLine(r, cost.Options{})))
+	lines = append(lines, "", s.text.Bold(true).Render(cost.TotalLine(r, o)))
 
 	var rows [][]string
 	var warned []bool
@@ -415,7 +415,7 @@ func (s styles) costReportLines(r *cost.Report, width int) []string {
 			change = "…"
 		}
 		rows = append(rows, []string{impact.ShortTable(a.Name), a.Type, cost.Size(*a.Estimate),
-			cost.FormatUSD(cost.Options{}.USD(a.Estimate.Bytes)), change, strings.Join(notes, " · ")})
+			cost.FormatUSD(o.USD(a.Estimate.Bytes)), change, strings.Join(notes, " · ")})
 		warned = append(warned, len(a.Unfiltered) > 0)
 	}
 	switch {

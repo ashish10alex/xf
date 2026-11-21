@@ -51,7 +51,7 @@ func runCheckInit(args []string) int {
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDefaultBranch, config.KeyProdCompilerOptions, config.KeyDbtProdTarget)
 	auth := fs.String("auth", "", "how the job signs in to Google: key, wif (workload identity federation) or template (your organisation's own)")
 	include := fs.String("include", "", "GitLab: remote (include the template from GitHub) or copy (a copy at ci/xf-check.yml)")
-	failOn := fs.String("fail-on", "", "fail the job at this column change `severity`: critical or warning")
+	failOn := fs.String("fail-on", "", "fail the job at this column change `severity`: critical, warning or unknown")
 	failOver := fs.String("fail-over", "", "fail the job when the changed actions scan more than this `size`, e.g. 100GB")
 	version := fs.String("version", "", "the xf `release` the job runs, by default this xf's (else the latest)")
 	yes := fs.Bool("yes", false, "don't ask: take the flags and the defaults, and write the files")
@@ -153,7 +153,7 @@ func checkInit(args []string, pf projectFlags, sf *settingFlags, auth, include, 
 		}
 	}
 	if failOn == "" {
-		s.failOn = ask.text("Fail the job at a column change severity (critical, warning, or empty for never)?", "")
+		s.failOn = ask.text("Fail the job at a column change severity (critical, warning, unknown, or empty for never)?", "")
 		if _, _, err := parseFailOn(s.failOn); err != nil {
 			return err
 		}

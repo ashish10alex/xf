@@ -1,6 +1,6 @@
 ---
 name: xf-checks
-description: Check a Dataform or dbt branch before it merges, with the xf CLI. `xf cost` gives what its changed actions would scan and cost (BigQuery dry runs, or a Databricks model's last run); `xf impact` gives the columns and tables it drops or retypes that something downstream still reads, from Dataplex or Unity Catalog column-level lineage. Use when asked what a branch or pull request will cost, how much a query or model scans, whether a change breaks downstream tables (a dropped, renamed or retyped column), or to review a Dataform or dbt change on BigQuery or Databricks before merging.
+description: Check a Dataform or dbt branch before it merges, with the xf CLI. `xf cost` gives what its changed actions would scan and cost (BigQuery dry runs, or a Databricks or Snowflake model's last run); `xf impact` gives the columns and tables it drops or retypes that something downstream still reads, from Dataplex, Unity Catalog or Snowflake column-level lineage. Use when asked what a branch or pull request will cost, how much a query or model scans, whether a change breaks downstream tables (a dropped, renamed or retyped column), or to review a Dataform or dbt change on BigQuery, Databricks or Snowflake before merging.
 ---
 
 # xf checks
@@ -28,7 +28,7 @@ Both commands compare the checked-out branch (uncommitted files included) with i
    xf impact --json 2>impact.err >impact.json; echo $?
    ```
 
-   Each compiles the project and its merge-base, and can take minutes. Exit `0` is a report; `2` is a failed check, with the reason in the `.err` file. Exit `1` comes only with `--fail-over` or `--fail-on`, which are for CI gates.
+   Each compiles the project and its merge-base, and can take minutes. Exit `0` is a report; `2` is a failed check, with the reason in the `.err` file. Exit `1` comes only with a `--fail-…` flag (`--fail-on`, `--fail-over` and the like), which are for CI gates.
 
 3. **Read** the JSON with the fields below. Done when every `critical` and `warning` in `impact.json`, every `warnings` entry and every `error` in `cost.json`, and both totals are accounted for.
 

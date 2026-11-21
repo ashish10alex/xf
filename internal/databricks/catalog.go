@@ -17,13 +17,14 @@ import (
 
 // ucTable is a table as Unity Catalog's tables API has it.
 type ucTable struct {
-	Name      string `json:"name"`
-	Type      string `json:"table_type"`
-	Comment   string `json:"comment"`
-	Created   int64  `json:"created_at"`
-	Updated   int64  `json:"updated_at"`
-	ViewQuery string `json:"view_definition"`
-	Columns   []struct {
+	Name       string            `json:"name"`
+	Type       string            `json:"table_type"`
+	Comment    string            `json:"comment"`
+	Created    int64             `json:"created_at"`
+	Updated    int64             `json:"updated_at"`
+	ViewQuery  string            `json:"view_definition"`
+	Properties map[string]string `json:"properties"`
+	Columns    []struct {
 		Name      string `json:"name"`
 		TypeText  string `json:"type_text"`
 		Comment   string `json:"comment"`
@@ -94,6 +95,50 @@ func (c *Client) Table(ctx context.Context, catalog, schema, table string) (*war
 	out := &warehouse.Table{Type: t.Type, Description: t.Comment, LastModified: millis(t.Updated), Schema: t.schema(), ViewQuery: t.ViewQuery}
 	if p := t.partition(); p != "" {
 		out.Partition = &warehouse.Partition{Column: p}
+	}
+	return out, nil
+}
+
+// PartitionAndClusterColumns returns the table's partition column (if any) and
+// Delta liquid clustering columns (from Unity Catalog properties.clusteringColumns),
+// without waking a SQL warehouse.
+func (c *Client) PartitionAndClusterColumns(ctx context.Context, catalog, schema, table string) ([]string, error) {
+	t, err := c.ucTable(ctx, catalog, schema, table)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(col string) {
+		col = strings.TrimSpace(col)
+		if col == "" {
+			return
+		}
+		k := strings.ToLower(col)
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, col)
+		}
+	}
+	if p := t.partition(); p != "" {
+		add(p)
+	}
+	if raw := strings.TrimSpace(t.Properties["clusteringColumns"]); raw != "" {
+		var nested [][]string
+		if json.Unmarshal([]byte(raw), &nested) == nil {
+			for _, path := range nested {
+				if len(path) > 0 {
+					add(path[0])
+				}
+			}
+		} else {
+			var flat []string
+			if json.Unmarshal([]byte(raw), &flat) == nil {
+				for _, col := range flat {
+					add(col)
+				}
+			}
+		}
 	}
 	return out, nil
 }

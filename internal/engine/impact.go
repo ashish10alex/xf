@@ -42,6 +42,9 @@ type ImpactRequest struct {
 	// the changes are compiled with it and compared with the tables it
 	// builds; "" compares with the tables of the target xf compiles with.
 	DbtProdTarget string `json:"dbtProdTarget,omitempty"`
+	// LineageProjects is a comma-separated list of extra GCP projects to
+	// search in Dataplex Data Lineage alongside each table's project.
+	LineageProjects string `json:"lineageProjects,omitempty"`
 	// Unset is the setting that picks the tables compared with,
 	// "prodCompilerOptions" or "dbtProdTarget", when the caller has it set
 	// nowhere, not even to "": the report then says it compared with the
@@ -50,11 +53,12 @@ type ImpactRequest struct {
 }
 
 type impactKey struct {
-	branch string
-	head   changes.Head
-	dev    string
-	prod   string
-	dbt    string
+	branch          string
+	head            changes.Head
+	dev             string
+	prod            string
+	dbt             string
+	lineageProjects string
 }
 
 // impactRun is one column impact check.
@@ -81,7 +85,7 @@ func (e *Engine) ColumnImpact(ctx context.Context, req ImpactRequest, progress f
 		return nil, errors.New("the base was not compiled")
 	}
 	sig := checkSignature(res, g)
-	key := impactKey{req.DefaultBranch, req.Head, req.DevCompilerOptions, req.ProdCompilerOptions, req.DbtProdTarget}
+	key := impactKey{req.DefaultBranch, req.Head, req.DevCompilerOptions, req.ProdCompilerOptions, req.DbtProdTarget, req.LineageProjects}
 
 	e.mu.Lock()
 	run := e.impacts[key]

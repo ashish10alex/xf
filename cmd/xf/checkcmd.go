@@ -12,7 +12,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/ashish10alex/xf/internal/backend"
@@ -23,7 +25,6 @@ import (
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/forge"
 	"github.com/ashish10alex/xf/internal/impact"
-	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // checkFlags are xf check's own flags.
@@ -58,11 +59,14 @@ func runCheck(args []string) int {
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
 		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
-		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions)
+		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions, config.KeyLineageProjects, config.KeyUSDPerTiB)
 	pushed := fs.Bool("pushed", false, "check the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
-	failOn := fs.String("fail-on", "", "exit 1 when a column change of this `severity` or worse is found: critical or warning")
+	failOn := fs.String("fail-on", "", "exit 1 when a column change of this `severity` or worse is found: critical, warning or unknown")
+	failOnUnchecked := fs.Bool("fail-on-unchecked", false, "exit 1 when any changed model failed to check (dry run or schema error; ignores operations/scripts and tables not yet built)")
 	failOver := fs.String("fail-over", "", "exit 1 when the changed actions scan more than this `size` between them, e.g. 100GB (units are binary)")
-	usdPerTiB := fs.Float64("usd-per-tib", warehouse.OnDemandUSDPerTiB, "the `price` in dollars of a TiB scanned")
+	failOverDelta := fs.String("fail-over-delta", "", "exit 1 when the branch adds more than this `size` of scan per run compared to the merge-base, e.g. 50GB (units are binary)")
+	failOnUnfiltered := fs.Bool("fail-on-unfiltered", false, "exit 1 when any estimated query reads a partitioned table without naming its partition column")
+	failOnUnestimated := fs.Bool("fail-on-unestimated", false, "exit 1 when any changed action could not be estimated")
 	quietUnder := fs.String("quiet-under", "1GiB", "a run that grows by less than this `size` isn't worth a comment on cost alone")
 	output := fs.String("output", "", "write the report to `path` instead of stdout")
 	fs.StringVar(output, "o", "", "")
@@ -93,15 +97,20 @@ or --comment couldn't comment (the checks run first).
 		err = fmt.Errorf("unexpected arguments: %v (see xf check --help)", fs.Args())
 	}
 	cf := checkFlags{pushed: *pushed, output: *output, asJSON: *asJSON, comment: *comment, codequality: *codequality, preflight: *preflight, attention: *attention}
+	cf.opts.FailOnUnchecked = *failOnUnchecked
+	cf.opts.Cost.FailOnUnfiltered = *failOnUnfiltered
+	cf.opts.Cost.FailOnUnestimated = *failOnUnestimated
 	if err == nil && *attention && *asJSON {
 		err = errors.New("--attention can't be used with --json, which has every model and action")
 	}
-	cf.opts.Cost.USDPerTiB = *usdPerTiB
+	if err == nil {
+		err = sf.checkFlag(config.KeyUSDPerTiB)
+	}
+	if err == nil {
+		err = sf.checkFlag(config.KeyLineageProjects)
+	}
 	if err == nil {
 		cf.opts.FailOn, cf.opts.Gate, err = parseFailOn(*failOn)
-	}
-	if err == nil && *usdPerTiB <= 0 {
-		err = fmt.Errorf("--usd-per-tib must be more than 0, not %v", *usdPerTiB)
 	}
 	if err == nil && *failOver != "" {
 		if cf.opts.Cost.Threshold, err = cost.ParseSize(*failOver); err == nil && cf.opts.Cost.Threshold <= 0 {
@@ -109,6 +118,14 @@ or --comment couldn't comment (the checks run first).
 		}
 		if err != nil {
 			err = fmt.Errorf("--fail-over: %w", err)
+		}
+	}
+	if err == nil && *failOverDelta != "" {
+		if cf.opts.Cost.DeltaThreshold, err = cost.ParseSize(*failOverDelta); err == nil && cf.opts.Cost.DeltaThreshold <= 0 {
+			err = errors.New("must be more than 0")
+		}
+		if err != nil {
+			err = fmt.Errorf("--fail-over-delta: %w", err)
 		}
 	}
 	if err == nil {
@@ -126,7 +143,7 @@ or --comment couldn't comment (the checks run first).
 	return check.Failed
 }
 
-// parseFailOn reads --fail-on: critical, warning, or "" for no gate.
+// parseFailOn reads --fail-on: critical, warning, unknown, or "" for no gate.
 func parseFailOn(s string) (impact.Severity, bool, error) {
 	switch s {
 	case "":
@@ -135,8 +152,10 @@ func parseFailOn(s string) (impact.Severity, bool, error) {
 		return impact.SeverityCritical, true, nil
 	case "warning":
 		return impact.SeverityWarning, true, nil
+	case "unknown":
+		return impact.SeverityUnknown, true, nil
 	}
-	return 0, false, fmt.Errorf("--fail-on must be critical or warning, not %q", s)
+	return 0, false, fmt.Errorf("--fail-on must be critical, warning or unknown, not %q", s)
 }
 
 func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) {
@@ -147,6 +166,9 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	settings, err := sf.load(root)
 	if err != nil {
 		return 0, err
+	}
+	if settings.USDPerTiB != "" {
+		cf.opts.Cost.USDPerTiB, _ = strconv.ParseFloat(settings.USDPerTiB, 64)
 	}
 	for _, w := range settings.Warnings {
 		fmt.Fprintln(os.Stderr, "xf check:", w)
@@ -226,7 +248,7 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	pr0 := newProgressPrinter(os.Stderr)
 	pr0.say("Working out the changed actions against " + base)
 	ireq := engine.ImpactRequest{DefaultBranch: base, Head: head, Refresh: true,
-		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, Unset: unsetProdOptions(settings)}
+		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, LineageProjects: settings.LineageProjects, Unset: unsetProdOptions(settings)}
 	creq := engine.CostRequest{DefaultBranch: base, Head: head, Refresh: true,
 		ProdCompilerOptions: settings.ProdCompilerOptions, Unset: unsetProdOptions(settings)}
 	if name == backend.DBT {
@@ -234,19 +256,24 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 		ireq.DbtProdTarget, ireq.Unset = settings.DbtProdTarget, unsetDbtProdTarget(settings, os.Getenv)
 		creq.DbtProdTarget, creq.Unset = settings.DbtProdTarget, unsetDbtProdTarget(settings, os.Getenv)
 	}
-	r.Impact, err = client.ColumnImpact(ctx, ireq, func(p impact.Progress) { pr0.say(progressText("Column impact", p.Phase, p.Done, p.Total)) })
-	if err != nil {
-		if ctx.Err() != nil {
-			return 0, ctx.Err()
-		}
-		r.ImpactError = explainCompile(ctx, client, err).Error()
+	var impactErr, costErr error
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		r.Impact, impactErr = client.ColumnImpact(ctx, ireq, func(p impact.Progress) { pr0.say(progressText("Column impact", p.Phase, p.Done, p.Total)) })
+	})
+	wg.Go(func() {
+		r.Cost, costErr = client.QueryCost(ctx, creq, func(p cost.Progress) { pr0.say(progressText("Query cost", p.Phase, p.Done, p.Total)) })
+	})
+	wg.Wait()
+	if ctx.Err() != nil {
+		pr0.done()
+		return 0, ctx.Err()
 	}
-	r.Cost, err = client.QueryCost(ctx, creq, func(p cost.Progress) { pr0.say(progressText("Query cost", p.Phase, p.Done, p.Total)) })
-	if err != nil {
-		if ctx.Err() != nil {
-			return 0, ctx.Err()
-		}
-		r.CostError = explainCompile(ctx, client, err).Error()
+	if impactErr != nil {
+		r.ImpactError = explainCompile(ctx, client, impactErr).Error()
+	}
+	if costErr != nil {
+		r.CostError = explainCompile(ctx, client, costErr).Error()
 	}
 	pr0.done()
 
@@ -258,7 +285,11 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	if r.CostError != "" {
 		fmt.Fprintln(os.Stderr, "xf check: query cost couldn't be checked:", r.CostError)
 	} else if r.Cost.BaseError != "" {
-		fmt.Fprintln(os.Stderr, "xf check: no change in cost against the merge-base is shown, as it could not be compiled:", r.Cost.BaseError)
+		suffix := ""
+		if cf.opts.Cost.DeltaThreshold > 0 {
+			suffix = " (--fail-over-delta counted the total as growth)"
+		}
+		fmt.Fprintf(os.Stderr, "xf check: no change in cost against the merge-base is shown, as it could not be compiled: %s%s\n", r.Cost.BaseError, suffix)
 	}
 
 	if !r.Neither() {

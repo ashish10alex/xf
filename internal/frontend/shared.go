@@ -549,32 +549,55 @@ type CostPastRow struct {
 	ReadRows  string `json:"readRows,omitempty"`
 	Warehouse string `json:"warehouse,omitempty"`
 	Note      string `json:"note,omitempty"`
+	Warn      bool   `json:"warn,omitempty"`
 }
 
 func pastView(r *cost.Report) *CostPast {
 	p := r.PastRuns
 	v := &CostPast{Line: cost.PastLine(r, func(s string) string { return s }) + ".", Why: strings.ReplaceAll(p.Why, "`", ""), NoReadRows: p.NoReadRows, Rows: []CostPastRow{}}
 	for _, run := range p.Runs {
-		row := CostPastRow{Action: impact.ShortTable(run.Name), Type: run.Type}
+		row := CostPastRow{Action: impact.ShortTable(run.Name), Type: run.Type, Warn: len(run.Unfiltered) > 0}
+		var warns []string
+		for _, u := range run.Unfiltered {
+			warns = append(warns, "⚠ no partition/cluster filter: "+u.Column+" of "+impact.ShortTable(u.Table))
+		}
 		if run.Ran {
-			row.When, row.Took, row.Read, row.Warehouse = run.When(), run.Took(), warehouse.FormatBytes(run.ReadBytes), run.Warehouse
+			row.When, row.Took, row.Read = run.When(), run.Took(), warehouse.FormatBytes(run.ReadBytes)
+			var meta []string
+			if wh := run.WarehouseLabel(); wh != "" {
+				meta = append(meta, wh)
+			}
+			if cr := run.CreditsText(); cr != "" {
+				meta = append(meta, cr)
+			}
+			if cad := run.CadenceText(); cad != "" {
+				meta = append(meta, cad)
+			}
+			meta = append(meta, warns...)
+			row.Warehouse = strings.Join(meta, " · ")
 			if !p.NoReadRows {
 				row.ReadRows = cost.RowsText(run.ReadRows)
 			}
 		} else {
-			row.Note = run.NoRunText(p)
+			parts := append([]string{run.NoRunText(p)}, warns...)
+			row.Note = strings.Join(parts, " · ")
 		}
 		v.Rows = append(v.Rows, row)
 	}
 	return v
 }
 
-// CostReport lays r out as the C overlay and the cost tab do.
-func CostReport(r *cost.Report) CostView {
+// CostReport lays r out as the C overlay and the cost tab do, with default
+// cost options.
+func CostReport(r *cost.Report) CostView { return CostReportWith(r, cost.Options{}) }
+
+// CostReportWith lays r out as the C overlay and the cost tab do, priced and
+// formatted with o.
+func CostReportWith(r *cost.Report, o cost.Options) CostView {
 	// Rows is never nil, so a report whose every action failed to estimate
 	// sends [], not null, which xf web's cost tab could not draw.
-	v := CostView{Compiled: r.Compiled, DryRunIn: r.DryRunIn, FromDev: cost.FromDevLine(r), Total: cost.TotalLine(r, cost.Options{}),
-		Footnote: CostTableFootnote, Markdown: cost.Markdown(r, cost.Options{}), Rows: []CostRow{},
+	v := CostView{Compiled: r.Compiled, DryRunIn: r.DryRunIn, FromDev: cost.FromDevLine(r), Total: cost.TotalLine(r, o),
+		Footnote: CostTableFootnote, Markdown: cost.Markdown(r, o), Rows: []CostRow{},
 		Explain: impact.InlineHTML(cost.Explanation(r))}
 	if c := r.Comparison; c != nil {
 		v.Compared = c.HeadRef + " vs " + c.BaseRef + " @ " + c.MergeBase[:min(len(c.MergeBase), 7)]
@@ -588,13 +611,17 @@ func CostReport(r *cost.Report) CostView {
 			estimated = append(estimated, a)
 		}
 	}
-	t := cost.Layout(r, estimated, cost.Options{})
+	t := cost.Layout(r, estimated, o)
 	v.TotalRow, v.Dataset, v.BaseLabel, v.HeadLabel, v.Footnotes = t.Total, t.Dataset, t.BaseLabel, t.HeadLabel, t.Footnotes
 	for _, tr := range t.Rows {
 		a := tr.Action
 		var notes []string
 		for _, u := range a.Unfiltered {
-			notes = append(notes, "⚠ no partition filter: "+u.Column+" of "+impact.ShortTable(u.Table))
+			if u.MergeTarget {
+				notes = append(notes, "⚠ MERGE target has no partition filter in ON: "+u.Column+" of "+impact.ShortTable(u.Table))
+			} else {
+				notes = append(notes, "⚠ no partition filter: "+u.Column+" of "+impact.ShortTable(u.Table))
+			}
 		}
 		if tr.FullRefresh != "" {
 			notes = append(notes, "full refresh "+tr.FullRefresh)
@@ -608,7 +635,7 @@ func CostReport(r *cost.Report) CostView {
 		}
 		v.Rows = append(v.Rows, CostRow{TableRow: tr, Notes: strings.Join(notes, " · "), Warn: len(a.Unfiltered) > 0})
 	}
-	v.Later = cost.LaterLine(r, cost.Options{})
+	v.Later = cost.LaterLine(r, o)
 	v.NotEstimated = costSkipped(r)
 	if p := r.PastRuns; p != nil {
 		v.Past, v.Footnote = pastView(r), PastFootnote

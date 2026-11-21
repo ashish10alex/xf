@@ -959,6 +959,7 @@ func (p *projectState) scratchCSV(w http.ResponseWriter, r *http.Request) {
 // setScratch gives the project what scratch queries run with.
 func (p *projectState) setScratch(o *Project) {
 	p.warehouse, p.scratchWarnGB, p.scratchConfirmGB = o.Warehouse, o.ScratchWarnGB, o.ScratchConfirmGB
+	p.usdPerTiB = o.USDPerTiB
 	p.dbx, p.sf = o.Databricks, o.Snowflake
 	wk := p.warehouseKindLocked()
 	p.onDbx.Store(wk == project.Databricks)

@@ -78,7 +78,7 @@ func SkippedActions(r *Report) []Skipped {
 		if m := notFoundRE.FindStringSubmatch(s.Why); m != nil {
 			s.Missing, s.Location = strings.Replace(m[2], ":", ".", 1), m[3]
 			if b, ok := byName[strings.ToLower(s.Missing)]; ok {
-				s.New, s.Changed = b.New, !b.New
+				s.New, s.Changed = b.Added(), !b.Added()
 			}
 			if s.New {
 				s.Waits = waits(s.Missing, a.Waits)

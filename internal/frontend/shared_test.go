@@ -343,3 +343,12 @@ func TestRenamedFromNamesTheOldActionWhenTheFileKeptItsPath(t *testing.T) {
 		t.Errorf("RenamedFrom = %v, want %v", got, want)
 	}
 }
+
+func TestCostReportWithCustomUSDPerTiB(t *testing.T) {
+	v := CostReportWith(&cost.Report{
+		Actions: []cost.Action{{Name: "p.marts.agg", Type: "table", Estimate: &cost.Estimate{Bytes: 1 << 40}}},
+	}, cost.Options{USDPerTiB: 10})
+	if !strings.Contains(v.Total, "$10.00") || !strings.Contains(v.Markdown, "$10.00 per TiB") {
+		t.Errorf("CostReportWith(USDPerTiB=10): Total=%q Markdown=%q", v.Total, v.Markdown)
+	}
+}

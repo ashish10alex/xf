@@ -1799,9 +1799,9 @@ function PastRuns({ o, r }) {
         <thead><tr><th>Model</th><th>Type</th><th title="When its latest build with this target started">Last run</th><th class="num">Took</th>
           <th class="num" title="What the run read">Read</th>${!p.noReadRows && html`<th class="num" title="The rows the run read">Rows read</th>`}<th>Warehouse</th></tr></thead>
         <tbody>${p.rows.map((x) => x.note
-          ? html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td><td class="dim" colspan=${p.noReadRows ? 4 : 5}>${x.note}</td></tr>`
+          ? html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td><td class=${x.warn ? 'warn' : 'dim'} colspan=${p.noReadRows ? 4 : 5}>${x.note}</td></tr>`
           : html`<tr><td class="mono">${x.action}</td><td class="dim">${x.type}</td><td>${x.when}</td><td class="num">${x.took}</td>
-            <td class="num">${x.read}</td>${!p.noReadRows && html`<td class="num">${x.readRows}</td>`}<td class="dim">${x.warehouse}</td></tr>`)}</tbody>
+            <td class="num">${x.read}</td>${!p.noReadRows && html`<td class="num">${x.readRows}</td>`}<td class=${x.warn ? 'warn' : 'dim'}>${x.warehouse}</td></tr>`)}</tbody>
       </table>`)}
       <p class="dim small">${r.footnote}</p>
     </div>`;

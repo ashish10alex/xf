@@ -122,6 +122,11 @@ func TestMentionsWholeIdentifiersOnly(t *testing.T) {
 		{"SELECT * FROM `p.old_marts.customers`", "marts.customers", false},
 		{"SELECT * FROM `p.marts.customers_v2`", "marts.customers", false},
 		{"SELECT * FROM `p.martsXcustomers`", "marts.customers", false}, // the dot is literal
+		{"SELECT amount FROM orders -- dropped discount", "discount", false},
+		{"SELECT amount /* discount */ FROM orders # discount", "discount", false},
+		{"SELECT 'discount', '''discount''', r'discount' FROM orders", "discount", false},
+		{`SELECT "discount" FROM "marts"."customers"`, "discount", true},
+		{`SELECT "discount" FROM "marts"."customers"`, "marts.customers", true},
 	} {
 		if got := Mentions(c.sql, c.id); got != c.want {
 			t.Errorf("Mentions(%q, %q) = %v", c.sql, c.id, got)
@@ -413,8 +418,8 @@ func TestBuildStopsStartingLookupsOnceCancelled(t *testing.T) {
 	if res != nil || !errors.Is(err, context.Canceled) {
 		t.Errorf("got %v, %v", res, err)
 	}
-	if len(src.calls) != 4 {
-		t.Errorf("%d calls: only the batch already started", len(src.calls))
+	if len(src.calls) == 0 || len(src.calls) > readerConcurrency {
+		t.Errorf("%d calls: expected at most %d in-flight workers once cancelled", len(src.calls), readerConcurrency)
 	}
 }
 

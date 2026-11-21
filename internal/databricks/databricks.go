@@ -69,7 +69,7 @@ type Config struct {
 func New(c Config) *Client {
 	h := c.HTTP
 	if h == nil {
-		h = http.DefaultClient
+		h = warehouse.NewHTTPClient()
 	}
 	return &Client{http: h, host: NormalizeHost(c.Host), token: c.Token, catalog: c.Catalog, warehouse: c.Warehouse, poll: time.Second}
 }
@@ -143,20 +143,13 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 	if c.host == "" {
 		return nil, errors.New("no Databricks workspace: set the dbt target's host, choose a Databricks profile, or set DATABRICKS_HOST")
 	}
-	var r io.Reader
+	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		r = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.host+path, r)
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		payload = b
 	}
 	if c.token == nil {
 		return nil, authErr(errors.New("no token"))
@@ -168,8 +161,22 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 		}
 		return nil, authErr(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := c.http.Do(req)
+	idempotent := method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
+	resp, err := warehouse.DoWithRetry(ctx, c.http, func() (*http.Request, error) {
+		var r io.Reader
+		if payload != nil {
+			r = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, c.host+path, r)
+		if err != nil {
+			return nil, err
+		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		return req, nil
+	}, warehouse.RetryPolicy{RetryServerErrors: idempotent})
 	if err != nil {
 		return nil, err
 	}

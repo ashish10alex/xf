@@ -24,7 +24,7 @@ dry run in analytics-prod (US) · compiled with prodCompilerOptions
 ✗ Gate failed: 1.67 TiB exceeds the limit of 1.00 TiB
 ```
 
-xf works out from the files in a project's root whether it is Dataform or dbt. dbt projects get most of what Dataform's do, and also work on Databricks, with Unity Catalog's lineage; [dbt projects](docs/dbt.md) lists the differences.
+xf works out from the files in a project's root whether it is Dataform or dbt. dbt projects get most of what Dataform's do, and also work on Databricks, with Unity Catalog's lineage, and on Snowflake, with its `ACCESS_HISTORY`; [dbt projects](docs/dbt.md) lists the differences.
 Site: [xf.dataformtools.com](https://xf.dataformtools.com).
 
 ## What you need
@@ -95,6 +95,8 @@ xf check                # both, as the Markdown a pull request gets
 
 Each prints a report and exits 0; `2` means the check couldn't be made, with the reason on stderr.
 `--fail-over 100GB` (cost) and `--fail-on critical` (impact) turn them into gates that exit 1, and `--json` prints JSON for scripts and agents.
+More gates: `--fail-over-delta 50GB` on what the branch adds to the merge-base's scan, `--fail-on-unfiltered` on a partitioned table read without its partition column, `--fail-on-unestimated` on an action with no estimate, `--fail-on unknown` on readers that couldn't be looked up, and `--fail-on-unchecked` on a changed model that couldn't be checked.
+Readers in other GCP projects show once `lineageProjects` in `.xf/config.json` (or `--lineage-projects`) names those projects.
 
 Compare with prod's tables, not your dev ones: set `prodCompilerOptions` in the project's `.xf/config.json` (`dbtProdTarget` for dbt), and commit it so CI uses it too.
 Until it is set, every report says it compared with the default targets.
@@ -103,7 +105,7 @@ Until it is set, every report says it compared with the default targets.
 ## In CI
 
 `xf check` posts one comment on the pull request (a note on a GitLab merge request), edited on each push, and notes on the lines that drop a column or read a table.
-It reports and passes by default; `fail-on` and `fail-over` make it a gate.
+It reports and passes by default; `fail-on` and `fail-over` make it a gate, and `fail-over-delta`, `fail-on-unfiltered`, `fail-on-unestimated` and `fail-on-unchecked` add more.
 `xf check init github` or `xf check init gitlab` writes the job for your repository, with the commands to set up workload identity federation.
 
 GitHub Actions, in `.github/workflows/xf-check.yml` (the xf repository is the action; `<tag>` is an xf release, such as `v0.0.5`):

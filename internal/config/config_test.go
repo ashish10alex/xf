@@ -577,3 +577,33 @@ func TestCheckFile(t *testing.T) {
 		})
 	}
 }
+
+func TestUSDPerTiBConfig(t *testing.T) {
+	for _, valid := range []string{"6.25", "7.5", "10"} {
+		if err := Check(KeyUSDPerTiB, valid); err != nil {
+			t.Errorf("Check(KeyUSDPerTiB, %q) = %v, want nil", valid, err)
+		}
+	}
+	for _, bad := range []string{"", "0", "-1", "cheap", "NaN", "Inf"} {
+		if err := Check(KeyUSDPerTiB, bad); err == nil {
+			t.Errorf("Check(KeyUSDPerTiB, %q) = nil, want error", bad)
+		}
+	}
+	if errs, _ := CheckFile([]byte(`{"usdPerTiB": 7.5}`), false); len(errs) != 0 {
+		t.Errorf("CheckFile numeric usdPerTiB: %+v", errs)
+	}
+	if errs, _ := CheckFile([]byte(`{"usdPerTiB": 0}`), false); len(errs) == 0 {
+		t.Error("CheckFile usdPerTiB=0 should fail")
+	}
+	root := t.TempDir()
+	if _, err := SetProjectKey(root, KeyUSDPerTiB, "7.5"); err != nil {
+		t.Fatalf("SetProjectKey: %v", err)
+	}
+	l, err := Load(Options{Root: root, UserDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if l.USDPerTiB != "7.5" {
+		t.Errorf("Loaded.USDPerTiB = %q, want 7.5", l.USDPerTiB)
+	}
+}

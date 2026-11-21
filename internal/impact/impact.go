@@ -40,7 +40,7 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/ashish10alex/xf/internal/lineage"
-	"github.com/ashish10alex/xf/internal/warehouse"
+	"github.com/ashish10alex/xf/internal/project"
 )
 
 const (
@@ -61,6 +61,10 @@ type ColumnChange struct {
 	Kind string `json:"kind"`
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
+	// Widening says a TypeChanged retype is a lossless widening within the
+	// same type family (e.g. INT -> BIGINT, FLOAT -> DOUBLE, VARCHAR(50) ->
+	// VARCHAR(200)), which counts as SeverityLow.
+	Widening bool `json:"widening,omitempty"`
 	// OnBase: the action at the merge-base already made this change, so it
 	// isn't this branch's: the table in BigQuery is behind the base branch.
 	// It counts as low whoever reads the column.
@@ -97,58 +101,32 @@ const (
 	BreaksRunUniqueKey = "uniqueKey"
 )
 
-// breaksRun is why dropping column breaks the incremental run of a table
-// whose uniqueKey is key, or "" when it doesn't.
-func breaksRun(change ColumnChange, column string, ownRun bool, key []string) string {
-	switch {
-	case !ownRun || change.Kind != Dropped:
-		return ""
-	case slices.ContainsFunc(key, func(k string) bool { return strings.EqualFold(strings.Trim(k, "`"), column) }):
-		return BreaksRunUniqueKey
+// breaksRun is why changing column breaks the incremental run of a table
+// whose uniqueKey is key, or "" when it doesn't. uniqueKey always fails a
+// MERGE/delete+insert on a dropped key column; ownRun fails on any dropped
+// column when the incremental run names existing target columns; strict
+// (onSchemaChange=FAIL / on_schema_change=fail) also fails on retypes.
+func breaksRun(change ColumnChange, column string, ownRun, strict bool, key []string) string {
+	switch change.Kind {
+	case Dropped:
+		if slices.ContainsFunc(key, func(k string) bool { return strings.EqualFold(strings.Trim(k, "`\" "), column) }) {
+			return BreaksRunUniqueKey
+		}
+		if ownRun {
+			return BreaksRunTable
+		}
+	case TypeChanged:
+		if strict {
+			return BreaksRunTable
+		}
 	}
-	return BreaksRunTable
+	return ""
 }
 
 // ColumnImpact is a changed column, named as the table in BigQuery spells it.
 type ColumnImpact struct {
 	Column string
 	Change ColumnChange
-}
-
-// typeAliases maps legacy SQL and alias type names to the standard ones.
-var typeAliases = map[string]string{
-	"INTEGER":    "INT64",
-	"FLOAT":      "FLOAT64",
-	"BOOLEAN":    "BOOL",
-	"RECORD":     "STRUCT",
-	"DECIMAL":    "NUMERIC",
-	"BIGDECIMAL": "BIGNUMERIC",
-}
-
-func normaliseType(t string) string {
-	upper := strings.ToUpper(t)
-	return cmp.Or(typeAliases[upper], upper)
-}
-
-// DiffSchemas is the top-level columns prod has that the dry run no longer
-// produces, and those whose type changed. Names compare case-insensitively,
-// as in BigQuery. Nested fields and mode changes are left out.
-func DiffSchemas(dev, prod []warehouse.Column) []ColumnImpact {
-	byName := map[string]warehouse.Column{}
-	for _, f := range dev {
-		byName[strings.ToLower(f.Name)] = f
-	}
-	var out []ColumnImpact
-	for _, p := range prod {
-		d, ok := byName[strings.ToLower(p.Name)]
-		switch {
-		case !ok:
-			out = append(out, ColumnImpact{p.Name, ColumnChange{Kind: Dropped}})
-		case normaliseType(d.Type) != normaliseType(p.Type):
-			out = append(out, ColumnImpact{p.Name, ColumnChange{Kind: TypeChanged, From: normaliseType(p.Type), To: normaliseType(d.Type)}})
-		}
-	}
-	return out
 }
 
 // Reader is a table that reads a changed column or a deleted table.
@@ -223,6 +201,10 @@ type Table struct {
 	// action of this table: readers still on the old name keep reading a
 	// table nothing updates.
 	RenamedTo string `json:"renamedTo,omitempty"`
+	// Dbt is set when the table comes from a dbt project, so incremental
+	// run break notes use dbt's terminology (unique_key, --full-refresh)
+	// instead of Dataform's.
+	Dbt bool `json:"dbt,omitempty"`
 }
 
 // Unchecked is a table that couldn't be compared, and why.
@@ -234,6 +216,33 @@ type Unchecked struct {
 	// a rename.
 	RenamedFrom string `json:"renamedFrom,omitempty"`
 	RenamedTo   string `json:"renamedTo,omitempty"`
+}
+
+// IsPermanent reports whether u couldn't be checked for a structural reason
+// rather than an error: a script/operation with no schema, nothing to dry run,
+// or a table that does not exist in the warehouse yet.
+func (u Unchecked) IsPermanent() bool {
+	r := u.Reason
+	return r == "operation: a dry run of a script has no schema" ||
+		r == "nothing to dry run" ||
+		strings.HasPrefix(r, "no table in ") ||
+		strings.Contains(r, ", and no table in ")
+}
+
+// UncheckedFailures returns the unchecked models of r whose check failed
+// (schema read error, dry run error, missing project, unknown prod target),
+// excluding permanent structural reasons that no PR fix can clear.
+func UncheckedFailures(r *Report) []Unchecked {
+	if r == nil {
+		return nil
+	}
+	var out []Unchecked
+	for _, u := range r.Unchecked {
+		if !u.IsPermanent() {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // Comparison is what was compared.
@@ -349,11 +358,15 @@ func isIdentChar(b byte) bool {
 }
 
 // Mentions reports whether sql names identifier as a whole word,
-// case-insensitively as BigQuery compares column names. A dotted
-// identifier is a table path, dataset.table, and matches with backticks
-// round each part too: `p.dataset.table` and `dataset`.`table`. Only a
-// hint: an alias or a SELECT * can make it wrong either way.
+// case-insensitively as BigQuery compares column names. Comments and
+// single-quoted string literals are ignored (note: dynamic SQL inside a
+// single-quoted EXECUTE IMMEDIATE string is not inspected). A dotted
+// identifier is a table path, dataset.table, and matches with backticks or
+// double quotes round each part too: `p.dataset.table` and
+// `dataset`.`table`. Only a hint: an alias or a SELECT * can make it wrong
+// either way.
 func Mentions(sql, identifier string) bool {
+	sql = project.StripSQL(sql, project.StripOptions{BlankSingleStrings: true})
 	parts := strings.Split(identifier, ".")
 	for i, p := range parts {
 		parts[i] = regexp.QuoteMeta(p)
@@ -502,7 +515,7 @@ func OpenReaders(readers []Reader) int {
 func tableWeight(t Table) int {
 	n := OpenReaders(t.Readers)
 	for _, c := range t.Columns {
-		if !c.Change.OnBase {
+		if !c.Change.OnBase && !c.Change.Widening {
 			n += OpenReaders(c.Readers)
 		}
 	}
@@ -510,8 +523,11 @@ func tableWeight(t Table) int {
 }
 
 func droppedFirst(c ColumnChange) int {
-	if c.Kind == Dropped {
+	switch {
+	case c.Kind == Dropped:
 		return 0
+	case c.Widening:
+		return 2
 	}
 	return 1
 }
@@ -603,6 +619,10 @@ func ImpactSeverity(change ColumnChange, readers []Reader, readersError string) 
 	case change.OnBase && !change.keyedHere():
 		return SeverityLow
 	case change.BreaksRun != "":
+		return SeverityCritical
+	case change.Kind == TypeChanged && change.Widening:
+		return SeverityLow
+	case OpenReaders(readers) > 0 && change.Kind != TypeChanged:
 		return SeverityCritical
 	case readersError != "":
 		return SeverityUnknown

@@ -2,7 +2,7 @@
 
 > xf dry runs what a Dataform or dbt branch changes, before it merges: what its queries will scan and cost in BigQuery (`xf cost`), and which downstream tables still read the columns and tables it drops or retypes (`xf impact`). `xf check` puts both in one report and gate on a pull request, in GitHub Actions, GitLab CI or any CI. With `--json`, each gives a coding agent fields to act on. MIT licensed; one executable for macOS, Linux and Windows.
 
-Dry runs are free in BigQuery and run nothing. A dbt project on Databricks is checked on its SQL warehouse, with Unity Catalog's lineage, and its cost is each changed model's last run from Query History, not an estimate.
+Dry runs are free in BigQuery and run nothing. A dbt project on Databricks is checked on its SQL warehouse, with Unity Catalog's lineage, and its cost is each changed model's last run from Query History, not an estimate. A dbt project on Snowflake is checked the same way on its virtual warehouse, with lineage from `ACCESS_HISTORY` and cost from `QUERY_HISTORY`.
 
 ## Install
 
@@ -12,14 +12,14 @@ Dry runs are free in BigQuery and run nothing. A dbt project on Databricks is ch
 - Windows: `winget install AshishAlex.xf`, or Scoop ([Windows guide](https://xf.dataformtools.com/docs/windows.md))
 - Archives for every platform: [GitHub Releases](https://github.com/ashish10alex/xf/releases)
 
-xf needs the Dataform CLI or dbt, and `gcloud auth application-default login` for BigQuery, or a Databricks login. `xf update` updates it the way it was installed.
+xf needs the Dataform CLI or dbt, and `gcloud auth application-default login` for BigQuery, or a Databricks or Snowflake login. `xf update` updates it the way it was installed.
 
 ## Commands for agents
 
 Run them in the project's root (or pass `--dir`), on the branch to check, after `git fetch origin main`: xf compares the branch, uncommitted files included, with its merge-base on `origin/<default branch>`, and never fetches. JSON goes to stdout, progress to stderr.
 
-- `xf cost --json`: what each changed action would scan and cost, and the change from the merge-base. `--fail-over 1TB` gates on bytes.
-- `xf impact --json`: the columns and tables the branch drops or retypes, each with a `severity` (`critical`, `warning`, `unknown`, `low`) and its readers. `--fail-on critical` gates.
+- `xf cost --json`: what each changed action would scan and cost, and the change from the merge-base. `--fail-over 1TB` gates on bytes, `--fail-over-delta 50GB` on growth over the merge-base, `--fail-on-unfiltered` on a missing partition filter, and `--fail-on-unestimated` on an action with no estimate.
+- `xf impact --json`: the columns and tables the branch drops or retypes, each with a `severity` (`critical`, `warning`, `unknown`, `low`) and its readers. `--fail-on critical` gates (`warning` and `unknown` gate on more), and `--fail-on-unchecked` gates on a changed model that couldn't be checked. `--lineage-projects` adds GCP projects to search for readers.
 - `xf check --json`: both, as `impact` and `cost`, with the pull request's `verdict`. `--comment` posts the report on the pull request in CI.
 - `xf run --dry-run --json`: a free plan of a run: what it builds, reads from prod and scans. Run for real only when the user says yes.
 - `xf config --json`: the settings xf would use and where each came from.
@@ -28,7 +28,7 @@ Run them in the project's root (or pass `--dir`), on the branch to check, after 
 Exit codes, the same for all three checks:
 
 - `0`: the report was made, and no gate tripped.
-- `1`: `--fail-on` or `--fail-over` tripped; only with those flags.
+- `1`: a gate tripped; only with a `--fail-…` flag.
 - `2`: the check couldn't be made; the reason is on stderr.
 
 The JSON of `xf cost`, `xf impact` and `xf check` has `version` (now 1): fields may be added, and it changes only when one is removed or changes meaning. A figure BigQuery couldn't give is `null`, never `0`.
@@ -63,7 +63,7 @@ curl -fsSL --create-dirs "https://xf.dataformtools.com/skills/{xf-checks,xf-run}
 
 ## CI
 
-- [GitHub Action](https://raw.githubusercontent.com/ashish10alex/xf/main/action.yml): `uses: ashish10alex/xf@<tag>`, with `fail-on` and `fail-over`; it downloads the xf release of its tag.
+- [GitHub Action](https://raw.githubusercontent.com/ashish10alex/xf/main/action.yml): `uses: ashish10alex/xf@<tag>`, with `fail-on`, `fail-over` and the other gates as inputs; it downloads the xf release of its tag.
 - [GitLab CI template](https://raw.githubusercontent.com/ashish10alex/xf/main/ci/gitlab/xf-check.yml): include it from a tag, and set `XF_FORGE_TOKEN` and `GOOGLE_APPLICATION_CREDENTIALS`.
 - `xf check init github` (or `gitlab`) writes the job and checks the setup.
 

@@ -66,8 +66,11 @@ type node struct {
 		Nodes []string `json:"nodes,omitempty"`
 	} `json:"depends_on"`
 	Config struct {
-		Materialized string `json:"materialized,omitempty"`
-		PartitionBy  *struct {
+		Materialized        string       `json:"materialized,omitempty"`
+		OnSchemaChange      string       `json:"on_schema_change,omitempty"`
+		IncrementalStrategy string       `json:"incremental_strategy,omitempty"`
+		UniqueKey           stringOrList `json:"unique_key,omitempty"`
+		PartitionBy         *struct {
 			Field string `json:"field"`
 		} `json:"partition_by,omitempty"`
 		PreHook  []hook `json:"pre-hook,omitempty"`
@@ -97,6 +100,30 @@ type macro struct {
 // nobody edits, whose files are inside dbt-core's Python package or, for
 // dbt v2, nowhere.
 var builtinPackages = []string{"dbt", "dbt_bigquery"}
+
+// stringOrList decodes a dbt config field that may be a single string
+// ("id"), a list of strings (["id", "tenant_id"]), or null.
+type stringOrList []string
+
+func (s *stringOrList) UnmarshalJSON(data []byte) error {
+	if string(bytes.TrimSpace(data)) == "null" {
+		*s = nil
+		return nil
+	}
+	var one string
+	if json.Unmarshal(data, &one) == nil {
+		if one != "" {
+			*s = []string{one}
+		}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(data, &many); err != nil {
+		return nil
+	}
+	*s = many
+	return nil
+}
 
 // version is a model version, which the manifest has as a number or a
 // string ("1", 2, 2.1); empty for an unversioned model.
@@ -281,6 +308,9 @@ func (m *manifest) action(n node, disabled bool, targets map[string]project.Targ
 	if n.Config.PartitionBy != nil {
 		a.PartitionBy = n.Config.PartitionBy.Field
 	}
+	a.UniqueKey = []string(n.Config.UniqueKey)
+	a.OnSchemaChange = n.Config.OnSchemaChange
+	a.IncrementalStrategy = n.Config.IncrementalStrategy
 	for _, c := range n.Columns {
 		// A column listed only to test it documents nothing.
 		if c.Description != "" {

@@ -24,16 +24,20 @@ xf-check:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   variables:
-    GIT_DEPTH: "0"            # xf needs history to find the merge-base
-    XF_VERSION: ""            # the xf release, such as v0.0.4; empty for the latest
-    XF_DIR: "."               # the project's folder in the repository
-    XF_COMMENT: "true"        # post the report as one note, edited on each push
-    XF_FAIL_ON: ""            # critical or warning: fail at that column change severity
-    XF_FAIL_OVER: ""          # such as 100GB: fail when the changed actions scan more
-    XF_QUIET_UNDER: "1GiB"    # cost alone needs a run to grow this much for a note
-    XF_NPM_CI: auto           # auto runs npm ci when the project has a package.json, unless it is a dbt project
-    XF_INSTALL_DATAFORM: auto # auto installs the Dataform CLI unless dataform is on PATH or it is a dbt project
-    XF_ARGS: ""               # more flags for xf check, split on spaces
+    GIT_DEPTH: "0"              # xf needs history to find the merge-base
+    XF_VERSION: ""              # the xf release, such as v0.0.4; empty for the latest
+    XF_DIR: "."                 # the project's folder in the repository
+    XF_COMMENT: "true"          # post the report as one note, edited on each push
+    XF_FAIL_ON: ""              # critical, warning or unknown: fail at that column change severity
+    XF_FAIL_ON_UNCHECKED: ""    # true: fail when a changed model failed to check (excludes scripts/unbuilt tables)
+    XF_FAIL_OVER: ""            # such as 100GB: fail when the changed actions scan more
+    XF_FAIL_OVER_DELTA: ""      # such as 50GB: fail when the branch adds more scan per run
+    XF_FAIL_ON_UNFILTERED: ""   # true: fail when an estimated query lacks a partition filter
+    XF_FAIL_ON_UNESTIMATED: ""  # true: fail when a changed action couldn't be estimated
+    XF_QUIET_UNDER: "1GiB"      # cost alone needs a run to grow this much for a note
+    XF_NPM_CI: auto             # auto runs npm ci when the project has a package.json, unless it is a dbt project
+    XF_INSTALL_DATAFORM: auto   # auto installs the Dataform CLI unless dataform is on PATH or it is a dbt project
+    XF_ARGS: ""                 # more flags for xf check, split on spaces
   script:
     # Plain sh first: on an image without bash the runner uses sh, and the
     # rest needs bash.
@@ -79,9 +83,14 @@ xf-check:
 
       flags=(--output "$CI_PROJECT_DIR/xf-check.md" --codequality "$CI_PROJECT_DIR/xf-check-codequality.json"
         --quiet-under "$XF_QUIET_UNDER" --default-branch "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME")
-      [ "$XF_COMMENT" = true ] && flags+=(--comment)
+      is_true() { case "$1" in true|TRUE|True|1) return 0 ;; *) return 1 ;; esac; }
+      is_true "$XF_COMMENT" && flags+=(--comment)
       [ -n "$XF_FAIL_ON" ] && flags+=(--fail-on "$XF_FAIL_ON")
+      is_true "$XF_FAIL_ON_UNCHECKED" && flags+=(--fail-on-unchecked)
       [ -n "$XF_FAIL_OVER" ] && flags+=(--fail-over "$XF_FAIL_OVER")
+      [ -n "$XF_FAIL_OVER_DELTA" ] && flags+=(--fail-over-delta "$XF_FAIL_OVER_DELTA")
+      is_true "$XF_FAIL_ON_UNFILTERED" && flags+=(--fail-on-unfiltered)
+      is_true "$XF_FAIL_ON_UNESTIMATED" && flags+=(--fail-on-unestimated)
       xf check "${flags[@]}" $XF_ARGS
       code=$?
       if [ "$code" -eq 2 ]; then cat "${TMPDIR:-/tmp}"/xf-*.log 2>/dev/null | tail -n 50 || true; fi

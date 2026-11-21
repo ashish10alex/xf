@@ -208,3 +208,16 @@ func TestComparePropertyGraphs(t *testing.T) {
 		t.Errorf("removed graph: deleted = %+v, want the graph", d.Deleted)
 	}
 }
+
+func TestCompareIncrementalPostOps(t *testing.T) {
+	base := graph(t, map[string][]map[string]any{"tables": {
+		table("events", map[string]any{"type": "incremental", "incrementalPostOps": []any{"GRANT SELECT ON x TO 'user:a'"}}),
+	}})
+	head := graph(t, map[string][]map[string]any{"tables": {
+		table("events", map[string]any{"type": "incremental", "incrementalPostOps": []any{"GRANT SELECT ON x TO 'user:b'"}}),
+	}})
+	want := []idReasons{{"proj.ds.events", []Reason{ReasonSQL}}}
+	if got := changedReasons(compare(t, base, head)); !reflect.DeepEqual(got, want) {
+		t.Errorf("changed = %v, want %v", got, want)
+	}
+}

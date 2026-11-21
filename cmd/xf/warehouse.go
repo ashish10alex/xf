@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -356,9 +357,11 @@ func (w *projectWarehouse) snowflakeCost(ctx context.Context, res *changes.Resul
 		PastRuns: &cost.PastRuns{Source: "Snowflake Query History", Target: target, Days: snowflake.HistoryDays, NoReadRows: true, Runs: []cost.PastRun{}}}
 	var models []*project.Action
 	var changed []changes.Changed
+	var nodeIDs []string
 	for _, c := range res.Changed {
 		if a := g.Actions[c.ID]; a != nil && a.DbtName != nil && builds(a) {
 			models, changed = append(models, a), append(changed, c)
+			nodeIDs = append(nodeIDs, dbtModelNodeID(a))
 		}
 	}
 	if len(models) > 0 {
@@ -367,7 +370,7 @@ func (w *projectWarehouse) snowflakeCost(ctx context.Context, res *changes.Resul
 			return nil, errNoSnowflakeCostWarehouse
 		}
 		progress(cost.Progress{Phase: "Reading Snowflake Query History"})
-		h, err := sf.DbtRuns(ctx, time.Now().AddDate(0, 0, -snowflake.HistoryDays), target)
+		h, err := sf.DbtRunsFor(ctx, time.Now().AddDate(0, 0, -snowflake.HistoryDays), target, nodeIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -378,9 +381,22 @@ func (w *projectWarehouse) snowflakeCost(ctx context.Context, res *changes.Resul
 		for id, r := range h.Runs {
 			byNode[nodeKey(id)] = r
 		}
+		unfilteredByID := pastUnfiltered(ctx, g, models, func(ctx context.Context, t project.Target) []string {
+			fields, err := sf.ClusterBy(ctx, t.Database, t.Schema, t.Name)
+			if err != nil {
+				return nil
+			}
+			return clusterKeyColumns(fields)
+		})
 		for i, a := range models {
 			c := changed[i]
-			pr := cost.PastRun{Name: string(c.ID), FileName: c.FileName, Type: c.Type, New: slices.Contains(c.Reasons, changes.ReasonNew)}
+			pr := cost.PastRun{
+				Name:       string(c.ID),
+				FileName:   c.FileName,
+				Type:       c.Type,
+				New:        slices.Contains(c.Reasons, changes.ReasonNew) && c.RenamedFrom == "",
+				Unfiltered: unfilteredByID[c.ID],
+			}
 			n := a.DbtName
 			key := n.Package + "." + n.Name
 			if n.Version != "" {
@@ -389,6 +405,8 @@ func (w *projectWarehouse) snowflakeCost(ctx context.Context, res *changes.Resul
 			if r, ok := byNode[key]; ok {
 				pr.Ran, pr.Started, pr.Duration, pr.ReadBytes, pr.Warehouse, pr.QueryID =
 					true, r.Started, r.Duration, r.ReadBytes, r.Warehouse, r.QueryID
+				pr.WarehouseSize, pr.Credits, pr.StatementCount = r.WarehouseSize, r.Credits, r.StatementCount
+				pr.RunCount, pr.RunsCapped, pr.MedianDuration, pr.MedianReadBytes = r.RunCount, h.Truncated, r.MedianDuration, r.MedianReadBytes
 			}
 			report.PastRuns.Runs = append(report.PastRuns.Runs, pr)
 		}
@@ -443,8 +461,9 @@ func (w *projectWarehouse) snowflakeImpact(ctx context.Context, g *project.Graph
 			checked.Add(1)
 			return c.Check(ctx, project, location, sql)
 		},
-		Readers:  readers,
-		OnDemand: true,
+		Readers:   readers,
+		OnDemand:  true,
+		Warehouse: project.Snowflake,
 	}
 	used = func() *impact.WarehouseUse {
 		if checked.Load() == 0 && !readers.Used() {
@@ -466,14 +485,17 @@ func (w *projectWarehouse) databricksCost(ctx context.Context, res *changes.Resu
 		PastRuns: &cost.PastRuns{Source: "Databricks Query History", Target: target, Days: databricks.HistoryDays, Runs: []cost.PastRun{}}}
 	var models []*project.Action
 	var changed []changes.Changed
+	var nodeIDs []string
 	for _, c := range res.Changed {
 		if a := g.Actions[c.ID]; a != nil && a.DbtName != nil && builds(a) {
 			models, changed = append(models, a), append(changed, c)
+			nodeIDs = append(nodeIDs, dbtModelNodeID(a))
 		}
 	}
 	if len(models) > 0 {
+		dbx := w.databricks()
 		progress(cost.Progress{Phase: "Reading Databricks Query History"})
-		h, err := w.databricks().DbtRuns(ctx, time.Now().AddDate(0, 0, -databricks.HistoryDays), target)
+		h, err := dbx.DbtRunsFor(ctx, time.Now().AddDate(0, 0, -databricks.HistoryDays), target, nodeIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -482,9 +504,22 @@ func (w *projectWarehouse) databricksCost(ctx context.Context, res *changes.Resu
 		for id, r := range h.Runs {
 			byNode[nodeKey(id)] = r
 		}
+		unfilteredByID := pastUnfiltered(ctx, g, models, func(ctx context.Context, t project.Target) []string {
+			cols, err := dbx.PartitionAndClusterColumns(ctx, t.Database, t.Schema, t.Name)
+			if err != nil {
+				return nil
+			}
+			return cols
+		})
 		for i, a := range models {
 			c := changed[i]
-			pr := cost.PastRun{Name: string(c.ID), FileName: c.FileName, Type: c.Type, New: slices.Contains(c.Reasons, changes.ReasonNew)}
+			pr := cost.PastRun{
+				Name:       string(c.ID),
+				FileName:   c.FileName,
+				Type:       c.Type,
+				New:        slices.Contains(c.Reasons, changes.ReasonNew) && c.RenamedFrom == "",
+				Unfiltered: unfilteredByID[c.ID],
+			}
 			n := a.DbtName
 			key := n.Package + "." + n.Name
 			if n.Version != "" {
@@ -493,6 +528,8 @@ func (w *projectWarehouse) databricksCost(ctx context.Context, res *changes.Resu
 			if r, ok := byNode[key]; ok {
 				pr.Ran, pr.Started, pr.Duration, pr.ReadBytes, pr.ReadRows, pr.Warehouse, pr.QueryID =
 					true, r.Started, r.Duration, r.ReadBytes, r.ReadRows, r.Warehouse, r.QueryID
+				pr.WarehouseSize, pr.Serverless, pr.StatementCount = r.WarehouseSize, r.Serverless, r.StatementCount
+				pr.RunCount, pr.RunsCapped, pr.MedianDuration, pr.MedianReadBytes = r.RunCount, h.Sampled || h.Truncated, r.MedianDuration, r.MedianReadBytes
 			}
 			report.PastRuns.Runs = append(report.PastRuns.Runs, pr)
 		}
@@ -519,6 +556,145 @@ func builds(a *project.Action) bool {
 func nodeKey(id string) string {
 	_, rest, _ := strings.Cut(id, ".")
 	return rest
+}
+
+// dbtModelNodeID returns a's dbt node_id as dbt's query comment writes it.
+func dbtModelNodeID(a *project.Action) string {
+	if a == nil || a.DbtName == nil {
+		return ""
+	}
+	kind := "model"
+	if a.Kind == project.KindSnapshot {
+		kind = "snapshot"
+	}
+	id := kind + "." + a.DbtName.Package + "." + a.DbtName.Name
+	if a.DbtName.Version != "" {
+		id += ".v" + a.DbtName.Version
+	}
+	return id
+}
+
+var (
+	bareIdentRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	funcCallRE  = regexp.MustCompile(`(?i)^[A-Za-z_][A-Za-z0-9_]*\((.*)\)$`)
+)
+
+// clusterKeyColumns extracts bare column names from Snowflake CLUSTER BY
+// expressions (e.g. "EVENT_DATE", "TO_DATE(EVENT_TS)", "DATE_TRUNC('DAY', TS)",
+// "SUBSTRING(USER_ID, 1, 5)").
+func clusterKeyColumns(fields []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		col := extractClusterCol(f)
+		if col != "" && !seen[strings.ToLower(col)] {
+			seen[strings.ToLower(col)] = true
+			out = append(out, col)
+		}
+	}
+	return out
+}
+
+func extractClusterCol(expr string) string {
+	expr = strings.TrimSpace(expr)
+	unquoted := strings.Trim(expr, `"`)
+	if bareIdentRE.MatchString(unquoted) {
+		return unquoted
+	}
+	m := funcCallRE.FindStringSubmatch(expr)
+	if m == nil {
+		return ""
+	}
+	for _, arg := range splitTopLevelArgs(m[1]) {
+		arg = strings.TrimSpace(arg)
+		if arg == "" || strings.HasPrefix(arg, "'") {
+			continue
+		}
+		if col := extractClusterCol(arg); col != "" {
+			return col
+		}
+	}
+	return ""
+}
+
+func splitTopLevelArgs(s string) []string {
+	var out []string
+	depth := 0
+	inSingle := false
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\'':
+			if inSingle && i+1 < len(s) && s[i+1] == '\'' {
+				i++
+				continue
+			}
+			inSingle = !inSingle
+		case '(':
+			if !inSingle {
+				depth++
+			}
+		case ')':
+			if !inSingle && depth > 0 {
+				depth--
+			}
+		case ',':
+			if !inSingle && depth == 0 {
+				out = append(out, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	out = append(out, s[start:])
+	return out
+}
+
+// pastUnfiltered statically checks each changed model's compiled SQL against
+// the partition/clustering columns of its direct upstream dependencies (free
+// metadata-only checks; wakes no SQL or virtual warehouse).
+func pastUnfiltered(ctx context.Context, g *project.Graph, models []*project.Action, keyCols func(context.Context, project.Target) []string) map[project.ActionID][]cost.Unfiltered {
+	if g == nil || keyCols == nil || len(models) == 0 {
+		return nil
+	}
+	cache := map[string][]string{}
+	lookup := func(t project.Target) []string {
+		key := string(t.ID())
+		if cols, ok := cache[key]; ok {
+			return cols
+		}
+		cols := keyCols(ctx, t)
+		cache[key] = cols
+		return cols
+	}
+	out := map[project.ActionID][]cost.Unfiltered{}
+	for _, a := range models {
+		sql := cmp.Or(a.IncrementalQuery, a.Query)
+		if strings.TrimSpace(sql) == "" {
+			continue
+		}
+		stripped := project.StripSQL(sql, project.StripOptions{BlankSingleStrings: true})
+		var warns []cost.Unfiltered
+		for _, dep := range g.Dependencies(a.ID) {
+			if dep == nil || dep.Target.Name == "" {
+				continue
+			}
+			for _, col := range lookup(dep.Target) {
+				if !mentionsIdent(stripped, col) {
+					warns = append(warns, cost.Unfiltered{Table: string(dep.Target.ID()), Column: col})
+				}
+			}
+		}
+		if len(warns) > 0 {
+			out[a.ID] = warns
+		}
+	}
+	return out
+}
+
+func mentionsIdent(sql, ident string) bool {
+	re := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(ident) + `($|[^A-Za-z0-9_])`)
+	return re.MatchString(sql)
 }
 
 // historyWhy says why Query History has no run of any model, when it
@@ -567,8 +743,9 @@ func (w *projectWarehouse) databricksImpact(ctx context.Context, g *project.Grap
 			checked.Add(1)
 			return c.Check(ctx, project, location, sql)
 		},
-		Readers:  databricks.NewReaders(c, g, toProd),
-		OnDemand: true,
+		Readers:   databricks.NewReaders(c, g, toProd),
+		OnDemand:  true,
+		Warehouse: project.Databricks,
 	}
 	used = func() *impact.WarehouseUse {
 		if checked.Load() == 0 {

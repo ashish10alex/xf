@@ -85,7 +85,7 @@ Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the 
 - **Query cost** (`C`, `xf cost`, and `xf check`'s cost) is each changed model's last run, not an estimate: Databricks bills warehouse time, not bytes scanned, so there is nothing to estimate before a run.
   xf reads Query History, which wakes no warehouse, back 30 days, and keeps each model's latest build whose dbt query comment names it and the prod target (`dbtProdTarget`, else the target xf compiles with, which the report warns may be dev).
   It shows when the run started, how long it took, the bytes and rows it read (Query History counts no rows a table build writes), and the SQL warehouse it ran on, with no dollar figure; a model with no run says so.
-  The run is of the model as it was then, not as the branch has it; `--fail-over` doesn't apply.
+  The run is of the model as it was then, not as the branch has it; `--fail-over`, `--fail-over-delta` and `--fail-on-unestimated` don't apply. `--fail-on-unfiltered` does, on a changed model whose SQL reads a partitioned or clustered table without naming its key columns.
   dbt's query comment is on by default: a project that turns `query-comment` off gets no runs, and the report says why.
 - Defer to prod is hidden.
 - The TUI shows browsing, lineage, compiles and runs, and says on its status line that dry runs, columns and cost are off.
@@ -117,6 +117,7 @@ Browsing, lineage, compiles and runs work as they do on BigQuery; what asks the 
 - **Column impact** (`xf impact`, `xf check`, and `I` in xf web) checks the changed models on the virtual warehouse, compares them with their built tables, and reads downstream column and table lineage from `SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY` (Enterprise Edition) and `SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES` (all editions).
 - **`xf check`'s preflight** probes the Snowflake account and virtual warehouse via `SHOW WAREHOUSES` in Cloud Services (waking nothing).
 - **Query cost** (`C`, `xf cost`, and `xf check`'s cost) is each changed model's latest run with the prod target from `SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY` (30 days, falling back to `INFORMATION_SCHEMA.QUERY_HISTORY` for 7 days if `ACCOUNT_USAGE` is not granted), matched by dbt's JSON query comment.
+  As on Databricks, `--fail-over`, `--fail-over-delta` and `--fail-on-unestimated` don't apply; `--fail-on-unfiltered` does, on a changed model whose SQL reads a clustered table without naming its clustering keys.
 - Defer to prod is hidden, and the TUI (in maintenance mode) hides dry runs, columns and cost with a status line note.
 
 Where xf connects:

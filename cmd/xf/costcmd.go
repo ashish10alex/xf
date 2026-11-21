@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -40,14 +41,17 @@ func runCost(args []string) int {
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
 		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
-		config.KeyDefaultBranch, config.KeyProdCompilerOptions)
+		config.KeyDefaultBranch, config.KeyProdCompilerOptions, config.KeyUSDPerTiB)
 	pushed := fs.Bool("pushed", false, "estimate the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOver := fs.String("fail-over", "", "exit 1 when the changed actions scan more than this `size` between them, e.g. 100GB (units are binary: 1 GB is 2^30 bytes)")
-	usdPerTiB := fs.Float64("usd-per-tib", warehouse.OnDemandUSDPerTiB, "the `price` in dollars of a TiB scanned")
+	failOverDelta := fs.String("fail-over-delta", "", "exit 1 when the branch adds more than this `size` of scan per run compared to the merge-base, e.g. 50GB (units are binary)")
+	failOnUnfiltered := fs.Bool("fail-on-unfiltered", false, "exit 1 when any estimated query reads a partitioned table without naming its partition column")
+	failOnUnestimated := fs.Bool("fail-on-unestimated", false, "exit 1 when any changed action could not be estimated")
 	output := fs.String("output", "", "also write the report to `path`: as Markdown, for a pull request comment, or as JSON with --json")
 	fs.StringVar(output, "o", "", "")
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of text")
 	color := fs.String("color", "auto", "colour the text: `when` is auto (on a terminal, unless $NO_COLOR is set), always or never")
+	web := fs.Bool("web", false, "open xf web on its Checks page instead, where the check runs as C runs it there")
 	attention := fs.Bool("attention", false, "list only the actions that need a look, in the text and the --output Markdown: not estimated, missing a partition filter, or scanning 1 GiB or more than at the merge-base; the total still counts every action")
 	commandUsage(fs, "xf cost [flags]", `Prints what the actions this branch changes would scan in BigQuery, and what
 that costs on demand: every changed action with a query is dry run, as it is
@@ -58,11 +62,13 @@ marked. An action BigQuery gives no estimate for is listed and left out of
 the total. Dry runs are free and run nothing. A dbt project on Databricks,
 which bills warehouse time rather than bytes, has nothing to estimate: it
 gets each changed model's latest run with the prod target instead, from
-Query History, found by dbt's query comment, and --fail-over doesn't apply.
+Query History, found by dbt's query comment, and cost gates don't apply.
 It always checks afresh, and
-shares the work with xf through xf serve. Progress goes to stderr. Exits 0, 1
-with --fail-over when the total is over the limit, or 2 when the check could
-not be made.`)
+shares the work with xf through xf serve. Progress goes to stderr. With --web
+it opens xf web on the query cost tab of its Checks page instead, where y
+copies the Markdown, and runs until ctrl+c as xf web does. Exits 0, 1 when a
+cost gate trips (--fail-over, --fail-over-delta, --fail-on-unfiltered or
+--fail-on-unestimated), or 2 when the check could not be made.`)
 	help, err := parseArgs(fs, args)
 	if help {
 		return costOK
@@ -70,12 +76,15 @@ not be made.`)
 	if err == nil && fs.NArg() > 0 {
 		err = fmt.Errorf("unexpected arguments: %v (see xf cost --help)", fs.Args())
 	}
-	opts := cost.Options{USDPerTiB: *usdPerTiB, Attention: *attention}
+	opts := cost.Options{Attention: *attention, FailOnUnfiltered: *failOnUnfiltered, FailOnUnestimated: *failOnUnestimated}
+	if err == nil {
+		err = sf.checkFlag(config.KeyUSDPerTiB)
+	}
+	if err == nil && *web && (*pushed || *failOver != "" || *failOverDelta != "" || *failOnUnfiltered || *failOnUnestimated || *output != "" || *asJSON || *attention) {
+		err = errors.New("--web can't be used with --pushed, --fail-over, --fail-over-delta, --fail-on-unfiltered, --fail-on-unestimated, --output, --json or --attention")
+	}
 	if err == nil && *attention && *asJSON {
 		err = errors.New("--attention can't be used with --json, which has every action")
-	}
-	if err == nil && *usdPerTiB <= 0 {
-		err = fmt.Errorf("--usd-per-tib must be more than 0, not %v", *usdPerTiB)
 	}
 	if err == nil {
 		opts.Color, err = useColor(*color, os.Stdout, os.Getenv)
@@ -86,6 +95,19 @@ not be made.`)
 		}
 		if err != nil {
 			err = fmt.Errorf("--fail-over: %w", err)
+		}
+	}
+	if err == nil && *failOverDelta != "" {
+		if opts.DeltaThreshold, err = cost.ParseSize(*failOverDelta); err == nil && opts.DeltaThreshold <= 0 {
+			err = errors.New("must be more than 0")
+		}
+		if err != nil {
+			err = fmt.Errorf("--fail-over-delta: %w", err)
+		}
+	}
+	if err == nil && *web {
+		if err = startWeb(pf, sf, webStart{cmdName: "xf cost", check: "cost"}); err == nil {
+			return costOK
 		}
 	}
 	if err == nil {
@@ -106,6 +128,9 @@ func checkCost(pf projectFlags, sf *settingFlags, pushed bool, opts cost.Options
 	settings, err := sf.load(root)
 	if err != nil {
 		return 0, err
+	}
+	if settings.USDPerTiB != "" {
+		opts.USDPerTiB, _ = strconv.ParseFloat(settings.USDPerTiB, 64)
 	}
 	for _, w := range settings.Warnings {
 		fmt.Fprintln(os.Stderr, "xf cost:", w)
@@ -161,15 +186,21 @@ func checkCost(pf projectFlags, sf *settingFlags, pushed bool, opts cost.Options
 		}
 	}
 
-	if n := report.Unestimated(); n == 1 {
-		fmt.Fprintln(os.Stderr, "xf cost: 1 action could not be estimated; it is not in the total, and --fail-over doesn't count it")
-	} else if n > 1 {
-		fmt.Fprintf(os.Stderr, "xf cost: %d actions could not be estimated; they are not in the total, and --fail-over doesn't count them\n", n)
+	if !opts.FailOnUnestimated {
+		if n := report.Unestimated(); n == 1 {
+			fmt.Fprintln(os.Stderr, "xf cost: 1 action could not be estimated; it is not in the total, and --fail-over doesn't count it")
+		} else if n > 1 {
+			fmt.Fprintf(os.Stderr, "xf cost: %d actions could not be estimated; they are not in the total, and --fail-over doesn't count them\n", n)
+		}
 	}
 	if report.BaseError != "" {
-		fmt.Fprintln(os.Stderr, "xf cost: no change against the merge-base is shown, as it could not be compiled:", report.BaseError)
+		suffix := ""
+		if opts.DeltaThreshold > 0 {
+			suffix = " (--fail-over-delta counted the total as growth)"
+		}
+		fmt.Fprintf(os.Stderr, "xf cost: no change against the merge-base is shown, as it could not be compiled: %s%s\n", report.BaseError, suffix)
 	}
-	if report.Exceeds(opts.Threshold) {
+	if report.GateTripped(opts) {
 		return costFailOver, nil
 	}
 	return costOK, nil
@@ -240,6 +271,129 @@ func partitionLookup(bq func(context.Context) (warehouse.Warehouse, error)) func
 
 type dryRunFunc = func(ctx context.Context, project, location, sql string) (*warehouse.Check, error)
 
+// worktreeShareTTL keeps a finished prod worktree compile reusable only briefly
+// so concurrent ColumnImpact and QueryCost share one compile while subsequent
+// refreshes (e.g. after editing profiles.yml or workflow settings) always
+// recompile fresh.
+const worktreeShareTTL = 5 * time.Second
+
+// wtCompile coalesces concurrent working-tree compiles for the same signature
+// (e.g. when xf check runs ColumnImpact and QueryCost in parallel) and shares
+// the finished graph briefly before expiring.
+type wtCompile struct {
+	sig        string
+	done       chan struct{}
+	finishedAt time.Time
+	graph      *project.Graph
+	err        error
+}
+
+func (w *wtCompile) fresh(sig string, now time.Time) bool {
+	if w == nil || w.sig != sig {
+		return false
+	}
+	select {
+	case <-w.done:
+		return !w.finishedAt.IsZero() && now.Sub(w.finishedAt) < worktreeShareTTL
+	default:
+		return true
+	}
+}
+
+// optionSources keeps one cached changes.Source per Dataform compiler-options
+// string, so xf impact and xf cost share the same in-memory and disk cache
+// when compiling commits (e.g. merge-base or --pushed HeadSHA) and working-tree
+// prod compiles with options.
+type optionSources struct {
+	bin, root, cacheDir string
+	logger              *log.Logger
+	compileWT           func(ctx context.Context, args []string) (*project.Graph, error)
+	mu                  sync.Mutex
+	byOpts              map[string]*changes.Source
+	wt                  map[string]*wtCompile
+}
+
+func newOptionSources(bin, root string, logger *log.Logger) *optionSources {
+	return &optionSources{
+		bin:      bin,
+		root:     root,
+		cacheDir: costCacheDir(logger),
+		logger:   logger,
+		byOpts:   map[string]*changes.Source{},
+		wt:       map[string]*wtCompile{},
+	}
+}
+
+func (o *optionSources) worktree(ctx context.Context, options string, args []string, sig string) (*project.Graph, error) {
+	o.mu.Lock()
+	if wc := o.wt[options]; wc.fresh(sig, time.Now()) {
+		o.mu.Unlock()
+		select {
+		case <-wc.done:
+			return wc.graph, wc.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	wc := &wtCompile{sig: sig, done: make(chan struct{})}
+	o.wt[options] = wc
+	compileFn := o.compileWT
+	if compileFn == nil {
+		bin, root := o.bin, o.root
+		compileFn = func(ctx context.Context, args []string) (*project.Graph, error) {
+			return dataform.CompileWith(ctx, bin, root, args)
+		}
+	}
+	o.mu.Unlock()
+
+	go func() {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), changes.DefaultCompileTimeout)
+		defer cancel()
+		g, err := compileFn(cctx, args)
+		wc.graph, wc.err = g, err
+		if err != nil || (g != nil && g.HasErrors()) {
+			o.mu.Lock()
+			if o.wt[options] == wc {
+				delete(o.wt, options)
+			}
+			o.mu.Unlock()
+		} else {
+			o.mu.Lock()
+			wc.finishedAt = time.Now()
+			o.mu.Unlock()
+		}
+		close(wc.done)
+	}()
+
+	select {
+	case <-wc.done:
+		return wc.graph, wc.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (o *optionSources) get(key, options string, args []string) *changes.Source {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if s := o.byOpts[options]; s != nil {
+		return s
+	}
+	s := &changes.Source{
+		Root:     o.root,
+		Key:      o.bin + "\n" + options,
+		CacheDir: o.cacheDir,
+		Compile: func(ctx context.Context, dir string) (*project.Graph, error) {
+			if o.logger != nil {
+				o.logger.Printf("compiling a snapshot in %s with %s", dir, options)
+			}
+			return dataform.CompileWith(ctx, o.bin, dir, args)
+		},
+	}
+	o.byOpts[options] = s
+	return s
+}
+
 // dataformCost checks query cost for xf serve in a Dataform project: dry
 // runs through dryRun (the engine's cached ones) and tables' partitioning
 // with the client bq makes. The merge-base is the one plain compiled to
@@ -248,26 +402,9 @@ type dryRunFunc = func(ctx context.Context, project, location, sql string) (*war
 // those compiles are what is dry run, so the estimates are of the tables
 // prod runs read. With defer to prod on, a table the branch adds that prod
 // doesn't have is read from dev when lookups find it built there.
-func dataformCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun dryRunFunc, b dataform.Backend, root string, plain *changes.Source, lookups *deferral.Lookups, logger *log.Logger) engine.CostFunc {
-	var mu sync.Mutex
-	prodSources := map[string]*changes.Source{}
-	prodSource := func(options string, args []string) *changes.Source {
-		mu.Lock()
-		defer mu.Unlock()
-		if s := prodSources[options]; s != nil {
-			return s
-		}
-		s := &changes.Source{
-			Root:     root,
-			Key:      b.Bin + "\n" + options,
-			CacheDir: costCacheDir(logger),
-			Compile: func(ctx context.Context, dir string) (*project.Graph, error) {
-				logger.Printf("compiling a snapshot in %s with %s", dir, config.KeyProdCompilerOptions)
-				return dataform.CompileWith(ctx, b.Bin, dir, args)
-			},
-		}
-		prodSources[options] = s
-		return s
+func dataformCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun dryRunFunc, b dataform.Backend, root string, plain *changes.Source, opts *optionSources, lookups *deferral.Lookups, logger *log.Logger) engine.CostFunc {
+	if opts == nil {
+		opts = newOptionSources(b.Bin, root, logger)
 	}
 	parse := func(data []byte, err error) (*project.Graph, error) {
 		if err != nil {
@@ -292,13 +429,13 @@ func dataformCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun 
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", config.KeyProdCompilerOptions, err)
 		}
-		src := prodSource(req.ProdCompilerOptions, args)
+		src := opts.get(config.KeyProdCompilerOptions, req.ProdCompilerOptions, args)
 		progress(cost.Progress{Phase: "Compiling with " + config.KeyProdCompilerOptions})
 		var prod *project.Graph
 		if res.Head == changes.HeadPushed {
 			prod, err = parse(src.Commit(ctx, res.HeadSHA))
 		} else {
-			prod, err = dataform.CompileWith(ctx, b.Bin, root, args)
+			prod, err = opts.worktree(ctx, req.ProdCompilerOptions, args, impact.Signature(res, g))
 		}
 		if err != nil {
 			return nil, fmt.Errorf("compiling with %s: %w", config.KeyProdCompilerOptions, err)
@@ -306,8 +443,9 @@ func dataformCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun 
 		if prod.HasErrors() {
 			return nil, fmt.Errorf("compiling with %s %q: %s", config.KeyProdCompilerOptions, req.ProdCompilerOptions, prod.Errors[0].Message)
 		}
-		// Each action's ID in the prod compile, by its ID in xf's.
-		prodID := impact.ProdTargetFunc(impact.DevToProd(prod, g, nil))
+		// Each action's ID in the prod compile, by its ID in xf's (deleted
+		// actions included, so a renamed action pairs with its merge-base).
+		prodID := impact.ProdTargetFunc(impact.DevToProd(prod, g, res.Deleted))
 		deps.Base = func(ctx context.Context) (*project.Graph, error) { return parse(src.Commit(ctx, res.MergeBase)) }
 		head := cost.Head{Graph: prod, Compiled: config.KeyProdCompilerOptions,
 			ID: func(id project.ActionID) project.ActionID { return project.ActionID(prodID(string(id))) }}
@@ -364,7 +502,7 @@ func dbtCost(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engin
 			return cost.Run(ctx, res, cost.Head{Graph: g}, deps, progress)
 		}
 		progress(cost.Progress{Phase: "Compiling with " + config.KeyDbtProdTarget})
-		prod, err := targets.worktree(ctx, target)
+		prod, err := targets.worktree(ctx, target, impact.Signature(res, g))
 		if err != nil {
 			return nil, err
 		}

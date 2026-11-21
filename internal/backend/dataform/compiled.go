@@ -30,6 +30,7 @@ type compiledAction struct {
 	NotebookContents   string           `json:"notebookContents"`
 	GraphBody          string           `json:"graphBody"`
 	UniqueKey          []string         `json:"uniqueKey"`
+	OnSchemaChange     string           `json:"onSchemaChange"`
 	// Description is a property graph's; other actions keep theirs in
 	// ActionDescriptor.
 	Description string `json:"description"`

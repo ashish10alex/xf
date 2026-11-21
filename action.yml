@@ -19,11 +19,23 @@ inputs:
     description: Post the report on the pull request as one comment, edited on each push, when there is something to say. Needs pull-requests write permission.
     default: "true"
   fail-on:
-    description: Fail at this column change severity or worse, critical or warning. Off by default.
+    description: Fail at this column change severity or worse, critical, warning or unknown. Off by default.
     default: ""
+  fail-on-unchecked:
+    description: Fail when any changed model failed to check (dry run or schema error; ignores operations/scripts and tables not yet built). Off by default.
+    default: "false"
   fail-over:
     description: Fail when the changed actions scan more than this size between them, such as 100GB. Off by default.
     default: ""
+  fail-over-delta:
+    description: Fail when the branch adds more than this size of scan per run compared to the merge-base, such as 50GB. Off by default.
+    default: ""
+  fail-on-unfiltered:
+    description: Fail when any estimated query reads a partitioned table without naming its partition column. Off by default.
+    default: "false"
+  fail-on-unestimated:
+    description: Fail when any changed action could not be estimated. Off by default.
+    default: "false"
   quiet-under:
     description: A run that grows by less than this size isn't worth a comment on cost alone.
     default: "1GiB"
@@ -119,7 +131,11 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         COMMENT: ${{ inputs.comment }}
         FAIL_ON: ${{ inputs.fail-on }}
+        FAIL_ON_UNCHECKED: ${{ inputs.fail-on-unchecked }}
         FAIL_OVER: ${{ inputs.fail-over }}
+        FAIL_OVER_DELTA: ${{ inputs.fail-over-delta }}
+        FAIL_ON_UNFILTERED: ${{ inputs.fail-on-unfiltered }}
+        FAIL_ON_UNESTIMATED: ${{ inputs.fail-on-unestimated }}
         QUIET_UNDER: ${{ inputs.quiet-under }}
         BASE: ${{ inputs.default-branch || github.base_ref }}
         ARGS: ${{ inputs.args }}
@@ -133,9 +149,14 @@ runs:
           git fetch --no-tags --quiet origin "+refs/heads/$BASE:refs/remotes/origin/$BASE" || true
           flags+=(--default-branch "$BASE")
         fi
-        [ "$COMMENT" = true ] && flags+=(--comment)
+        is_true() { case "$1" in true|TRUE|True|1) return 0 ;; *) return 1 ;; esac; }
+        is_true "$COMMENT" && flags+=(--comment)
         [ -n "$FAIL_ON" ] && flags+=(--fail-on "$FAIL_ON")
+        is_true "$FAIL_ON_UNCHECKED" && flags+=(--fail-on-unchecked)
         [ -n "$FAIL_OVER" ] && flags+=(--fail-over "$FAIL_OVER")
+        [ -n "$FAIL_OVER_DELTA" ] && flags+=(--fail-over-delta "$FAIL_OVER_DELTA")
+        is_true "$FAIL_ON_UNFILTERED" && flags+=(--fail-on-unfiltered)
+        is_true "$FAIL_ON_UNESTIMATED" && flags+=(--fail-on-unestimated)
         # ARGS is split on spaces, as a command line would be.
         xf check "${flags[@]}" $ARGS
         code=$?

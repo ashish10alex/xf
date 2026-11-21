@@ -24,11 +24,13 @@ beforeEach(() => {
   S.boot = { ...(S.boot || {}), defaultBranch: 'main' };
   S.caps.impact = true;
   S.caps.cost = true;
+  S.caps.warehouse = '';
   S.flags.api = false;
   S.overlay = null;
   S.checks = null;
   S.state = { ...(S.state || {}), impactSig: 'new' };
   S.impact = null;
+  S.cost = null;
 });
 
 test('opening a report the branch moved on from checks afresh', async () => {
@@ -77,4 +79,39 @@ test('no recheck under a prompt or while one runs', () => {
   S.impact.loading = true;
   recheckShowing();
   assert.equal(asked.length, 0);
+});
+
+test('stale Snowflake cost/impact and Databricks impact do not auto-refresh on open', async () => {
+  for (const [warehouse, which] of [['snowflake', 'cost'], ['snowflake', 'impact'], ['databricks', 'impact']]) {
+    asked = [];
+    S.caps.warehouse = warehouse;
+    S[which] = { report: report('old'), token: '1', api: false, base: S.boot.defaultBranch };
+    await openCheck(which);
+    await settle();
+    assert.equal(asked.length, 0, `${warehouse} ${which} should not auto-refresh local stale report`);
+
+    // Server returning a kept stale report on first load must not trigger a refresh call either.
+    S[which] = null;
+    answer = (b) => (b.refresh ? report('new') : report('old', { stale: true }));
+    await openCheck(which);
+    await settle();
+    assert.deepEqual(asked.map((a) => a.refresh), [false], `${warehouse} ${which} should keep server stale report`);
+    assert.equal(S[which].report.signature, 'old');
+
+    // Explicit refresh (c) still refreshes.
+    asked = [];
+    await openCheck(which, true);
+    await settle();
+    assert.deepEqual(asked.map((a) => a.refresh), [true]);
+    assert.equal(S[which].report.signature, 'new');
+  }
+
+  // Databricks cost (Query History, no warehouse) still auto-refreshes when stale.
+  asked = [];
+  S.caps.warehouse = 'databricks';
+  S.cost = { report: report('old'), token: '1', api: false, base: S.boot.defaultBranch };
+  answer = () => report('new');
+  await openCheck('cost');
+  await settle();
+  assert.deepEqual(asked.map((a) => a.refresh), [true]);
 });

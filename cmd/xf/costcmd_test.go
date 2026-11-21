@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/ashish10alex/xf/internal/cost"
+	"github.com/ashish10alex/xf/internal/project"
 )
 
 func TestCostRefusesBadFlagsBeforeLookingForAProject(t *testing.T) {
@@ -13,8 +16,17 @@ func TestCostRefusesBadFlagsBeforeLookingForAProject(t *testing.T) {
 	for _, args := range [][]string{
 		{"--fail-over", "lots"},
 		{"--fail-over", "0"},
+		{"--fail-over-delta", "lots"},
+		{"--fail-over-delta", "0"},
 		{"--usd-per-tib", "0"},
 		{"--usd-per-tib", "cheap"},
+		{"--usd-per-tib", ""},
+		{"--web", "--fail-over", "10GB"},
+		{"--web", "--fail-over-delta", "10GB"},
+		{"--web", "--fail-on-unfiltered"},
+		{"--web", "--fail-on-unestimated"},
+		{"--web", "--json"},
+		{"--web", "--pushed"},
 		{"--color", "sometimes"},
 		{"--no-such-flag"},
 		{"stray"},
@@ -73,5 +85,40 @@ func TestWriteCostReport(t *testing.T) {
 		if got, err := os.ReadFile(path); err != nil || string(got) != string(tc.want()) {
 			t.Errorf("%s (json %v) got %q, %v; want %q", tc.name, tc.asJSON, got, err, tc.want())
 		}
+	}
+}
+
+func TestClusterKeyColumnsAndPastUnfiltered(t *testing.T) {
+	if got := clusterKeyColumns([]string{"EVENT_DATE", "TO_DATE(EVENT_TS)", `DATE_TRUNC('DAY', CREATED_AT)`, `SUBSTRING("USER_ID", 1, 5)`, "TO_DATE(EVENT_DATE)"}); !slices.Equal(got, []string{"EVENT_DATE", "EVENT_TS", "CREATED_AT", "USER_ID"}) {
+		t.Errorf("clusterKeyColumns = %v", got)
+	}
+	raw := &project.Action{ID: "shop.raw.events", Target: project.Target{Database: "shop", Schema: "raw", Name: "events"}, Kind: project.KindDeclaration}
+	bad := &project.Action{
+		ID: "shop.marts.bad", Target: project.Target{Database: "shop", Schema: "marts", Name: "bad"}, Kind: project.KindTable,
+		DependencyTargets: []project.Target{raw.Target},
+		Query:             "SELECT 'event_date' AS lbl -- event_date\nFROM shop.raw.events",
+	}
+	good := &project.Action{
+		ID: "shop.marts.good", Target: project.Target{Database: "shop", Schema: "marts", Name: "good"}, Kind: project.KindTable,
+		DependencyTargets: []project.Target{raw.Target},
+		Query:             "SELECT id FROM shop.raw.events WHERE event_date >= current_date()",
+	}
+	g := project.NewGraph([]*project.Action{raw, bad, good})
+	lookups := 0
+	got := pastUnfiltered(context.Background(), g, []*project.Action{bad, good}, func(_ context.Context, t project.Target) []string {
+		lookups++
+		if t.Name == "events" {
+			return []string{"event_date"}
+		}
+		return nil
+	})
+	if lookups != 1 {
+		t.Errorf("lookups = %d, want 1 (cached per upstream table)", lookups)
+	}
+	if len(got[bad.ID]) != 1 || got[bad.ID][0].Column != "event_date" {
+		t.Errorf("bad unfiltered = %+v, want event_date warning", got[bad.ID])
+	}
+	if len(got[good.ID]) != 0 {
+		t.Errorf("good unfiltered = %+v, want none", got[good.ID])
 	}
 }

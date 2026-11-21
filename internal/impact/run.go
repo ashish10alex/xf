@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ashish10alex/xf/internal/changes"
@@ -67,17 +68,28 @@ type Candidate struct {
 	// merge-base, when Dev drops or retypes a column of Prod and it could
 	// be dry run: a change it makes too is the base branch's.
 	Base []warehouse.Column
-	// BaseOwnRun and BaseUniqueKey are OwnRun and UniqueKey of the action
-	// at the merge-base, read with Base.
-	BaseOwnRun    bool
-	BaseUniqueKey []string
+	// BaseOwnRun, BaseStrictSchema and BaseUniqueKey are OwnRun, StrictSchema
+	// and UniqueKey of the action at the merge-base, read with Base.
+	BaseOwnRun       bool
+	BaseStrictSchema bool
+	BaseUniqueKey    []string
 	// UncheckedReason says why the table couldn't be compared, e.g. its
 	// dry run failed.
 	UncheckedReason string
-	// OwnRun: the table is a Dataform incremental table, whose incremental
-	// run names every column its table has; UniqueKey is its uniqueKey.
-	OwnRun    bool
-	UniqueKey []string
+	// OwnRun: the table is an incremental table whose run fails when any
+	// existing column is dropped (Dataform default/IGNORE/FAIL/EXTEND, or
+	// dbt default/ignore/fail); StrictSchema is set when onSchemaChange=FAIL
+	// or on_schema_change=fail (retypes also break the run); UniqueKey is
+	// its uniqueKey / unique_key when its incremental strategy uses one.
+	OwnRun       bool
+	StrictSchema bool
+	UniqueKey    []string
+	// Dbt is set when the candidate is a dbt model.
+	Dbt bool
+	// Warehouse is the warehouse whose type system Prod and Dev use
+	// (project.BigQuery, project.Databricks, project.Snowflake; empty
+	// defaults to BigQuery).
+	Warehouse string
 }
 
 // target is the table c is compared with.
@@ -91,37 +103,76 @@ type Result struct {
 	Unchecked []Unchecked
 }
 
-// inBatches runs run on items, size at a time, one batch after another,
-// and stops starting batches once ctx is done.
+// inBatches runs run on every item with up to size workers running at once,
+// starting the next item as soon as a worker finishes instead of waiting for a
+// lockstep batch. Stops starting new items once ctx is done.
 func inBatches[T any](ctx context.Context, items []T, size int, run func(T)) {
-	for i := 0; i < len(items); i += size {
-		if ctx.Err() != nil {
-			return
-		}
-		var wg sync.WaitGroup
-		for _, it := range items[i:min(i+size, len(items))] {
-			wg.Go(func() { run(it) })
-		}
-		wg.Wait()
+	if len(items) == 0 {
+		return
 	}
+	workers := min(max(size, 1), len(items))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				i := int(next.Add(1) - 1)
+				if i >= len(items) {
+					return
+				}
+				run(items[i])
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// preloader is an optional interface implemented by warehouse lineage readers
+// (e.g. Snowflake ACCOUNT_USAGE) that can fetch lineage for many tables in a
+// small fixed number of batched queries instead of per-table lookups.
+type preloader interface {
+	Preload(ctx context.Context, tables []string)
 }
 
 // columnReaders is the direct readers of a column: its column links, then
-// readers Dataplex knows only at table level.
+// readers Dataplex knows only at table level. For a nested STRUCT field
+// ("user.address.zip"), if lineage has no nested-field links it falls back
+// to the top-level STRUCT column ("user") tagged lineage.Other.
 func columnReaders(ctx context.Context, src Readers, table, column string) ([]lineage.ColumnLink, error) {
+	var errs []error
+	addErr := func(err error) {
+		if err == nil {
+			return
+		}
+		for _, prev := range errs {
+			if prev.Error() == err.Error() {
+				return
+			}
+		}
+		errs = append(errs, err)
+	}
 	links, err := src.ColumnLinks(ctx, table, column)
-	if err != nil {
-		return nil, err
+	addErr(err)
+	if len(links) == 0 {
+		if top, _, nested := strings.Cut(column, "."); nested {
+			parentLinks, pErr := src.ColumnLinks(ctx, table, top)
+			addErr(pErr)
+			for _, l := range parentLinks {
+				l.DependencyType = lineage.Other
+				links = append(links, l)
+			}
+		}
 	}
 	linked := map[string]bool{}
 	for _, l := range links {
 		linked[l.Table] = true
 	}
-	only, err := src.TableOnlyReaders(ctx, table, linked)
-	if err != nil {
-		return nil, err
-	}
-	return append(links, only...), nil
+	only, onlyErr := src.TableOnlyReaders(ctx, table, linked)
+	addErr(onlyErr)
+	return append(links, only...), errors.Join(errs...)
 }
 
 // Build compares each candidate with prod and looks up who reads what it
@@ -131,6 +182,14 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 	var unchecked []Unchecked
 	var safe, atRisk, added []*Table
 	var lookups []func()
+	var preloadTables []string
+	preloadSeen := map[string]bool{}
+	addPreload := func(t string) {
+		if t != "" && !preloadSeen[t] {
+			preloadSeen[t] = true
+			preloadTables = append(preloadTables, t)
+		}
+	}
 	for _, c := range candidates {
 		if c.UncheckedReason != "" {
 			unchecked = append(unchecked, Unchecked{Table: c.Table, FileName: c.FileName, Reason: c.UncheckedReason, RenamedFrom: c.RenamedFrom, RenamedTo: c.RenamedTo})
@@ -141,6 +200,7 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 			continue
 		}
 		if c.Deleted {
+			addPreload(c.target())
 			entry := &Table{Table: c.Table, FileName: c.FileName, Type: c.Type, Deleted: true, Columns: []Column{}, RenamedTo: c.RenamedTo}
 			atRisk = append(atRisk, entry)
 			// As the compile names it, and as a reader that names its prod
@@ -169,17 +229,28 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 			}
 		}
 		entry := &Table{Table: c.Table, FileName: c.FileName, Type: c.Type, Columns: []Column{}, Added: only, New: c.New, Exists: c.New && !c.FromOld,
-			RenamedFrom: c.RenamedFrom, FromOld: c.FromOld}
+			RenamedFrom: c.RenamedFrom, FromOld: c.FromOld, Dbt: c.Dbt}
 		var onBase []ColumnImpact
 		if len(c.Base) > 0 {
-			onBase = DiffSchemas(c.Base, c.Prod)
+			onBase = DiffSchemasFor(c.Warehouse, c.Base, c.Prod)
 		}
-		for _, d := range DiffSchemas(c.Dev, c.Prod) {
+		var key, baseKey []string
+		if !c.FromOld {
+			key, baseKey = c.UniqueKey, c.BaseUniqueKey
+		}
+		ownRun := c.OwnRun && !c.FromOld
+		strict := c.StrictSchema && !c.FromOld
+		for _, d := range DiffSchemasFor(c.Warehouse, c.Dev, c.Prod) {
 			d.Change.OnBase = slices.Contains(onBase, d)
+			// Inserting a widened type (e.g. INT -> BIGINT) into an existing
+			// incremental table can fail or overflow, so don't downgrade it to low.
+			if ownRun && d.Change.Widening {
+				d.Change.Widening = false
+			}
 			// A renamed table compared with its old one is built anew.
-			d.Change.BreaksRun = breaksRun(d.Change, d.Column, c.OwnRun && !c.FromOld, c.UniqueKey)
+			d.Change.BreaksRun = breaksRun(d.Change, d.Column, ownRun, strict, key)
 			if d.Change.OnBase {
-				d.Change.BaseBreaksRun = breaksRun(d.Change, d.Column, c.BaseOwnRun && !c.FromOld, c.BaseUniqueKey)
+				d.Change.BaseBreaksRun = breaksRun(d.Change, d.Column, c.BaseOwnRun && !c.FromOld, c.BaseStrictSchema && !c.FromOld, baseKey)
 			}
 			entry.Columns = append(entry.Columns, Column{Column: d.Column, Change: d.Change, Readers: []Reader{}})
 		}
@@ -193,6 +264,7 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 			continue
 		}
 		atRisk = append(atRisk, entry)
+		addPreload(c.target())
 		for i := range entry.Columns {
 			col := &entry.Columns[i]
 			lookups = append(lookups, func() {
@@ -200,9 +272,29 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 				if err != nil {
 					col.ReadersError = err.Error()
 				}
-				links = append(links, rctx.projectReaders(entry.Table, col.Column)...)
+				warehouseTables := map[string]bool{}
+				for _, l := range links {
+					t := l.Table
+					if rctx.ToProd != nil {
+						t = rctx.ToProd(t)
+					}
+					warehouseTables[t] = true
+				}
+				for _, pl := range rctx.projectReaders(entry.Table, col.Column) {
+					t := pl.Table
+					if rctx.ToProd != nil {
+						t = rctx.ToProd(t)
+					}
+					if !warehouseTables[t] {
+						links = append(links, pl)
+					}
+				}
 				if len(links) > 0 || err == nil {
-					col.Readers = ImpactReaders(links, entry.Table, col.Column, rctx)
+					var also []string
+					if dot := strings.LastIndexByte(col.Column, '.'); dot >= 0 {
+						also = append(also, col.Column[dot+1:])
+					}
+					col.Readers = ImpactReaders(links, entry.Table, col.Column, rctx, also...)
 				}
 			})
 		}
@@ -211,6 +303,9 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 	var mu sync.Mutex
 	done := 0
 	progress(0, len(lookups))
+	if p, ok := src.(preloader); ok && len(preloadTables) > 0 {
+		p.Preload(ctx, preloadTables)
+	}
 	inBatches(ctx, lookups, readerConcurrency, func(lookup func()) {
 		lookup()
 		mu.Lock()
@@ -266,11 +361,16 @@ type Deps struct {
 	// Now returns the current time; nil means time.Now.
 	Now func() time.Time
 	// OnDemand is set for a warehouse that bills while it runs, a
-	// Databricks SQL warehouse (ADR 0042): DryRun plans one query, not a
-	// script, so each changed model is checked by its query alone, without
-	// its hooks, and the readers of a dropped column aren't dry run, so
-	// only the changed models wake the warehouse.
+	// Databricks SQL warehouse or Snowflake virtual warehouse (ADR 0042,
+	// ADR 0044): DryRun plans one query, not a script, so each changed
+	// model is checked by its query alone, without its hooks, and the
+	// readers of a dropped column aren't dry run, so only the changed
+	// models wake the warehouse.
 	OnDemand bool
+	// Warehouse names the warehouse type system to diff schemas under
+	// (project.BigQuery, project.Databricks, project.Snowflake); empty
+	// falls back to g.Warehouse, then BigQuery.
+	Warehouse string
 }
 
 // checkSQL is what a's dry run plans: its first dry run query, or with
@@ -359,9 +459,11 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		deps.Base = func(context.Context) (*project.Graph, error) { return once() }
 	}
 	var changed []changes.Changed
+	branchChanged := map[project.ActionID]bool{}
 	for _, c := range res.Changed {
 		if a := g.Actions[c.ID]; a != nil && producesTable(a) {
 			changed = append(changed, c)
+			branchChanged[c.ID] = true
 		}
 	}
 	var deleted []changes.Deleted
@@ -384,7 +486,7 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		indexes[i] = i
 	}
 	inBatches(ctx, indexes, dryRunBatch, func(i int) {
-		candidates[i] = check(ctx, changed[i], g.Actions[changed[i].ID], g, deps)
+		candidates[i] = check(ctx, changed[i], g.Actions[changed[i].ID], g, branchChanged, deps)
 		mu.Lock()
 		done++
 		progress(Progress{Phase: phase, Done: done, Total: len(changed)})
@@ -394,27 +496,39 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		return nil, err
 	}
 
-	for _, d := range deleted {
-		cand := Candidate{Table: string(d.ID), FileName: d.FileName, Type: d.Type, RenamedTo: string(d.RenamedTo)}
-		gone := "deleted"
-		if d.RenamedTo != "" {
-			gone = "renamed to " + ShortTable(string(d.RenamedTo))
+	if len(deleted) > 0 {
+		deletedCands := make([]Candidate, len(deleted))
+		delIdx := make([]int, len(deleted))
+		for i := range delIdx {
+			delIdx[i] = i
 		}
-		if !deps.prodTarget(&cand) {
-			cand.UncheckedReason = gone + ", and " + cand.UncheckedReason
-			candidates = append(candidates, cand)
-			continue
+		inBatches(ctx, delIdx, dryRunBatch, func(i int) {
+			d := deleted[i]
+			cand := Candidate{Table: string(d.ID), FileName: d.FileName, Type: d.Type, RenamedTo: string(d.RenamedTo)}
+			gone := "deleted"
+			if d.RenamedTo != "" {
+				gone = "renamed to " + ShortTable(string(d.RenamedTo))
+			}
+			if !deps.prodTarget(&cand) {
+				cand.UncheckedReason = gone + ", and " + cand.UncheckedReason
+				deletedCands[i] = cand
+				return
+			}
+			prod, err := deps.Schema(ctx, cand.target())
+			switch {
+			case err != nil:
+				cand.UncheckedReason = gone + ", and " + cand.target() + " could not be read: " + errorText(err)
+			case len(prod) == 0:
+				cand.UncheckedReason = gone + ", and no table in " + tableProject(cand.target())
+			default:
+				cand.Deleted = true
+			}
+			deletedCands[i] = cand
+		})
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		prod, err := deps.Schema(ctx, cand.target())
-		switch {
-		case err != nil:
-			cand.UncheckedReason = gone + ", and " + cand.target() + " could not be read: " + errorText(err)
-		case len(prod) == 0:
-			cand.UncheckedReason = gone + ", and no table in " + tableProject(cand.target())
-		default:
-			cand.Deleted = true
-		}
-		candidates = append(candidates, cand)
+		candidates = append(candidates, deletedCands...)
 	}
 
 	changedTables := map[string]bool{}
@@ -436,7 +550,9 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 	rctx := ReaderContext{
 		Renamed: renamed,
 		ProjectReaders: func(table, column string) []lineage.ColumnLink {
-			return GraphReaders(g, table, column)
+			links := GraphReaders(g, table, column)
+			links = append(links, StaticDAGReaders(g, table, column)...)
+			return links
 		},
 		ResolveFile: func(table string) string {
 			if a := g.Actions[project.ActionID(table)]; a != nil {
@@ -469,7 +585,7 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		result.New[i].ReadBy = readBy(g, result.New[i].Table)
 	}
 	markGraphs(result.AtRisk, g)
-	verifyReaders(ctx, result.AtRisk, g, deps, func(done, total int) {
+	verifyReaders(ctx, result.AtRisk, g, branchChanged, deps, func(done, total int) {
 		progress(Progress{Phase: "Dry running readers", Done: done, Total: total})
 	})
 	if err := ctx.Err(); err != nil {
@@ -626,9 +742,10 @@ func toProdTables(r *Report, prodTarget func(string) string) {
 
 // check reads a changed table's prod schema and dry runs it. A new action
 // with no table has nothing to compare, and isn't dry run.
-func check(ctx context.Context, c changes.Changed, a *project.Action, g *project.Graph, deps Deps) Candidate {
-	cand := Candidate{Table: string(c.ID), FileName: c.FileName, Type: c.Type, New: c.IsNew(), RenamedFrom: string(c.RenamedFrom)}
-	cand.OwnRun, cand.UniqueKey = incrementalRun(a)
+func check(ctx context.Context, c changes.Changed, a *project.Action, g *project.Graph, branchChanged map[project.ActionID]bool, deps Deps) Candidate {
+	wh := cmp.Or(deps.Warehouse, g.Warehouse, project.BigQuery)
+	cand := Candidate{Table: string(c.ID), FileName: c.FileName, Type: c.Type, New: c.IsNew(), RenamedFrom: string(c.RenamedFrom), Dbt: a != nil && a.DbtName != nil, Warehouse: wh}
+	cand.OwnRun, cand.StrictSchema, cand.UniqueKey = incrementalRun(a)
 	if !deps.prodTarget(&cand) {
 		return cand
 	}
@@ -664,16 +781,16 @@ func check(ctx context.Context, c changes.Changed, a *project.Action, g *project
 		return cand
 	}
 	queries := a.DryRunQueries() // an incremental table's first is its full rebuild, whose schema the table gets
-	project, location := g.DryRunTarget(a)
+	proj, location := g.DryRunTarget(a)
 	switch {
 	case len(queries) == 0:
 		cand.UncheckedReason = "nothing to dry run"
 		return cand
-	case project == "":
+	case proj == "":
 		cand.UncheckedReason = "no project to dry run in: set defaultProject"
 		return cand
 	}
-	dr, err := deps.DryRun(ctx, project, location, checkSQL(a, queries, deps))
+	dr, err := dryRunCheck(ctx, proj, location, a, queries, g, branchChanged, deps)
 	if err != nil {
 		cand.UncheckedReason = "dry run failed: " + errorText(err)
 		return cand
@@ -690,47 +807,70 @@ func check(ctx context.Context, c changes.Changed, a *project.Action, g *project
 	}
 	cand.Prod, cand.Dev = prod, dev
 	switch {
-	case len(DiffSchemas(dev, prod)) == 0:
+	case len(DiffSchemasFor(wh, dev, prod)) == 0:
 	case cand.FromOld:
-		cand.Base, cand.BaseOwnRun, cand.BaseUniqueKey = baseSchema(ctx, c.RenamedFrom, deps)
+		cand.Base, cand.BaseOwnRun, cand.BaseStrictSchema, cand.BaseUniqueKey = baseSchema(ctx, c.RenamedFrom, deps)
 	case !cand.New:
-		cand.Base, cand.BaseOwnRun, cand.BaseUniqueKey = baseSchema(ctx, c.ID, deps)
+		cand.Base, cand.BaseOwnRun, cand.BaseStrictSchema, cand.BaseUniqueKey = baseSchema(ctx, c.ID, deps)
 	}
 	return cand
 }
 
-// incrementalRun says a is a Dataform incremental table, whose incremental run
-// names every column its table has, and gives its uniqueKey.
-func incrementalRun(a *project.Action) (bool, []string) {
-	if a != nil && a.Kind == project.KindIncremental && a.DbtName == nil {
-		return true, a.UniqueKey
+// incrementalRun says whether a's incremental run fails on a dropped column
+// (ownRun), fails on any schema change including retypes (strict), and
+// returns its merge uniqueKey / unique_key.
+//
+//   - Dataform: default / IGNORE / EXTEND / FAIL all query the existing
+//     table's columns on incremental runs, so dropping a column breaks the
+//     run; only SYNCHRONIZE alters the target table to drop removed columns.
+//     FAIL also fails on retypes.
+//   - dbt: default / ignore / fail use existing_relation's columns or abort,
+//     so dropping a column breaks the run; append_new_columns and
+//     sync_all_columns do not. fail also fails on retypes. unique_key is
+//     ignored for append and insert_overwrite strategies.
+func incrementalRun(a *project.Action) (ownRun, strict bool, uniqueKey []string) {
+	if a == nil || a.Kind != project.KindIncremental {
+		return false, false, nil
 	}
-	return false, nil
+	if a.DbtName != nil {
+		osc := strings.ToLower(strings.TrimSpace(a.OnSchemaChange))
+		ownRun = osc != "append_new_columns" && osc != "sync_all_columns"
+		strict = osc == "fail"
+		strat := strings.ToLower(strings.TrimSpace(a.IncrementalStrategy))
+		if strat != "append" && strat != "insert_overwrite" {
+			uniqueKey = a.UniqueKey
+		}
+		return ownRun, strict, uniqueKey
+	}
+	osc := strings.ToUpper(strings.TrimSpace(a.OnSchemaChange))
+	ownRun = osc != "SYNCHRONIZE"
+	strict = osc == "FAIL"
+	return ownRun, strict, a.UniqueKey
 }
 
 // baseSchema is the schema of a dry run of action id as it is at the
 // merge-base, with its incrementalRun; nil when there is no telling: no base, an
 // action it doesn't have or can't dry run, or a dry run that fails.
-func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]warehouse.Column, bool, []string) {
+func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]warehouse.Column, bool, bool, []string) {
 	if deps.Base == nil {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	g, err := deps.Base(ctx)
 	if err != nil || g == nil {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	a := g.Actions[id]
 	if a == nil || a.Kind == project.KindOperation {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	queries := a.DryRunQueries()
-	project, location := g.DryRunTarget(a)
-	if len(queries) == 0 || project == "" {
-		return nil, false, nil
+	proj, location := g.DryRunTarget(a)
+	if len(queries) == 0 || proj == "" {
+		return nil, false, false, nil
 	}
-	dr, err := deps.DryRun(ctx, project, location, checkSQL(a, queries, deps))
+	dr, err := dryRunCheck(ctx, proj, location, a, queries, nil, nil, deps)
 	if err != nil {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	var base []warehouse.Column
 	for _, f := range dr.Schema {
@@ -738,6 +878,44 @@ func baseSchema(ctx context.Context, id project.ActionID, deps Deps) ([]warehous
 			base = append(base, f)
 		}
 	}
-	own, key := incrementalRun(a)
-	return base, own, key
+	own, strict, key := incrementalRun(a)
+	return base, own, strict, key
+}
+
+// dryRunCheck plans a's schema query; on BigQuery, when BigQuery refuses a
+// DML statement in pre_operations because the caller has read-only access,
+// it retries without those DML statements (as cost.Run does). When a dry run
+// fails because an upstream table or column added/changed on this branch does
+// not exist in prod yet, it retries with changed in-branch upstream tables
+// substituted as subqueries.
+func dryRunCheck(ctx context.Context, proj, location string, a *project.Action, queries []project.DryRunQuery, g *project.Graph, branchChanged map[project.ActionID]bool, deps Deps) (*warehouse.Check, error) {
+	baseSQL := checkSQL(a, queries, deps)
+	dr, err := deps.DryRun(ctx, proj, location, baseSQL)
+	if err != nil && !deps.OnDemand {
+		if _, _, denied := project.WriteDenied(errorText(err)); denied {
+			if lean, ok := queries[0].WithoutDML(); ok {
+				if leanDR, leanErr := deps.DryRun(ctx, proj, location, lean.SQL); leanErr == nil {
+					return leanDR, nil
+				}
+			}
+		}
+		if len(branchChanged) > 1 && isMissingTableOrColumn(errorText(err)) {
+			if swapped, ok := swapBranchTables(baseSQL, a.ID, g, branchChanged, 3); ok {
+				if subDR, subErr := deps.DryRun(ctx, proj, location, swapped); subErr == nil {
+					return subDR, nil
+				}
+			}
+		}
+	}
+	return dr, err
+}
+
+func isMissingTableOrColumn(msg string) bool {
+	low := strings.ToLower(msg)
+	return strings.Contains(low, "not found: table") ||
+		strings.Contains(low, "not found: view") ||
+		strings.Contains(low, "unrecognized name:") ||
+		strings.Contains(low, "not found inside") ||
+		strings.Contains(low, "does not exist in") ||
+		strings.Contains(low, "in using clause not found")
 }

@@ -3,6 +3,7 @@ package impact
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ashish10alex/xf/internal/changes"
@@ -77,7 +78,7 @@ func TestCheckReaderDryRunsTheQueryAloneAfterACall(t *testing.T) {
 			ran = append(ran, sql)
 			return &warehouse.Check{}, nil
 		}}
-		if got := checkReader(context.Background(), "p.marts.daily", "discount", g.Actions["p.marts.orders"], g, deps); got != CheckedClear {
+		if got := checkReader(context.Background(), "p.marts.daily", "discount", g.Actions["p.marts.orders"], g, nil, deps); got != CheckedClear {
 			t.Errorf("%v: checked %q", c.preOps, got)
 		}
 		if len(ran) != 1 || strings.Contains(ran[0], c.preOps[0]) == c.call {
@@ -102,12 +103,15 @@ func TestRunOnDemand(t *testing.T) {
 		"p.marts.orders": {f("order_id", "bigint"), f("amount", "double"), f("discount", "decimal(10,2)")},
 		"p.marts.daily":  {f("discount", "decimal(10,2)")},
 	}
+	var mu sync.Mutex
 	var planned []string
 	deps := Deps{
 		OnDemand: true,
 		Schema:   func(_ context.Context, table string) ([]warehouse.Column, error) { return prod[table], nil },
 		DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
+			mu.Lock()
 			planned = append(planned, sql)
+			mu.Unlock()
 			if strings.Contains(sql, "discount") {
 				return &warehouse.Check{Schema: []warehouse.Column{f("discount", "decimal(10,2)")}}, nil
 			}
@@ -141,13 +145,17 @@ func TestRunOnDemand(t *testing.T) {
 
 func TestMissingColumn(t *testing.T) {
 	for msg, want := range map[string]bool{
-		"Unrecognized name: discount at [3:5]":              true,
-		"Unrecognized name: DISCOUNT; Did you mean amount?": true,
-		"Name discount not found inside o at [1:10]":        true,
-		"Unrecognized name: discount_rate at [3:5]":         false, // another column
-		"Syntax error: Unexpected keyword FROM at [2:1]":    false,
-		"Unrecognized name: amount at [3:5]":                false,
-		"Table p:marts.orders was not found in location EU": false,
+		"Unrecognized name: discount at [3:5]":                 true,
+		"Unrecognized name: `discount` at [3:5]":               true,
+		"Unrecognized name: DISCOUNT; Did you mean amount?":    true,
+		"Name discount not found inside o at [1:10]":           true,
+		"Name `discount` not found inside o at [1:10]":         true,
+		"Column discount in USING clause not found on left":    true,
+		"Column `discount` in USING clause not found on right": true,
+		"Unrecognized name: discount_rate at [3:5]":            false, // another column
+		"Syntax error: Unexpected keyword FROM at [2:1]":       false,
+		"Unrecognized name: amount at [3:5]":                   false,
+		"Table p:marts.orders was not found in location EU":    false,
 	} {
 		if got := missingColumn(msg, "discount"); got != want {
 			t.Errorf("missingColumn(%q) = %v, want %v", msg, got, want)
@@ -228,5 +236,39 @@ func TestReaderNoteOfARenamedReaderSaysWhatTheDryRunFound(t *testing.T) {
 	r := Reader{Table: "p.inventory.new", RenamedFrom: "p.inventory.old", ChangedOnBranch: true, ProbablyUpdated: true, Checked: CheckedClear}
 	if got := ReaderNote(r); got != "renamed here, no longer reads it (dry run passes)" {
 		t.Error(got)
+	}
+}
+
+// Read-only CI callers can't dry-run DML in pre_operations: impact.Run
+// falls back to dry-running without those DML statements, just as cost.Run
+// does.
+func TestRunLeavesOutPreOperationsDMLWhenWriteDenied(t *testing.T) {
+	g := graph(t, "SELECT order_id, amount FROM src", "SELECT 1")
+	g.Actions["p.marts.orders"].PreOps = []string{
+		"DECLARE d DATE DEFAULT current_date()",
+		"DELETE FROM `p.marts.orders` WHERE day = d",
+	}
+	res := &changes.Result{BaseRef: "origin/main", MergeBase: "abcdef123456", HeadRef: "feat", Head: changes.HeadWorktree,
+		Diff: changes.Diff{Changed: []changes.Changed{
+			{ID: "p.marts.orders", FileName: "definitions/orders.sqlx", Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+		}}}
+	deps := Deps{
+		Schema: func(_ context.Context, table string) ([]warehouse.Column, error) {
+			return []warehouse.Column{f("order_id", "INT64"), f("amount", "FLOAT"), f("discount", "NUMERIC")}, nil
+		},
+		DryRun: func(_ context.Context, _, _, sql string) (*warehouse.Check, error) {
+			if strings.Contains(sql, "DELETE FROM") {
+				return nil, &warehouse.APIError{Status: 403, Message: "Access Denied: Table p:marts.orders: Permission bigquery.tables.updateData denied on table p:marts.orders"}
+			}
+			return &warehouse.Check{Schema: []warehouse.Column{f("order_id", "INT64"), f("amount", "FLOAT")}}, nil
+		},
+		Readers: &fakeSource{},
+	}
+	report, err := Run(context.Background(), res, g, deps, func(Progress) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Unchecked) != 0 || len(report.AtRisk) != 1 || report.AtRisk[0].Columns[0].Column != "discount" {
+		t.Fatalf("got unchecked=%+v atRisk=%+v; want orders checked and discount dropped", report.Unchecked, report.AtRisk)
 	}
 }

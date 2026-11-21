@@ -173,9 +173,16 @@ type Action struct {
 	Description string
 	Columns     []ColumnDescription
 	PartitionBy string
-	// UniqueKey is a Dataform incremental table's uniqueKey: the columns
-	// its incremental run merges on. nil for dbt.
+	// UniqueKey is an incremental table's uniqueKey (Dataform) or unique_key
+	// (dbt): the columns its incremental run merges on.
 	UniqueKey []string
+	// OnSchemaChange is an incremental table's onSchemaChange (Dataform:
+	// FAIL, EXTEND, SYNCHRONIZE, IGNORE) or on_schema_change (dbt: ignore,
+	// fail, append_new_columns, sync_all_columns).
+	OnSchemaChange string
+	// IncrementalStrategy is a dbt incremental model's incremental_strategy
+	// (e.g. merge, append, insert_overwrite, delete+insert). Empty for Dataform.
+	IncrementalStrategy string
 
 	DependencyTargets []Target
 	// ParentAction is set on assertions Dataform generates from a table's

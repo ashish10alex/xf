@@ -184,6 +184,23 @@ func (c *Client) executeWith(ctx context.Context, sql, wh, db, schema string) (*
 			return nil, fmt.Errorf("decode statement: %w", err)
 		}
 	}
+	if st.Meta != nil && len(st.Meta.PartitionInfo) > 1 && st.Handle != "" {
+		for i := 1; i < len(st.Meta.PartitionInfo); i++ {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			partPath := "/api/v2/statements/" + url.PathEscape(st.Handle) + "?partition=" + strconv.Itoa(i)
+			_, partBody, err := c.do(ctx, http.MethodGet, partPath, nil)
+			if err != nil {
+				return nil, err
+			}
+			var part statementResp
+			if err := json.Unmarshal(partBody, &part); err != nil {
+				return nil, fmt.Errorf("decode statement partition %d: %w", i, err)
+			}
+			st.Data = append(st.Data, part.Data...)
+		}
+	}
 	return &st, nil
 }
 

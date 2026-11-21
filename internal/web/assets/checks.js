@@ -173,12 +173,21 @@ let checkToken = 0;
 export function openImpact() { openCheck('impact'); }
 export function openCost() { openCheck('cost'); }
 
+// autoRefreshAllowed says whether a stale report may be rechecked without
+// the user asking. Column impact on Databricks and both checks on
+// Snowflake wake a warehouse that bills, so stale reports stay put until c
+// (ADR 0042, ADR 0044).
+function autoRefreshAllowed(which) {
+  return !((which === 'impact' && S.caps.warehouse === 'databricks') || S.caps.warehouse === 'snowflake');
+}
+
 // openCheck shows which's tab. A check still running, one that failed,
 // or one done that still matches the branch is shown as it is; a report
 // the branch has moved on from, or c, checks afresh, the report showing
 // dimmed meanwhile. The server keeps a report per branch: asked without
 // refresh it returns the kept one, stale or not, so a stale one is
-// checked again with refresh.
+// checked again with refresh unless auto-refresh would wake a billed
+// warehouse.
 export async function openCheck(which, refresh) {
   if (which === 'impact' && !S.caps.impact) { say('column impact is not available'); return; }
   if (which === 'cost' && !S.caps.cost) { say('query cost is not available'); return; }
@@ -187,8 +196,9 @@ export async function openCheck(which, refresh) {
   S.checks = which;
   const o = S[which] && S[which].api === S.flags.api && S[which].base === S.boot.defaultBranch ? S[which] : { report: null };
   const stale = !!o.report && checkStale(o);
-  if (!refresh && o.token && (o.loading || o.err || (o.report && !stale))) { S[which] = o; redraw(); return; }
-  refresh = refresh || stale;
+  const auto = autoRefreshAllowed(which);
+  if (!refresh && o.token && (o.loading || o.err || (o.report && (!stale || !auto)))) { S[which] = o; redraw(); return; }
+  refresh = refresh || (stale && auto);
   const token = String(++checkToken);
   S[which] = { ...o, loading: true, err: null, progress: '', token, api: S.flags.api, base: S.boot.defaultBranch, offset: o.offset || 0 };
   redraw();
@@ -207,8 +217,8 @@ export async function openCheck(which, refresh) {
       return;
     }
     Object.assign(S[which], { loading: false, report: r, progress: '' });
-    // The kept report is older than the branch: check it afresh.
-    if (r.stale && !refresh) { openCheck(which, true); return; }
+    // The kept report is older than the branch: check it afresh when safe.
+    if (r.stale && !refresh && auto) { openCheck(which, true); return; }
   } catch (e) {
     if (!S[which] || S[which].token !== token) return;
     Object.assign(S[which], { loading: false, err: e });
@@ -272,7 +282,7 @@ export function recheckShowing() {
   const which = S.checks;
   const o = which && S[which];
   if (!o || S.overlay || o.loading || o.err || !checkStale(o)) return;
-  if ((which === 'impact' && S.caps.warehouse === 'databricks') || S.caps.warehouse === 'snowflake') { redraw(); return; }
+  if (!autoRefreshAllowed(which)) { redraw(); return; }
   openCheck(which, true);
 }
 

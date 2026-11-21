@@ -166,6 +166,98 @@ func TestSearchLinksPagesAndExplainsErrors(t *testing.T) {
 	}
 }
 
+func TestSearchLinksPaginationCapAndCycleGuard(t *testing.T) {
+	// Repeated token cycle guard.
+	cyclic := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"links":[],"nextPageToken":"same"}`))
+	}))
+	defer cyclic.Close()
+	c1 := NewClientWith(cyclic.Client(), cyclic.URL, "")
+	if _, err := c1.SearchLinks(context.Background(), SearchRequest{Parent: "projects/p/locations/eu"}); err == nil || !strings.Contains(err.Error(), "repeated page token") {
+		t.Errorf("cyclic pagination err = %v", err)
+	}
+
+	// Exceeding maxSearchPages returns an error instead of looping forever.
+	pages := 0
+	endless := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		_, _ = w.Write([]byte(`{"links":[],"nextPageToken":"p` + strings.Repeat("x", pages) + `"}`))
+	}))
+	defer endless.Close()
+	c2 := NewClientWith(endless.Client(), endless.URL, "")
+	if _, err := c2.SearchLinks(context.Background(), SearchRequest{Parent: "projects/p/locations/eu"}); err == nil || !strings.Contains(err.Error(), "exceeded") {
+		t.Errorf("maxSearchPages err = %v", err)
+	}
+	if pages != maxSearchPages {
+		t.Errorf("pages = %d, want %d", pages, maxSearchPages)
+	}
+}
+
+func TestSourceWithProjectsCrossProjectMerge(t *testing.T) {
+	tables := NewTables(func(_ context.Context, proj, ds, tbl string) (*warehouse.Table, error) {
+		return &warehouse.Table{Location: "EU", Schema: []warehouse.Column{{Name: "discount", Type: "FLOAT64"}}}, nil
+	})
+	var seenParents []string
+	var mu sync.Mutex
+	search := searchFunc(func(_ context.Context, req SearchRequest) ([]Link, error) {
+		mu.Lock()
+		seenParents = append(seenParents, req.Parent)
+		mu.Unlock()
+		switch req.Parent {
+		case "projects/data-prod/locations/eu":
+			return []Link{link("data-prod.marts.orders", "discount", "data-prod.rpt.local", "discount")}, nil
+		case "projects/bi-prod/locations/eu":
+			return []Link{link("data-prod.marts.orders", "discount", "bi-prod.dash.revenue", "discount")}, nil
+		}
+		return nil, nil
+	})
+	src := NewSource(search, tables, nil, nil).WithProjects("bi-prod", "data-prod", "bi-prod")
+	links, err := src.ColumnLinks(context.Background(), "data-prod.marts.orders", "discount")
+	if err != nil {
+		t.Fatalf("ColumnLinks: %v", err)
+	}
+	if len(links) != 2 {
+		t.Fatalf("links = %+v, want 2 (local + cross-project bi-prod)", links)
+	}
+	got := map[string]bool{}
+	for _, l := range links {
+		got[l.Table] = true
+	}
+	if !got["data-prod.rpt.local"] || !got["bi-prod.dash.revenue"] {
+		t.Errorf("merged links = %+v", links)
+	}
+
+	// Permanent 403 on an extra project is cached so repeated lookups don't
+	// hammer it or re-query healthy projects.
+	var deniedCalls, healthyCalls int
+	search2 := searchFunc(func(_ context.Context, req SearchRequest) ([]Link, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if req.Parent == "projects/denied-bi/locations/eu" {
+			deniedCalls++
+			return nil, apiError(http.StatusForbidden, nil, req.Parent)
+		}
+		healthyCalls++
+		return []Link{link("data-prod.marts.orders", "", "data-prod.rpt.local", "")}, nil
+	})
+	src2 := NewSource(search2, tables, nil, nil).WithProjects("denied-bi")
+	for range 3 {
+		l, err := src2.TableReaders(context.Background(), "data-prod.marts.orders")
+		if err == nil || len(l) != 1 {
+			t.Fatalf("expected partial link + denied error, got links=%+v err=%v", l, err)
+		}
+	}
+	if deniedCalls != 1 || healthyCalls != 1 {
+		t.Fatalf("deniedCalls=%d healthyCalls=%d, want 1 and 1 (cached per parent)", deniedCalls, healthyCalls)
+	}
+}
+
+type searchFunc func(ctx context.Context, req SearchRequest) ([]Link, error)
+
+func (f searchFunc) SearchLinks(ctx context.Context, req SearchRequest) ([]Link, error) {
+	return f(ctx, req)
+}
+
 // fakeSearch answers searches from links by source (table, or table#field)
 // and probes by target table#field, counting calls.
 type fakeSearch struct {
@@ -345,5 +437,19 @@ func TestSourceProbesAgainAfterAFailedProbe(t *testing.T) {
 	}
 	if n != 2 {
 		t.Errorf("a successful probe is kept: %d probes", n)
+	}
+}
+
+func TestIsPermanentLineageErrorNeedsEveryPartPermanent(t *testing.T) {
+	denied := apiError(http.StatusForbidden, nil, "projects/denied-bi/locations/eu")
+	if !isPermanentLineageError(denied) {
+		t.Fatalf("403 = %v, want permanent", denied)
+	}
+	transient := errors.New("429 rate limited")
+	if isPermanentLineageError(errors.Join(denied, transient)) {
+		t.Error("a 403 joined with a transient failure counts as permanent, so the transient one would be cached")
+	}
+	if !isPermanentLineageError(errors.Join(denied, errors.Join(denied))) {
+		t.Error("nested joins of 403s should be permanent")
 	}
 }

@@ -19,7 +19,9 @@ import (
 const JSONVersion = 1
 
 // DefaultQuietUnder is the growth in a run's bytes below which cost alone
-// isn't worth a comment: 1 GiB.
+// isn't worth a comment: 1 GiB. When no merge-base estimate exists (or on
+// warehouses that report PastRuns instead of estimates), total bytes read
+// are compared against this threshold.
 const DefaultQuietUnder int64 = 1 << 30
 
 // Report is what xf check found: each check's report, or why it couldn't
@@ -42,7 +44,11 @@ type Options struct {
 	// FailOn is the --fail-on severity; Gate says it is set.
 	FailOn impact.Severity
 	Gate   bool
-	// Cost holds --fail-over (Threshold) and the price.
+	// FailOnUnchecked fails when any changed model couldn't be compared
+	// with its table in the warehouse.
+	FailOnUnchecked bool
+	// Cost holds --fail-over, --fail-over-delta, --fail-on-unfiltered,
+	// --fail-on-unestimated and the price.
 	Cost cost.Options
 	// QuietUnder is the growth in bytes a run may have before cost alone
 	// is worth a comment, and before it needs a look with Attention.
@@ -62,18 +68,25 @@ const (
 // Neither says neither check could be made.
 func (r *Report) Neither() bool { return r.Impact == nil && r.Cost == nil }
 
-// ImpactTripped says --fail-on found a change that severe.
+// ImpactTripped says --fail-on found a change that severe, or
+// --fail-on-unchecked found a model whose check failed (excluding permanent
+// structural reasons like operations/scripts or tables not yet built).
 func (r *Report) ImpactTripped(o Options) bool {
-	if r.Impact == nil || !o.Gate {
+	if r.Impact == nil {
 		return false
 	}
-	worst, found := impact.Worst(r.Impact)
-	return found && worst >= o.FailOn
+	if o.Gate {
+		if worst, found := impact.Worst(r.Impact); found && worst >= o.FailOn {
+			return true
+		}
+	}
+	return o.FailOnUnchecked && len(impact.UncheckedFailures(r.Impact)) > 0
 }
 
-// CostTripped says the total is over --fail-over.
+// CostTripped says a cost gate tripped (--fail-over, --fail-over-delta,
+// --fail-on-unfiltered or --fail-on-unestimated).
 func (r *Report) CostTripped(o Options) bool {
-	return r.Cost != nil && r.Cost.Exceeds(o.Cost.Threshold)
+	return r.Cost != nil && r.Cost.GateTripped(o.Cost)
 }
 
 // Code is the exit code.
@@ -90,9 +103,10 @@ func (r *Report) Code(o Options) int {
 // Worth says the report is worth a comment: a check that couldn't be made,
 // a gate that tripped, a column change that something still reads (or
 // whose readers couldn't be looked up), a model that couldn't be compared
-// with its table, a missing partition filter, an
-// action not estimated, or a run that grows by QuietUnder or more (its
-// total, when the merge-base wasn't estimated).
+// with its table, a missing partition filter, an action not estimated, a
+// run that grows by QuietUnder or more (its total, when the merge-base
+// wasn't estimated), or on Databricks/Snowflake a PastRuns report with a
+// warning/truncation or last-run bytes read at or above QuietUnder.
 func (r *Report) Worth(o Options) bool {
 	if r.ImpactError != "" || r.CostError != "" || r.ImpactTripped(o) || r.CostTripped(o) {
 		return true
@@ -103,6 +117,13 @@ func (r *Report) Worth(o Options) bool {
 		}
 	}
 	if c := r.Cost; c != nil {
+		if p := c.PastRuns; p != nil {
+			if p.Why != "" || p.Truncated || p.UnfilteredCount() > 0 {
+				return true
+			}
+			bytes, ran := p.ReadTotal()
+			return ran > 0 && bytes >= max(o.QuietUnder, 1)
+		}
 		if c.Unestimated() > 0 {
 			return true
 		}
@@ -111,12 +132,7 @@ func (r *Report) Worth(o Options) bool {
 				return true
 			}
 		}
-		total, _ := c.Total()
-		growth := total
-		if base, ok := c.BaseTotal(); ok {
-			growth = total - base
-		}
-		if growth >= max(o.QuietUnder, 1) {
+		if c.Growth() >= max(o.QuietUnder, 1) {
 			return true
 		}
 	}
@@ -184,7 +200,7 @@ func impactVerdict(r *Report) string {
 	if r.Impact == nil {
 		return "❔ Column impact couldn't be checked"
 	}
-	var dropped, deleted, retyped, unknown int
+	var dropped, breaksRun, deleted, retyped, unknown int
 	for _, t := range r.Impact.AtRisk {
 		if t.Deleted {
 			switch impact.TableSeverity(t) {
@@ -197,7 +213,11 @@ func impactVerdict(r *Report) string {
 		for _, c := range t.Columns {
 			switch impact.ImpactSeverity(c.Change, c.Readers, c.ReadersError) {
 			case impact.SeverityCritical:
-				dropped++
+				if c.Change.BreaksRun != "" && impact.OpenReaders(c.Readers) == 0 {
+					breaksRun++
+				} else {
+					dropped++
+				}
 			case impact.SeverityWarning:
 				retyped++
 			case impact.SeverityUnknown:
@@ -205,7 +225,19 @@ func impactVerdict(r *Report) string {
 			}
 		}
 	}
+	breakVerb := "break"
+	if breaksRun == 1 {
+		breakVerb = "breaks"
+	}
 	switch {
+	case dropped > 0 && deleted > 0 && breaksRun > 0:
+		return fmt.Sprintf("🚨 %s and %s still read, and %s %s the incremental run", count(dropped, "dropped column"), count(deleted, "deleted table"), count(breaksRun, "dropped column"), breakVerb)
+	case dropped > 0 && breaksRun > 0:
+		return fmt.Sprintf("🚨 %s (%d still read, %d %s the incremental run)", count(dropped+breaksRun, "dropped column"), dropped, breaksRun, breakVerb)
+	case deleted > 0 && breaksRun > 0:
+		return fmt.Sprintf("🚨 %s %s the incremental run, and %s still read", count(breaksRun, "dropped column"), breakVerb, count(deleted, "deleted table"))
+	case breaksRun > 0:
+		return fmt.Sprintf("🚨 %s %s the incremental run", count(breaksRun, "dropped column"), breakVerb)
 	case dropped > 0 && deleted > 0:
 		return fmt.Sprintf("🚨 %s and %s still read", count(dropped, "dropped column"), count(deleted, "deleted table"))
 	case dropped > 0:
@@ -229,12 +261,22 @@ func costVerdict(r *Report, o Options) string {
 	if c == nil {
 		return "❔ query cost couldn't be checked"
 	}
-	if p := c.PastRuns; p != nil { // Databricks: no estimate, the last runs (ADR 0042)
+	if p := c.PastRuns; p != nil { // Databricks/Snowflake: no estimate, the last runs (ADR 0042, ADR 0044)
 		bytes, ran := p.ReadTotal()
+		var text string
 		if ran == 0 {
-			return "ℹ️ no past run of the changed models to show"
+			text = "ℹ️ no past run of the changed models to show"
+		} else {
+			text = fmt.Sprintf("ℹ️ their last runs read %s (%d of %d models)", warehouse.FormatBytes(bytes), ran, len(p.Runs))
 		}
-		return fmt.Sprintf("ℹ️ their last runs read %s (%d of %d models)", warehouse.FormatBytes(bytes), ran, len(p.Runs))
+		if n := p.UnfilteredCount(); n > 0 {
+			mark := "⚠️ "
+			if o.Cost.FailOnUnfiltered {
+				mark = "❌ "
+			}
+			text += " · " + mark + count(n, "query") + " without a partition/cluster filter"
+		}
+		return text
 	}
 	if len(c.Actions) == 0 {
 		return "nothing to dry run"
@@ -255,17 +297,26 @@ func costVerdict(r *Report, o Options) string {
 	} else {
 		text = fmt.Sprintf("%s per run (≈ %s%s)", totalText, bound, cost.FormatUSD(o.Cost.USD(total)))
 	}
-	unfiltered := 0
-	for _, a := range c.Actions {
-		if a.Estimate != nil && len(a.Unfiltered) > 0 {
-			unfiltered++
+	unfiltered := c.UnfilteredCount()
+	if unfiltered > 0 {
+		mark := "⚠️ "
+		if o.Cost.FailOnUnfiltered {
+			mark = "❌ "
+		}
+		text += " · " + mark + count(unfiltered, "query") + " without a partition filter"
+	}
+	if c.Exceeds(o.Cost.Threshold) {
+		text += " · ❌ over the " + warehouse.FormatBytes(o.Cost.Threshold) + " limit"
+	}
+	if c.ExceedsDelta(o.Cost.DeltaThreshold) {
+		if c.BaseError != "" || c.BasePending {
+			text += " · ❌ no merge-base: total over the " + warehouse.FormatBytes(o.Cost.DeltaThreshold) + " delta limit"
+		} else {
+			text += " · ❌ growth over the " + warehouse.FormatBytes(o.Cost.DeltaThreshold) + " limit"
 		}
 	}
-	if unfiltered > 0 {
-		text += " · ⚠️ " + count(unfiltered, "query") + " without a partition filter"
-	}
-	if r.CostTripped(o) {
-		text += " · ❌ over the " + warehouse.FormatBytes(o.Cost.Threshold) + " limit"
+	if o.Cost.FailOnUnestimated && c.Unestimated() > 0 {
+		text += " · ❌ " + count(c.Unestimated(), "action") + " not estimated"
 	}
 	return text
 }

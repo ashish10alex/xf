@@ -13,6 +13,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/ashish10alex/xf/internal/gcpauth"
+	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
 // ErrAuth means there are no usable credentials, as for BigQuery.
@@ -24,6 +25,9 @@ const (
 	// pageSize is the most links a search page can hold; the API returns
 	// 10 a page unless asked for more.
 	pageSize = 100
+	// maxSearchPages caps Dataplex searchLinks pagination (10,000 links) so a
+	// huge fan-out or cyclic nextPageToken cannot loop forever.
+	maxSearchPages = 100
 )
 
 // Client searches Data Lineage links with Application Default Credentials.
@@ -52,6 +56,9 @@ func NewClient(context.Context) (*Client, error) {
 // NewClientWith makes a client that sends its calls with httpClient to
 // baseURL, for tests.
 func NewClientWith(httpClient *http.Client, baseURL, quotaProject string) *Client {
+	if httpClient == nil {
+		httpClient = warehouse.NewHTTPClient()
+	}
 	return &Client{http: httpClient, baseURL: baseURL, quotaProject: quotaProject}
 }
 
@@ -63,12 +70,27 @@ type SearchRequest struct {
 	Target *EntityReference `json:"target,omitempty"`
 }
 
-// SearchLinks returns every page of a link search.
+// SearchLinks returns every page of a link search, capped at maxSearchPages
+// so huge fan-out or cyclic pagination tokens never loop forever.
 func (c *Client) SearchLinks(ctx context.Context, req SearchRequest) ([]Link, error) {
 	u := c.baseURL + "/v1/" + req.Parent + ":searchLinks"
 	var links []Link
 	token := ""
-	for {
+	seenTokens := map[string]bool{}
+	entity := ""
+	switch {
+	case req.Source != nil:
+		entity = req.Source.FullyQualifiedName
+	case req.Target != nil:
+		entity = req.Target.FullyQualifiedName
+	}
+	for pageNum := 0; ; pageNum++ {
+		if pageNum >= maxSearchPages {
+			if entity != "" {
+				return nil, fmt.Errorf("data lineage search exceeded %d pages for %s in %s", maxSearchPages, entity, projectOf(req.Parent))
+			}
+			return nil, fmt.Errorf("data lineage search exceeded %d pages in %s", maxSearchPages, projectOf(req.Parent))
+		}
 		body := struct {
 			SearchRequest
 			PageSize  int    `json:"pageSize"`
@@ -93,24 +115,30 @@ func (c *Client) SearchLinks(ctx context.Context, req SearchRequest) ([]Link, er
 		if page.NextPageToken == "" {
 			return links, nil
 		}
+		if seenTokens[page.NextPageToken] {
+			return nil, fmt.Errorf("data lineage search returned a repeated page token in %s", projectOf(req.Parent))
+		}
+		seenTokens[page.NextPageToken] = true
 		token = page.NextPageToken
 	}
 }
 
 func (c *Client) post(ctx context.Context, u string, body []byte, parent string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
 	quota := c.quotaProject
 	if c.creds != nil {
 		quota = c.creds.QuotaProject()
 	}
-	if quota != "" {
-		req.Header.Set("X-Goog-User-Project", quota)
-	}
-	resp, err := c.http.Do(req)
+	resp, err := warehouse.DoWithRetry(ctx, c.http, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if quota != "" {
+			req.Header.Set("X-Goog-User-Project", quota)
+		}
+		return req, nil
+	}, warehouse.RetryPolicy{RetryServerErrors: true})
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

@@ -98,7 +98,7 @@ type Config struct {
 func New(c Config) *Client {
 	h := c.HTTP
 	if h == nil {
-		h = http.DefaultClient
+		h = warehouse.NewHTTPClient()
 	}
 	host := NormalizeHost(c.Host)
 	if host == "" && c.Account != "" {
@@ -281,9 +281,11 @@ func sqlIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// quoteLiteral quotes a Snowflake SQL string literal with single quotes.
+// quoteLiteral quotes a Snowflake SQL string literal with single quotes,
+// escaping backslashes and single quotes.
 func quoteLiteral(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	r := strings.NewReplacer(`\`, `\\`, `'`, `''`)
+	return "'" + r.Replace(s) + "'"
 }
 
 // escapeLike escapes %, _ and \ for a Snowflake LIKE pattern.
@@ -300,22 +302,13 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (int, []
 	if c.host == "" {
 		return 0, nil, errors.New("no Snowflake account: set the dbt target's account, choose a Snowflake connection, or set SNOWFLAKE_ACCOUNT")
 	}
-	var r io.Reader
+	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return 0, nil, err
 		}
-		r = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.host+path, r)
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "xf")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		payload = b
 	}
 	if c.token == nil {
 		return 0, nil, authErr(errors.New("no credentials configured"))
@@ -327,11 +320,27 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (int, []
 		}
 		return 0, nil, authErr(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+tok.Value)
-	if tok.Type != "" {
-		req.Header.Set("X-Snowflake-Authorization-Token-Type", string(tok.Type))
-	}
-	resp, err := c.http.Do(req)
+	idempotent := method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete || strings.HasSuffix(path, "/cancel")
+	resp, err := warehouse.DoWithRetry(ctx, c.http, func() (*http.Request, error) {
+		var r io.Reader
+		if payload != nil {
+			r = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, c.host+path, r)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "xf")
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Authorization", "Bearer "+tok.Value)
+		if tok.Type != "" {
+			req.Header.Set("X-Snowflake-Authorization-Token-Type", string(tok.Type))
+		}
+		return req, nil
+	}, warehouse.RetryPolicy{RetryServerErrors: idempotent})
 	if err != nil {
 		return 0, nil, err
 	}

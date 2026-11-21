@@ -61,3 +61,20 @@ func TestSkipsGroupByWhy(t *testing.T) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
 }
+
+func TestSkipsTreatRenamedTableAsUnbuiltNewTable(t *testing.T) {
+	r := &Report{Actions: []Action{
+		{Name: "acme.marts.orders_v2", Type: "table", RenamedFrom: "acme.marts.orders", Estimate: &Estimate{Bytes: 1}},
+		{Name: "acme.marts.daily", Type: "view",
+			Reason: "dry run failed: Not found: Table acme:marts.orders_v2 was not found in location EU",
+			Waits:  []string{"acme.marts.orders_v2"}},
+	}}
+	skips := SkippedActions(r)
+	if len(skips) != 1 {
+		t.Fatalf("skips = %+v", skips)
+	}
+	s := skips[0]
+	if !s.New || s.Changed || s.Tag() != "new on this branch" || !reflect.DeepEqual(s.Waits, []string{"acme.marts.orders_v2"}) {
+		t.Errorf("renamed downstream skipped = %+v; want New=true, Changed=false, Waits=[acme.marts.orders_v2]", s)
+	}
+}

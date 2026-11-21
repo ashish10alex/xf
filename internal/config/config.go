@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,6 +59,10 @@ const (
 	// prod runs, e.g. --default-database=acme-prod, so column impact
 	// compares with the tables they build rather than the default targets.
 	KeyProdCompilerOptions = "prodCompilerOptions"
+	// KeyLineageProjects is a comma-separated list of additional GCP projects
+	// to search in Dataplex Data Lineage alongside each table's own project,
+	// catching cross-project BigQuery readers (e.g. BI or analytics projects).
+	KeyLineageProjects = "lineageProjects"
 	// KeyTablePrefix, KeySchemaSuffix and KeyDatabaseSuffix are what a
 	// Dataform project's compiles and runs add to every name it builds:
 	// --table-prefix, --schema-suffix and --database-suffix, which
@@ -85,6 +90,9 @@ const (
 	// asks before running it.
 	KeyScratchWarnGB    = "scratchWarnGB"
 	KeyScratchConfirmGB = "scratchConfirmGB"
+	// KeyUSDPerTiB is the BigQuery on-demand price in dollars per TiB scanned,
+	// used by xf cost, xf check, and xf web (default: 6.25).
+	KeyUSDPerTiB = "usdPerTiB"
 	// KeySourceAutosaveMs turns on autosave in xf web's source pane: the
 	// milliseconds it waits after an edit before saving; 0 or unset is
 	// off.
@@ -260,6 +268,7 @@ var Titles = map[string]string{
 	KeyDefaultBranch:        "Default branch",
 	KeyDevCompilerOptions:   "Dev compiler options",
 	KeyProdCompilerOptions:  "Prod compiler options",
+	KeyLineageProjects:      "Extra Dataplex lineage projects",
 	KeyTablePrefix:          "Table prefix",
 	KeySchemaSuffix:         "Schema suffix",
 	KeyDatabaseSuffix:       "Database suffix",
@@ -270,6 +279,7 @@ var Titles = map[string]string{
 	KeyWebThemeDark:         "Web theme when dark",
 	KeyScratchWarnGB:        "Scratch warning size",
 	KeyScratchConfirmGB:     "Scratch confirm size",
+	KeyUSDPerTiB:            "BigQuery price per TiB (USD)",
 	KeySourceAutosaveMs:     "Autosave delay",
 	KeyDiffStyle:            "Diff style",
 	KeyPythonLanguageServer: "Python language server",
@@ -324,6 +334,7 @@ var Defaults = func() map[string]string {
 		KeyDefaultBranch:        DefaultBranch,
 		KeyDevCompilerOptions:   NoDefault,
 		KeyProdCompilerOptions:  NoDefault + " (the default targets)",
+		KeyLineageProjects:      NoDefault + " (the table's own project)",
 		KeyTablePrefix:          "namePrefix of the workflow settings",
 		KeySchemaSuffix:         "datasetSuffix of the workflow settings",
 		KeyDatabaseSuffix:       "projectSuffix of the workflow settings",
@@ -334,6 +345,7 @@ var Defaults = func() map[string]string {
 		KeyWebThemeDark:         webtheme.DefaultDark,
 		KeyScratchWarnGB:        strconv.Itoa(DefaultScratchWarnGB),
 		KeyScratchConfirmGB:     strconv.Itoa(DefaultScratchConfirmGB),
+		KeyUSDPerTiB:            "6.25",
 		KeySourceAutosaveMs:     "0 (off)",
 		KeyDiffStyle:            DiffInline,
 		KeyPythonLanguageServer: PythonPyrefly,
@@ -358,7 +370,7 @@ var Defaults = func() map[string]string {
 }()
 
 // Keys lists every key in the order they are documented.
-var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyDeferToProd, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
+var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyLineageProjects, KeyDeferToProd, KeyUSDPerTiB, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
@@ -383,6 +395,7 @@ var Flags = map[string]string{
 	KeyDefaultBranch:       "default-branch",
 	KeyDevCompilerOptions:  "dev-compiler-options",
 	KeyProdCompilerOptions: "prod-compiler-options",
+	KeyLineageProjects:     "lineage-projects",
 	KeyTablePrefix:         "table-prefix",
 	KeySchemaSuffix:        "schema-suffix",
 	KeyDatabaseSuffix:      "database-suffix",
@@ -391,6 +404,7 @@ var Flags = map[string]string{
 	KeyWebTheme:            "web-theme",
 	KeyScratchWarnGB:       "scratch-warn-gb",
 	KeyScratchConfirmGB:    "scratch-confirm-gb",
+	KeyUSDPerTiB:           "usd-per-tib",
 	KeySourceAutosaveMs:    "source-autosave-ms",
 	KeyWebAutoExitSeconds:  "web-auto-exit-seconds",
 	KeyWebBrowser:          "web-browser",
@@ -448,15 +462,18 @@ type Settings struct {
 	SnowflakeWarehouse string
 	// SnowflakeConnection is its ~/.snowflake/connections.toml connection
 	SnowflakeConnection string
-	RunMode           string // "cli" or "api": how r runs to start with
-	DataformLocation  string // region of the Dataform repository, for API runs
-	DataformRepo      string // name of the Dataform repository, for API runs
-	DefaultBranch     string // the branch R (run changed) compares against
+	RunMode             string // "cli" or "api": how r runs to start with
+	DataformLocation    string // region of the Dataform repository, for API runs
+	DataformRepo        string // name of the Dataform repository, for API runs
+	DefaultBranch       string // the branch R (run changed) compares against
 	// DevCompilerOptions are the compiler options of the user's dev runs
 	DevCompilerOptions string
 	// ProdCompilerOptions are the compiler options of the project's prod
 	// runs
 	ProdCompilerOptions string
+	// LineageProjects is a comma-separated list of additional GCP projects
+	// searched in Dataplex Data Lineage alongside each table's project
+	LineageProjects string
 	// TablePrefix, SchemaSuffix and DatabaseSuffix are what Dataform adds
 	// to the names it builds
 	TablePrefix, SchemaSuffix, DatabaseSuffix string
@@ -467,6 +484,8 @@ type Settings struct {
 	Theme, WebTheme, WebThemeLight, WebThemeDark string
 	// ScratchWarnGB and ScratchConfirmGB are GiB, as a number
 	ScratchWarnGB, ScratchConfirmGB string
+	// USDPerTiB is the BigQuery on-demand price in dollars per TiB scanned
+	USDPerTiB string
 	// SourceAutosaveMs is milliseconds, as a whole number
 	SourceAutosaveMs string
 	// DiffStyle is "inline" or "side-by-side"
@@ -504,6 +523,21 @@ type Settings struct {
 	VimFormat string
 }
 
+// ParseLineageProjects splits a comma-separated lineageProjects setting into
+// deduplicated GCP project IDs.
+func ParseLineageProjects(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func (s *Settings) field(key string) *string {
 	switch key {
 	case KeyDataformBin:
@@ -536,6 +570,8 @@ func (s *Settings) field(key string) *string {
 		return &s.DevCompilerOptions
 	case KeyProdCompilerOptions:
 		return &s.ProdCompilerOptions
+	case KeyLineageProjects:
+		return &s.LineageProjects
 	case KeyTablePrefix:
 		return &s.TablePrefix
 	case KeySchemaSuffix:
@@ -556,6 +592,8 @@ func (s *Settings) field(key string) *string {
 		return &s.ScratchWarnGB
 	case KeyScratchConfirmGB:
 		return &s.ScratchConfirmGB
+	case KeyUSDPerTiB:
+		return &s.USDPerTiB
 	case KeySourceAutosaveMs:
 		return &s.SourceAutosaveMs
 	case KeyDiffStyle:
@@ -874,18 +912,22 @@ func valueOf(key string, raw json.RawMessage, base, home string) (string, error)
 			return "", fmt.Errorf("%s must be true or false, not %s", key, raw)
 		}
 		v = fmt.Sprint(b)
-	} else if key == KeyScratchWarnGB || key == KeyScratchConfirmGB {
+	} else if key == KeyScratchWarnGB || key == KeyScratchConfirmGB || key == KeyUSDPerTiB {
 		// A number, or a string of one.
+		unit := "number of GiB"
+		if key == KeyUSDPerTiB {
+			unit = "price in dollars"
+		}
 		var n json.Number
 		if err := json.Unmarshal(raw, &n); err != nil {
 			if err := json.Unmarshal(raw, &v); err != nil {
-				return "", fmt.Errorf("%s must be a number of GiB, not %s", key, raw)
+				return "", fmt.Errorf("%s must be a %s, not %s", key, unit, raw)
 			}
 		} else {
 			v = n.String()
 		}
-		if f, err := strconv.ParseFloat(v, 64); err != nil || f <= 0 {
-			return "", fmt.Errorf("%s must be a number of GiB above 0, not %s", key, raw)
+		if f, err := strconv.ParseFloat(v, 64); err != nil || f <= 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+			return "", fmt.Errorf("%s must be a %s above 0, not %s", key, unit, raw)
 		}
 	} else if key == KeySourceAutosaveMs {
 		// A whole number, or a string of one.
@@ -950,6 +992,8 @@ func valueOf(key string, raw json.RawMessage, base, home string) (string, error)
 		return "", fmt.Errorf("%s must be keys as vim writes them, e.g. %s or <C-k>, with no spaces, not %q", key, cmp.Or(VimKeyDefaults[key], "<leader>="), v)
 	case (key == KeyTablePrefix || key == KeySchemaSuffix || key == KeyDatabaseSuffix) && !nameAffix.MatchString(v):
 		return "", fmt.Errorf("%s must be letters, digits, _ and -, not %q", key, v)
+	case key == KeyLineageProjects && !lineageProjectsOK(v):
+		return "", fmt.Errorf("%s must be comma-separated GCP project IDs (letters, digits, -, :, .), not %q", key, v)
 	case key == KeyWebBrowser && v == "":
 		return "", fmt.Errorf("%s must be \"%s\", \"%s\" or a Chromium browser's path or name, not \"\"", key, BrowserDefault, BrowserApp)
 	case key == KeyWebBrowser && v != BrowserDefault && v != BrowserApp:
@@ -972,7 +1016,23 @@ func valueOf(key string, raw json.RawMessage, base, home string) (string, error)
 // nameAffix is what tablePrefix, schemaSuffix and databaseSuffix may be:
 // what a BigQuery table, dataset or project name may have in it, so a
 // value never needs quoting on a command line.
-var nameAffix = regexp.MustCompile(`^[A-Za-z0-9_-]*$`)
+var (
+	nameAffix    = regexp.MustCompile(`^[A-Za-z0-9_-]*$`)
+	gcpProjectRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.:-]*$`)
+)
+
+func lineageProjectsOK(v string) bool {
+	if strings.TrimSpace(v) == "" {
+		return true
+	}
+	for _, part := range strings.Split(v, ",") {
+		p := strings.TrimSpace(part)
+		if p == "" || !gcpProjectRE.MatchString(p) {
+			return false
+		}
+	}
+	return true
+}
 
 // webThemeOK reports whether v names one of xf web's themes; light and
 // dark, which webTheme was before there were themes, name xf's own.
@@ -1247,7 +1307,7 @@ func rawOf(key, value string) json.RawMessage {
 		if value == "true" || value == "false" {
 			return json.RawMessage(value)
 		}
-	case KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyWebAutoExitSeconds, KeyForgePollSeconds:
+	case KeyScratchWarnGB, KeyScratchConfirmGB, KeyUSDPerTiB, KeySourceAutosaveMs, KeyWebAutoExitSeconds, KeyForgePollSeconds:
 		var n json.Number
 		if json.Unmarshal([]byte(value), &n) == nil {
 			return json.RawMessage(n.String())

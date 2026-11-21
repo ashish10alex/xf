@@ -267,7 +267,7 @@ func (p *projectState) impact(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	p.fetchBase(ctx, req.Refresh, req.Token)
 	rep, err := d.ColumnImpact(ctx, engine.ImpactRequest{DefaultBranch: d.DefaultBranch, Head: changesHead(req.API), Refresh: req.Refresh,
-		DevCompilerOptions: d.DevCompilerOptions, ProdCompilerOptions: d.ProdCompilerOptions, DbtProdTarget: d.DbtProdTarget, Unset: d.Unset},
+		DevCompilerOptions: d.DevCompilerOptions, ProdCompilerOptions: d.ProdCompilerOptions, DbtProdTarget: d.DbtProdTarget, LineageProjects: d.LineageProjects, Unset: d.Unset},
 		progress(p, req.Token, func(pr impact.Progress) (string, *costView) { return progressText(pr.Phase, pr.Done, pr.Total), nil }))
 	if err != nil {
 		writeError(w, err)
@@ -323,8 +323,8 @@ type costView struct {
 	BasePending bool               `json:"basePending,omitempty"`
 }
 
-func costViewOf(rep *cost.Report, api bool) *costView {
-	r := frontend.CostReport(rep)
+func costViewOf(rep *cost.Report, api bool, usdPerTiB float64) *costView {
+	r := frontend.CostReportWith(rep, cost.Options{USDPerTiB: usdPerTiB})
 	v := &costView{What: whatOf(api), Report: &r, CheckedAt: rep.CheckedAt.Local().Format("15:04"), Signature: rep.Signature,
 		Stale: rep.Stale, BasePending: rep.BasePending}
 	if c := rep.Comparison; c != nil {
@@ -350,6 +350,7 @@ func (p *projectState) cost(w http.ResponseWriter, r *http.Request) {
 	}
 	d := p.deps
 	d.DefaultBranch = p.base
+	usdPerTiB := p.usdPerTiB
 	p.mu.Unlock()
 	if !req.API && p.hasErrors() {
 		writeError(w, engine.ErrStale)
@@ -363,7 +364,7 @@ func (p *projectState) cost(w http.ResponseWriter, r *http.Request) {
 		progress(p, req.Token, func(pr cost.Progress) (string, *costView) {
 			var partial *costView
 			if pr.Partial != nil {
-				partial = costViewOf(pr.Partial, req.API)
+				partial = costViewOf(pr.Partial, req.API, usdPerTiB)
 			}
 			return progressText(pr.Phase, pr.Done, pr.Total), partial
 		}))
@@ -371,7 +372,7 @@ func (p *projectState) cost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, costViewOf(rep, req.API))
+	writeJSON(w, costViewOf(rep, req.API, usdPerTiB))
 }
 
 // prod answers the prodCompilerOptions prompt: options to compile with

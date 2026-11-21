@@ -630,7 +630,7 @@ func TestJSONTotals(t *testing.T) {
 
 func TestStripCommentsAndNames(t *testing.T) {
 	sql := "select '--not a comment', `a-b.c.events` /* event_date */ from t # event_date\nwhere x = 1 -- event_date"
-	code := strings.ToLower(stripComments(sql))
+	code := strings.ToLower(project.StripComments(sql))
 	if names(code, "event_date") {
 		t.Errorf("a commented column counted: %q", code)
 	}
@@ -1066,5 +1066,225 @@ func TestTextTableNotes(t *testing.T) {
 	r.Actions[1].LeftOutDML.Table = "acme.marts.b_snap"
 	if got := Text(r, Options{}); !strings.Contains(got, "\n  action ") || !strings.Contains(got, "\n✓ ops.a_snap ¹ ") || !strings.Contains(got, "\n✓ marts.b_snap ¹ ") {
 		t.Errorf("two datasets:\n%s", got)
+	}
+}
+
+func TestRunPairsRenamedActionWithMergeBase(t *testing.T) {
+	newAct := action("orders_v2", project.KindTable, "select * from raw.orders where day >= '2026-01-01'")
+	oldAct := action("orders", project.KindTable, "select * from raw.orders where day >= '2025-01-01'")
+	res := changed(changes.ReasonNew, newAct)
+	res.Changed[0].RenamedFrom = oldAct.ID
+	res.Deleted = []changes.Deleted{{ID: oldAct.ID, Type: "table", RenamedTo: newAct.ID}}
+	bq := &fakeBQ{dryRuns: map[string]*warehouse.Check{
+		newAct.Query: precise(2 * gib),
+		oldAct.Query: precise(2 * gib),
+	}}
+	r, err := Run(context.Background(), res, Head{Graph: graph(newAct)}, Deps{
+		DryRun: bq.dryRun,
+		Base:   func(context.Context) (*project.Graph, error) { return graph(oldAct), nil },
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := find(t, r, "orders_v2")
+	if a.New || a.RenamedFrom != string(oldAct.ID) {
+		t.Errorf("renamed action flags: New=%v RenamedFrom=%q", a.New, a.RenamedFrom)
+	}
+	if d, ok := a.Delta(); !ok || d != 0 {
+		t.Errorf("renamed delta = %d, %v; want 0, true", d, ok)
+	}
+	if r.Growth() != 0 {
+		t.Errorf("Growth() = %d, want 0", r.Growth())
+	}
+}
+
+func TestRunMatchesDbtBigQueryQuotingAndDeduplicatesIsBuilt(t *testing.T) {
+	upstream := action("new_upstream", project.KindTable, "select 1 as id")
+	other := action("other_upstream", project.KindTable, "select 1 as id")
+	a1 := action("down1", project.KindTable, "select * from `acme`.`marts`.`new_upstream` join `acme`.`marts`.`other_upstream` using (id)")
+	a2 := action("down2", project.KindTable, "select * from `acme`.`marts`.`new_upstream` join `acme`.`marts`.`other_upstream` using (id) where 1=1")
+	notFound := func(tbl string) error {
+		return &warehouse.APIError{Status: 404, Message: "Not found: Table acme:marts." + tbl + " was not found in location EU"}
+	}
+	bq := &fakeBQ{
+		dryRuns: map[string]*warehouse.Check{upstream.Query: precise(gib), other.Query: precise(gib)},
+		failures: map[string]error{
+			a1.Query: notFound("new_upstream"),
+			a2.Query: notFound("new_upstream"),
+			"SELECT 1 FROM `acme.marts.other_upstream` WHERE FALSE": notFound("other_upstream"),
+		},
+	}
+	res := changed(changes.ReasonNew, upstream, other, a1, a2)
+	r, err := Run(context.Background(), res, Head{Graph: graph(upstream, other, a1, a2)}, Deps{DryRun: bq.dryRun}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantWaits := []string{"acme.marts.new_upstream", "acme.marts.other_upstream"}
+	for _, name := range []string{"down1", "down2"} {
+		if got := find(t, r, name).Waits; !slices.Equal(got, wantWaits) {
+			t.Errorf("%s Waits = %v, want %v", name, got, wantWaits)
+		}
+	}
+	probes := 0
+	for _, s := range bq.asked {
+		if strings.Contains(s, "SELECT 1 FROM `acme.marts.other_upstream`") {
+			probes++
+		}
+	}
+	if probes != 1 {
+		t.Errorf("isBuilt probed other_upstream %d times, want 1", probes)
+	}
+}
+
+func TestRunUnfilteredUsesPostStripSQLAndIgnoresStringLiterals(t *testing.T) {
+	refused := &warehouse.APIError{Status: 403, Message: "Access Denied: Table acme:marts.snap: Permission bigquery.tables.updateData denied on table acme:marts.snap"}
+	snap := action("snap", project.KindTable, "select 'event_date' as label, id from `acme.raw.events`")
+	snap.PreOps = []string{"DELETE FROM `acme.marts.snap` WHERE event_date = current_date()"}
+	bq := &fakeBQ{
+		dryRuns:    map[string]*warehouse.Check{snap.Query: precise(tib, "events")},
+		failures:   map[string]error{snap.PreOps[0] + ";\n" + snap.Query + ";": refused},
+		partitions: map[string]*warehouse.Partition{"events": {Column: "event_date"}},
+	}
+	r, err := Run(context.Background(), changed(changes.ReasonSQL, snap), Head{Graph: graph(snap)}, Deps{
+		DryRun:    bq.dryRun,
+		Partition: bq.partition,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := find(t, r, "snap").Unfiltered
+	want := []Unfiltered{{Table: "acme.raw.events", Column: "event_date"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Unfiltered = %+v, want %+v", got, want)
+	}
+}
+
+func TestCostGatesAndJSONDeltaUSD(t *testing.T) {
+	r := &Report{
+		Actions: []Action{
+			{
+				Name:       "acme.marts.orders",
+				FileName:   "definitions/orders.sqlx",
+				Type:       "table",
+				Estimate:   &Estimate{Bytes: 10 * gib},
+				Base:       &Estimate{Bytes: 2 * gib},
+				Unfiltered: []Unfiltered{{Table: "acme.raw.events", Column: "event_date"}},
+			},
+			{
+				Name:     "acme.marts.skipped",
+				FileName: "definitions/skipped.sqlx",
+				Type:     "table",
+				Reason:   "dry run failed",
+			},
+		},
+	}
+
+	if !r.ExceedsDelta(5 * gib) {
+		t.Error("expected ExceedsDelta(5 GiB) to be true for +8 GiB growth")
+	}
+	if r.ExceedsDelta(10 * gib) {
+		t.Error("expected ExceedsDelta(10 GiB) to be false for +8 GiB growth")
+	}
+	if got := r.UnfilteredCount(); got != 1 {
+		t.Errorf("UnfilteredCount() = %d, want 1", got)
+	}
+
+	// Threshold-only preserves legacy GateLine wording.
+	if got := GateLine(r, Options{Threshold: 5 * gib}); got != "Gate failed: 10.00 GiB exceeds the limit of 5.00 GiB" {
+		t.Errorf("threshold-only GateLine = %q", got)
+	}
+	if got := GateLine(r, Options{Threshold: 20 * gib}); got != "Gate passed: 10.00 GiB is within the limit of 20.00 GiB" {
+		t.Errorf("threshold-only pass GateLine = %q", got)
+	}
+
+	// Delta, unfiltered, and unestimated gates.
+	o := Options{USDPerTiB: 10, DeltaThreshold: 5 * gib, FailOnUnfiltered: true, FailOnUnestimated: true}
+	if !r.GateTripped(o) {
+		t.Fatal("expected GateTripped to be true")
+	}
+	line := GateLine(r, o)
+	for _, want := range []string{"Gate failed:", "growth of 8.00 GiB exceeds the delta limit of 5.00 GiB", "1 query missing a partition filter", "1 action could not be estimated"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("GateLine = %q, missing %q", line, want)
+		}
+	}
+	if md := Markdown(r, o); !strings.Contains(md, "❌ Gate failed:") {
+		t.Errorf("Markdown missing failed gate marker:\n%s", md)
+	}
+	if txt := Text(r, o); !strings.Contains(txt, "✗ Gate failed:") {
+		t.Errorf("Text missing failed gate marker:\n%s", txt)
+	}
+
+	// No merge-base: GateLine explicitly says total is counted against the delta limit.
+	noBase := &Report{
+		BaseError: "compile failed",
+		Actions:   []Action{{Name: "acme.marts.orders", Type: "table", Estimate: &Estimate{Bytes: 70 * gib}}},
+	}
+	if got := GateLine(noBase, Options{DeltaThreshold: 50 * gib}); got != "Gate failed: no merge-base: total of 70.00 GiB exceeds the delta limit of 50.00 GiB" {
+		t.Errorf("no-base delta GateLine = %q", got)
+	}
+
+	// PastRuns reports do not apply byte/estimate gates, while FailOnUnfiltered
+	// gates on static partition/clustering warnings.
+	past := &Report{PastRuns: &PastRuns{Runs: []PastRun{{Name: "cat.sch.orders", Ran: true, ReadBytes: 100 * gib}}}}
+	estOnly := Options{DeltaThreshold: 5 * gib, FailOnUnestimated: true}
+	if past.GateTripped(estOnly) {
+		t.Error("PastRuns report should not trip byte/estimate cost gates")
+	}
+	if got := GateLine(past, estOnly); !strings.Contains(got, "Gate not applied") {
+		t.Errorf("PastRuns estimate-only GateLine = %q", got)
+	}
+	if past.GateTripped(o) {
+		t.Error("PastRuns report with no unfiltered queries should not trip FailOnUnfiltered")
+	}
+	if got := GateLine(past, o); !strings.Contains(got, "Gate passed: no missing partition/cluster filters") {
+		t.Errorf("PastRuns FailOnUnfiltered GateLine = %q", got)
+	}
+
+	// JSON exposes deltaTotalUsd, deltaUsd (or null when unknown), and keeps gate.exceeded
+	// strictly for ThresholdBytes while gate.failed reflects any tripped gate.
+	oBoth := Options{USDPerTiB: 10, Threshold: 100 * gib, DeltaThreshold: 5 * gib, FailOnUnfiltered: true, FailOnUnestimated: true}
+	data, err := JSON(r, oBoth)
+	if err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	if !strings.Contains(string(data), `"deltaUsd": null`) {
+		t.Errorf("expected unestimated action to serialize deltaUsd as null:\n%s", data)
+	}
+	var doc struct {
+		DeltaTotalBytes *int64   `json:"deltaTotalBytes"`
+		DeltaTotalUSD   *float64 `json:"deltaTotalUsd"`
+		Gate            *struct {
+			ThresholdBytes      int64 `json:"thresholdBytes"`
+			Exceeded            bool  `json:"exceeded"`
+			Failed              bool  `json:"failed"`
+			DeltaThresholdBytes int64 `json:"deltaThresholdBytes"`
+			DeltaExceeded       bool  `json:"deltaExceeded"`
+			FailOnUnfiltered    bool  `json:"failOnUnfiltered"`
+			UnfilteredExceeded  bool  `json:"unfilteredExceeded"`
+			FailOnUnestimated   bool  `json:"failOnUnestimated"`
+			UnestimatedExceeded bool  `json:"unestimatedExceeded"`
+		} `json:"gate"`
+		Actions []struct {
+			Name       string   `json:"name"`
+			DeltaBytes *int64   `json:"deltaBytes"`
+			DeltaUSD   *float64 `json:"deltaUsd"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("Unmarshal JSON: %v", err)
+	}
+	if doc.DeltaTotalBytes == nil || *doc.DeltaTotalBytes != 8*gib {
+		t.Fatalf("deltaTotalBytes = %v, want %d", doc.DeltaTotalBytes, 8*gib)
+	}
+	wantDeltaUSD := oBoth.USD(8 * gib)
+	if doc.DeltaTotalUSD == nil || *doc.DeltaTotalUSD != wantDeltaUSD {
+		t.Errorf("deltaTotalUsd = %v, want %v", doc.DeltaTotalUSD, wantDeltaUSD)
+	}
+	if doc.Gate == nil || doc.Gate.Exceeded || !doc.Gate.Failed || !doc.Gate.DeltaExceeded || doc.Gate.DeltaThresholdBytes != 5*gib || !doc.Gate.UnfilteredExceeded || !doc.Gate.UnestimatedExceeded {
+		t.Errorf("gate = %+v (want exceeded=false, failed=true)", doc.Gate)
+	}
+	if len(doc.Actions) == 0 || doc.Actions[0].DeltaUSD == nil || *doc.Actions[0].DeltaUSD != wantDeltaUSD {
+		t.Errorf("action[0].deltaUsd = %+v, want %v", doc.Actions[0].DeltaUSD, wantDeltaUSD)
 	}
 }

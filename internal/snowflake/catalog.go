@@ -205,18 +205,70 @@ func parseSnowflakeTime(s string) time.Time {
 	return time.Time{}
 }
 
+// ClusterBy returns the clustering key expressions of database.schema.table
+// using a single Cloud Services SHOW OBJECTS call (no DESCRIBE TABLE, no
+// virtual warehouse).
+func (c *Client) ClusterBy(ctx context.Context, database, schema, table string) ([]string, error) {
+	if database == "" || schema == "" || table == "" {
+		return nil, nil
+	}
+	q := "SHOW OBJECTS LIKE " + quoteLiteral(escapeLike(table)) + " IN SCHEMA " + sqlIdent(database) + "." + sqlIdent(schema)
+	st, err := c.executeMetadata(ctx, q)
+	if err != nil {
+		return nil, mapStatementError(err)
+	}
+	idx := st.colIndex()
+	for _, row := range st.Data {
+		if !strings.EqualFold(cellStr(row, idx, "name"), table) {
+			continue
+		}
+		if s := cellStr(row, idx, "cluster_by"); s != "" {
+			return parseClusterBy(s), nil
+		}
+		return nil, nil
+	}
+	return nil, nil
+}
+
 func parseClusterBy(s string) []string {
 	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "LINEAR(")
-	s = strings.TrimSuffix(s, ")")
-	if s == "" {
+	if strings.HasPrefix(strings.ToUpper(s), "LINEAR(") && strings.HasSuffix(s, ")") {
+		s = s[len("LINEAR(") : len(s)-1]
+	}
+	if strings.TrimSpace(s) == "" {
 		return nil
 	}
 	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
+	depth := 0
+	inSingle := false
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\'':
+			if inSingle && i+1 < len(s) && s[i+1] == '\'' {
+				i++
+				continue
+			}
+			inSingle = !inSingle
+		case '(':
+			if !inSingle {
+				depth++
+			}
+		case ')':
+			if !inSingle && depth > 0 {
+				depth--
+			}
+		case ',':
+			if !inSingle && depth == 0 {
+				if p := strings.TrimSpace(s[start:i]); p != "" {
+					out = append(out, p)
+				}
+				start = i + 1
+			}
 		}
+	}
+	if p := strings.TrimSpace(s[start:]); p != "" {
+		out = append(out, p)
 	}
 	return out
 }

@@ -160,7 +160,7 @@ func runnableActions(data []byte) (map[project.ActionID]comparableAction, error)
 	}
 	for _, t := range g.Tables {
 		add(t, t.str("type"),
-			t.pick("query", "incrementalQuery", "preOps", "postOps", "incrementalPreOps"),
+			t.pick("query", "incrementalQuery", "preOps", "postOps", "incrementalPreOps", "incrementalPostOps"),
 			t.pick("type", "protected", "uniqueKey", "bigquery", "onSchemaChange", "disabled"))
 	}
 	for _, o := range g.Operations {

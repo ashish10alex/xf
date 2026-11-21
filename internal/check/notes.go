@@ -1,15 +1,18 @@
 package check
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/ashish10alex/xf/internal/cost"
 	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/warehouse"
 )
@@ -62,7 +65,7 @@ func Notes(r *Report, o Options, src Source, prefix string) []Note {
 	}
 	level := func(s impact.Severity) Level {
 		switch {
-		case o.Gate && s >= o.FailOn && s >= impact.SeverityWarning:
+		case o.Gate && s >= o.FailOn && s > impact.SeverityLow:
 			return Error
 		case s >= impact.SeverityWarning:
 			return Warning
@@ -90,13 +93,31 @@ func Notes(r *Report, o Options, src Source, prefix string) []Note {
 				n := Note{Level: level(s), File: full(t.FileName), Check: "xf/" + c.Change.Kind}
 				switch {
 				case c.Change.BreaksRun == impact.BreaksRunUniqueKey:
-					n.Title = "Dropped column still in uniqueKey"
+					keyField := "uniqueKey"
+					if t.Dbt {
+						keyField = "unique_key"
+					}
+					n.Title = "Dropped column still in " + keyField
 					n.Line = namingLine(src.Text(t.FileName), c.Column) // the config's uniqueKey, ahead of the query
-					n.Text = fmt.Sprintf("This branch drops %s from %s, but its uniqueKey still names it, so every incremental run fails, after a full refresh too: take %s out of uniqueKey.", c.Column, impact.ShortTable(t.Table), c.Column) + alsoRead(c.Readers)
+					n.Text = fmt.Sprintf("This branch drops %s from %s, but its %s still names it, so every incremental run fails, after a full refresh too: take %s out of %s.", c.Column, impact.ShortTable(t.Table), keyField, c.Column, keyField) + alsoRead(c.Readers)
 				case c.Change.BreaksRun == impact.BreaksRunTable:
 					n.Title = "Dropped column breaks the incremental run"
 					n.Line = removedLine(src.Diff(t.FileName), c.Column)
-					n.Text = fmt.Sprintf("This branch drops %s from %s, whose table in BigQuery still has it: Dataform's incremental MERGE or INSERT names every column of the table, so the next incremental run fails until a full refresh rebuilds it.", c.Column, impact.ShortTable(t.Table)) + alsoRead(c.Readers)
+					if t.Dbt {
+						if c.Change.Kind == impact.TypeChanged {
+							n.Title = "Retyped column breaks the incremental run"
+							n.Line = namingLine(src.Text(t.FileName), c.Column)
+							n.Text = fmt.Sprintf("This branch changes %s of %s from %s to %s, which fails dbt's incremental run with on_schema_change: fail until --full-refresh rebuilds it.", c.Column, impact.ShortTable(t.Table), c.Change.From, c.Change.To) + alsoRead(c.Readers)
+						} else {
+							n.Text = fmt.Sprintf("This branch drops %s from %s, whose target table still has it: dbt's incremental run fails until --full-refresh rebuilds it.", c.Column, impact.ShortTable(t.Table)) + alsoRead(c.Readers)
+						}
+					} else if c.Change.Kind == impact.TypeChanged {
+						n.Title = "Retyped column breaks the incremental run"
+						n.Line = namingLine(src.Text(t.FileName), c.Column)
+						n.Text = fmt.Sprintf("This branch changes %s of %s from %s to %s, which fails Dataform's incremental run with onSchemaChange: FAIL until a full refresh rebuilds it.", c.Column, impact.ShortTable(t.Table), c.Change.From, c.Change.To) + alsoRead(c.Readers)
+					} else {
+						n.Text = fmt.Sprintf("This branch drops %s from %s, whose table in BigQuery still has it: Dataform's incremental MERGE or INSERT names every column of the table, so the next incremental run fails until a full refresh rebuilds it.", c.Column, impact.ShortTable(t.Table)) + alsoRead(c.Readers)
+					}
 				case c.Change.Kind == impact.Dropped:
 					n.Title = "Dropped column still read"
 					n.Line = removedLine(src.Diff(t.FileName), c.Column)
@@ -112,27 +133,122 @@ func Notes(r *Report, o Options, src Source, prefix string) []Note {
 				notes = append(notes, n)
 			}
 		}
+		if o.FailOnUnchecked {
+			for _, u := range impact.UncheckedFailures(r.Impact) {
+				file := ""
+				if u.FileName != "" {
+					file = full(u.FileName)
+				}
+				notes = append(notes, Note{Level: Error, File: file, Line: 1, Check: "xf/unchecked",
+					Title: "Model not checked",
+					Text:  fmt.Sprintf("%s could not be checked: %s", impact.ShortTable(u.Table), oneLine(u.Reason))})
+			}
+		}
 	}
 	if r.Cost != nil {
+		unfilteredLevel := Warning
+		if o.Cost.FailOnUnfiltered {
+			unfilteredLevel = Error
+		}
+		unestimatedLevel := Notice
+		if o.Cost.FailOnUnestimated {
+			unestimatedLevel = Error
+		}
+		deltaTripped := r.Cost.ExceedsDelta(o.Cost.DeltaThreshold)
+		noBase := r.Cost.BaseError != "" || r.Cost.BasePending
+		type deltaHit struct {
+			action cost.Action
+			delta  int64
+		}
+		var deltaHits []deltaHit
 		for _, a := range r.Cost.Actions {
 			if a.FileName == "" {
 				continue
 			}
 			for _, u := range a.Unfiltered {
 				table := impact.ShortTable(u.Table)
-				notes = append(notes, Note{Level: Warning, File: full(a.FileName), Line: namingLine(src.Text(a.FileName), lastPart(u.Table)),
-					Check: "xf/missing-partition-filter", Title: "No partition filter",
-					Text: fmt.Sprintf("This query reads %s, partitioned by %s, without naming %s, so no partition can be pruned.", table, u.Column, u.Column)})
+				title := "No partition filter"
+				text := fmt.Sprintf("This query reads %s, partitioned by %s, without filtering on %s, so no partition can be pruned.", table, u.Column, u.Column)
+				if u.MergeTarget {
+					title = "MERGE target without partition filter"
+					text = fmt.Sprintf("This MERGE writes to %s, partitioned by %s, without filtering on %s in its ON or WHEN clauses, so BigQuery scans the full target table.", table, u.Column, u.Column)
+				}
+				notes = append(notes, Note{Level: unfilteredLevel, File: full(a.FileName), Line: namingLine(src.Text(a.FileName), lastPart(u.Table)),
+					Check: "xf/missing-partition-filter", Title: title, Text: text})
 			}
 			if a.Estimate == nil {
-				notes = append(notes, Note{Level: Notice, File: full(a.FileName), Line: 1, Check: "xf/not-estimated",
+				notes = append(notes, Note{Level: unestimatedLevel, File: full(a.FileName), Line: 1, Check: "xf/not-estimated",
 					Title: "Not estimated", Text: "BigQuery gave no estimate for " + impact.ShortTable(a.Name) + ": " + oneLine(a.WhyNot())})
+			} else if deltaTripped && (a.Base == nil || a.Estimate.Bytes > a.Base.Bytes) {
+				delta := a.Estimate.Bytes
+				if a.Base != nil {
+					delta -= a.Base.Bytes
+				}
+				if delta > 0 {
+					deltaHits = append(deltaHits, deltaHit{action: a, delta: delta})
+				}
 			}
 		}
-		if r.CostTripped(o) {
+		if r.Cost.PastRuns != nil {
+			for _, run := range r.Cost.PastRuns.Runs {
+				if run.FileName == "" {
+					continue
+				}
+				for _, u := range run.Unfiltered {
+					table := impact.ShortTable(u.Table)
+					notes = append(notes, Note{Level: unfilteredLevel, File: full(run.FileName), Line: namingLine(src.Text(run.FileName), lastPart(u.Table)),
+						Check: "xf/missing-partition-filter", Title: "No partition/cluster filter",
+						Text: fmt.Sprintf("This query reads %s, partitioned/clustered by %s, without filtering on %s.", table, u.Column, u.Column)})
+				}
+			}
+		}
+		if deltaTripped && len(deltaHits) > 0 {
+			slices.SortStableFunc(deltaHits, func(a, b deltaHit) int {
+				return cmp.Or(cmp.Compare(b.delta, a.delta), cmp.Compare(a.action.Name, b.action.Name))
+			})
+			minDelta := cmp.Or(max(o.QuietUnder, 0), DefaultQuietUnder)
+			var selected []deltaHit
+			for _, h := range deltaHits {
+				if h.delta >= minDelta {
+					selected = append(selected, h)
+				}
+			}
+			if len(selected) == 0 {
+				selected = deltaHits[:1]
+			}
+			if len(selected) > 5 {
+				selected = selected[:5]
+			}
+			for i, h := range selected {
+				a := h.action
+				lvl := Error
+				if i > 0 && h.delta < o.Cost.DeltaThreshold/2 {
+					lvl = Warning
+				}
+				var text string
+				switch {
+				case noBase:
+					text = fmt.Sprintf("%s scans %s (%s) per run (no merge-base to compare with), counted toward the %s delta limit.", impact.ShortTable(a.Name), warehouse.FormatBytes(h.delta), cost.FormatUSD(o.Cost.USD(h.delta)), warehouse.FormatBytes(o.Cost.DeltaThreshold))
+				case a.Base == nil && !a.New:
+					text = fmt.Sprintf("%s scans %s (%s) per run (base estimate unavailable, counted as growth), contributing to the %s delta limit.", impact.ShortTable(a.Name), warehouse.FormatBytes(h.delta), cost.FormatUSD(o.Cost.USD(h.delta)), warehouse.FormatBytes(o.Cost.DeltaThreshold))
+				default:
+					text = fmt.Sprintf("%s adds +%s (%s) per run, pushing the branch over the %s delta limit.", impact.ShortTable(a.Name), warehouse.FormatBytes(h.delta), cost.SignedUSD(o.Cost.USD(h.delta)), warehouse.FormatBytes(o.Cost.DeltaThreshold))
+				}
+				notes = append(notes, Note{Level: lvl, File: full(a.FileName), Line: 1, Check: "xf/cost-delta",
+					Title: "Increases query scan cost", Text: text})
+			}
+		}
+		if r.Cost.Exceeds(o.Cost.Threshold) {
 			total, bound := r.Cost.Total()
 			notes = append(notes, Note{Level: Error, Check: "xf/cost-limit", Title: "Over the cost limit",
 				Text: fmt.Sprintf("The changed actions scan %s%s between them, over the limit of %s.", bound, warehouse.FormatBytes(total), warehouse.FormatBytes(o.Cost.Threshold))})
+		}
+		if deltaTripped {
+			text := fmt.Sprintf("The changed actions add %s of scan per run, over the delta limit of %s.", warehouse.FormatBytes(r.Cost.Growth()), warehouse.FormatBytes(o.Cost.DeltaThreshold))
+			if noBase {
+				text = fmt.Sprintf("No merge-base estimate; the changed actions scan %s per run, counted as growth over the delta limit of %s.", warehouse.FormatBytes(r.Cost.Growth()), warehouse.FormatBytes(o.Cost.DeltaThreshold))
+			}
+			notes = append(notes, Note{Level: Error, Check: "xf/cost-delta-limit", Title: "Over the cost growth limit", Text: text})
 		}
 	}
 	return notes
@@ -189,23 +305,49 @@ func word(name string) *regexp.Regexp {
 	return regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(name) + `($|[^A-Za-z0-9_])`)
 }
 
-// namingLine is the first line of text that names name, else 1.
+// namingLine is the first line of text that names name, else 1. For a
+// dotted nested field ("user.zip"), it falls back to the leaf ("zip").
 func namingLine(text, name string) int {
-	re := word(name)
-	for i, line := range strings.Split(text, "\n") {
-		if re.MatchString(line) {
-			return i + 1
+	if line, ok := findNamingLine(text, name); ok {
+		return line
+	}
+	if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+		if line, ok := findNamingLine(text, name[dot+1:]); ok {
+			return line
 		}
 	}
 	return 1
+}
+
+func findNamingLine(text, name string) (int, bool) {
+	re := word(name)
+	for i, line := range strings.Split(text, "\n") {
+		if re.MatchString(line) {
+			return i + 1, true
+		}
+	}
+	return 1, false
 }
 
 var hunkRE = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
 
 // removedLine is the first line, in the new file, of the diff hunk whose
 // removed lines name column, else 1. A hunk that only removes lines goes
-// on the line before them.
+// on the line before them. For a dotted nested field ("user.zip"), it
+// falls back to the leaf ("zip").
 func removedLine(diff, column string) int {
+	if line, ok := findRemovedLine(diff, column); ok {
+		return line
+	}
+	if dot := strings.LastIndexByte(column, '.'); dot >= 0 {
+		if line, ok := findRemovedLine(diff, column[dot+1:]); ok {
+			return line
+		}
+	}
+	return 1
+}
+
+func findRemovedLine(diff, column string) (int, bool) {
 	re := word(column)
 	start := 0
 	for _, line := range strings.Split(diff, "\n") {
@@ -214,10 +356,10 @@ func removedLine(diff, column string) int {
 			continue
 		}
 		if start > 0 && strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") && re.MatchString(line[1:]) {
-			return max(start, 1)
+			return max(start, 1), true
 		}
 	}
-	return 1
+	return 1, false
 }
 
 // GitHub is the notes as GitHub Actions' workflow commands, a line each.

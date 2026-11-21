@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>xf — BigQuery cost and breakage checks for Dataform and dbt</title>
-  <meta name="description" content="Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops, from Dataplex column lineage. dbt on Databricks too. For GitHub Actions, GitLab CI and coding agents.">
+  <meta name="description" content="Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops, from Dataplex column lineage. dbt on Databricks and Snowflake too. For GitHub Actions, GitLab CI and coding agents.">
   <meta name="theme-color" content="#0b0d0c" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f2efe7" media="(prefers-color-scheme: light)">
 
@@ -50,7 +50,7 @@
     "@type": "SoftwareApplication",
     "name": "xf",
     "url": "https://xf.dataformtools.com/",
-    "description": "Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops, from Dataplex column lineage. dbt on Databricks too. For GitHub Actions, GitLab CI and coding agents.",
+    "description": "Dry run a Dataform or dbt branch before it merges: what it will scan and cost in BigQuery, and which downstream tables still read the columns it drops, from Dataplex column lineage. dbt on Databricks and Snowflake too. For GitHub Actions, GitLab CI and coding agents.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "macOS, Linux, Windows",
     "license": "https://github.com/ashish10alex/xf/blob/main/LICENSE",
@@ -58,7 +58,7 @@
     "sameAs": ["https://github.com/ashish10alex/xf"],
     "codeRepository": "https://github.com/ashish10alex/xf",
     "softwareHelp": "https://xf.dataformtools.com/llms.txt",
-    "keywords": "Dataform, dbt, BigQuery, Databricks, Unity Catalog, Dataplex, column lineage, query cost, dry run, breaking changes, pull request checks, GitHub Actions, GitLab CI, Agent Skills, Claude Code",
+    "keywords": "Dataform, dbt, BigQuery, Databricks, Unity Catalog, Snowflake, Dataplex, column lineage, query cost, dry run, breaking changes, pull request checks, GitHub Actions, GitLab CI, Agent Skills, Claude Code",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
   }
   </script>
@@ -151,7 +151,7 @@
               <code>xf cost</code> dry runs every action your branch changes, which is free and runs nothing, and compares the bytes with the same action at the merge-base with <code>main</code>.
             </p>
             <p>
-              It flags a partitioned table read without its partition column. <code>--fail-over</code> fails the job over a size limit, and <code>--json</code> hands the figures to a script or an agent.
+              It flags a partitioned table read without its partition column. <code>--fail-over</code> fails the job over a size limit, <code>--fail-over-delta</code> over what the branch adds to it, and <code>--json</code> hands the figures to a script or an agent.
             </p>
           </div>
         </div>
@@ -200,7 +200,7 @@
               A reader your branch also edits is dry run against the new table, so <q>still reads it</q> is BigQuery’s answer, not a guess. <code>--fail-on critical</code> fails the job.
             </p>
             <p>
-              A dbt project on <a href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md#databricks">Databricks</a> is checked on its SQL warehouse, with Unity Catalog’s lineage, and its cost is each changed model’s last run.
+              A dbt project on <a href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md#databricks">Databricks</a> is checked on its SQL warehouse, with Unity Catalog’s lineage, and its cost is each changed model’s last run. So is one on <a href="https://github.com/ashish10alex/xf/blob/main/docs/dbt.md#snowflake">Snowflake</a>, on its virtual warehouse, with <code>ACCESS_HISTORY</code> for lineage.
             </p>
           </div>
         </div>
@@ -265,7 +265,7 @@
               <code>xf check</code> runs both checks in one report. In CI it posts one comment on the pull request, edited on each push, and notes on the lines that drop a column or read a table.
             </p>
             <p>
-              It reports and passes by default. <code>--fail-on</code> and <code>--fail-over</code> make it a gate.
+              It reports and passes by default. <code>--fail-on</code> and <code>--fail-over</code> make it a gate; <a href="https://github.com/ashish10alex/xf/blob/main/docs/checks.md">more gates</a> fail on growth over the merge-base, a missing partition filter, or a model that couldn’t be checked.
             </p>
           </div>
         </div>
@@ -393,7 +393,7 @@ exit "$code"</code></pre>
               <table class="codes">
                 <tbody>
                   <tr><th scope="row"><code>0</code></th><td>The report was made, and no gate tripped.</td></tr>
-                  <tr><th scope="row"><code>1</code></th><td><code>--fail-on</code> or <code>--fail-over</code> tripped.</td></tr>
+                  <tr><th scope="row"><code>1</code></th><td>A gate tripped: <code>--fail-on</code>, <code>--fail-over</code> or another <code>--fail-…</code> flag.</td></tr>
                   <tr><th scope="row"><code>2</code></th><td>Neither check could be made. A preflight names what is missing first.</td></tr>
                 </tbody>
               </table>
@@ -436,7 +436,7 @@ exit "$code"</code></pre>
               <span class="step-n">2</span>
               <div>
                 <h3>Ask what the branch costs, or breaks</h3>
-                <p>The agent dry runs both checks and reads the JSON. Exit <code>0</code> is a report; <code>1</code> a gate that tripped, only with <code>--fail-on</code> or <code>--fail-over</code>; <code>2</code> a check that couldn’t be made, with the reason on stderr.</p>
+                <p>The agent dry runs both checks and reads the JSON. Exit <code>0</code> is a report; <code>1</code> a gate that tripped, only with a <code>--fail-…</code> flag; <code>2</code> a check that couldn’t be made, with the reason on stderr.</p>
               </div>
             </li>
             <li data-reveal>
@@ -552,7 +552,7 @@ exit "$code"</code></pre>
         <div class="get-head">
           <h2 id="install-title" class="title" data-reveal>Install <em>xf.</em></h2>
           <p class="chapter-text" data-reveal>
-            One executable for macOS, Linux and Windows. It needs the <a href="https://github.com/dataform-co/dataform">Dataform CLI</a> or <a href="https://www.getdbt.com/">dbt</a>, and <code>gcloud auth application-default login</code> for BigQuery, or a Databricks login. In CI, the GitHub Action and the GitLab template download it for you.
+            One executable for macOS, Linux and Windows. It needs the <a href="https://github.com/dataform-co/dataform">Dataform CLI</a> or <a href="https://www.getdbt.com/">dbt</a>, and <code>gcloud auth application-default login</code> for BigQuery, or a Databricks or Snowflake login. In CI, the GitHub Action and the GitLab template download it for you.
           </p>
         </div>
 

@@ -504,8 +504,9 @@ func (p *projectState) applySettings(v SettingsView, changed ...string) {
 	ms, _ := strconv.Atoi(valueOf(v, config.KeySourceAutosaveMs))
 	warn, _ := strconv.ParseFloat(valueOf(v, config.KeyScratchWarnGB), 64)
 	confirm, _ := strconv.ParseFloat(valueOf(v, config.KeyScratchConfirmGB), 64)
+	usdPerTiB, _ := strconv.ParseFloat(valueOf(v, config.KeyUSDPerTiB), 64)
 	p.mu.Lock()
-	p.sourceAutosaveMs, p.scratchWarnGB, p.scratchConfirmGB = ms, warn, confirm
+	p.sourceAutosaveMs, p.scratchWarnGB, p.scratchConfirmGB, p.usdPerTiB = ms, warn, confirm, usdPerTiB
 	p.vimKeys = vimKeysOf(v)
 	p.diffStyle = valueOf(v, config.KeyDiffStyle)
 	p.pythonServer = valueOf(v, config.KeyPythonLanguageServer)

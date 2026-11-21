@@ -41,6 +41,7 @@ var flagUsage = map[string]string{
 	config.KeyDatabaseSuffix:       "`suffix` for every GCP project a Dataform project's compiles and runs build in, joined with an underscore: dataform's --database-suffix (default: projectSuffix of workflow_settings.yaml)",
 	config.KeyDevCompilerOptions:   "compiler `options` of your dev runs, e.g. --schema-suffix=ashish, so column impact folds their lineage into the actions they run (default: none)",
 	config.KeyProdCompilerOptions:  "compiler `options` of the project's prod runs, e.g. --default-database=acme-prod, so column impact compares with the tables they build and query cost dry runs against the tables they read; '' says the default targets are prod (default: none, the default targets, and the reports say so)",
+	config.KeyLineageProjects:      "comma-separated GCP `projects` to also search in Dataplex Data Lineage alongside each table's own project, e.g. acme-bi,acme-analytics (default: none)",
 	config.KeyEditor:               "`command` o opens files and projects with when no editor is connected, e.g. code, cursor, zed or nvim (default: $VISUAL, then $EDITOR, then " + config.DefaultEditor + ")",
 	config.KeyTheme:                "`theme` of the TUI: auto (follow the terminal), light or dark; the palette's View: theme changes it (default: auto)",
 	config.KeyWebTheme:             "`theme` of xf web: auto (follow the browser, with webThemeLight and webThemeDark) or a theme's id, e.g. dracula or catppuccin-mocha; the page's ◐ button picks it; a project's .xf/config.json can set its own (default: auto)",
@@ -48,6 +49,7 @@ var flagUsage = map[string]string{
 	config.KeyWebThemeDark:         "theme xf web's auto shows while the browser is dark, a theme's id, e.g. tokyo-night (default: " + webtheme.DefaultDark + ")",
 	config.KeyScratchWarnGB:        "`GiB` of a scratch query's dry run at which xf web turns it amber (default: 20)",
 	config.KeyScratchConfirmGB:     "`GiB` of a scratch query's dry run at which xf web turns it red and asks before running it (default: 50)",
+	config.KeyUSDPerTiB:            "the `price` in dollars of a TiB scanned in BigQuery (default: 6.25)",
 	config.KeyPythonLanguageServer: "`server` xf web's source pane checks Python files with: pyrefly or off (default: pyrefly)",
 	config.KeySqlfluffBin:          "`path` to the sqlfluff binary that formats SQL (default: the project's .venv/ or venv/, then sqlfluff on PATH)",
 	config.KeySqlfluffConfig:       "`path` to a sqlfluff config file to format with in place of the project's own (default: the project's .sqlfluff, tox.ini, setup.cfg or pyproject.toml, else the style built into xf)",
@@ -101,6 +103,7 @@ var keyValue = map[string]string{
 	config.KeyDatabaseSuffix:       "letters, digits, _ and -, e.g. dev",
 	config.KeyDevCompilerOptions:   `e.g. "--schema-suffix=ashish"`,
 	config.KeyProdCompilerOptions:  `e.g. "--default-database=acme-prod"`,
+	config.KeyLineageProjects:      `comma-separated GCP project IDs, e.g. "acme-bi,acme-analytics"`,
 	config.KeyEditor:               `command, e.g. "code" or "nvim"`,
 	config.KeyTheme:                `"auto", "light" or "dark"`,
 	config.KeyWebTheme:             `"auto" or a theme, e.g. "dracula"`,
@@ -108,6 +111,7 @@ var keyValue = map[string]string{
 	config.KeyWebThemeDark:         `a theme, e.g. "nord"`,
 	config.KeyScratchWarnGB:        "GiB, e.g. 20",
 	config.KeyScratchConfirmGB:     "GiB, e.g. 50",
+	config.KeyUSDPerTiB:            "dollars per TiB, e.g. 6.25",
 	config.KeySourceAutosaveMs:     "milliseconds, e.g. 1500",
 	config.KeyDiffStyle:            `"inline" or "side-by-side"`,
 	config.KeyPythonLanguageServer: `"pyrefly" or "off"`,
@@ -205,7 +209,36 @@ func (sf *settingFlags) load(root string) (config.Loaded, error) {
 	if v := l.DbtCompileWithHooks; v != "" && v != "true" && v != "false" {
 		return l, fmt.Errorf("--dbt-compile-with-hooks must be true or false, not %q", v)
 	}
+	if v := l.USDPerTiB; v != "" {
+		if err := config.Check(config.KeyUSDPerTiB, v); err != nil {
+			return l, fmt.Errorf("--%s: %w", config.Flags[config.KeyUSDPerTiB], err)
+		}
+	}
+	if v := l.LineageProjects; v != "" {
+		if err := config.Check(config.KeyLineageProjects, v); err != nil {
+			return l, fmt.Errorf("--%s: %w", config.Flags[config.KeyLineageProjects], err)
+		}
+	}
 	return l, nil
+}
+
+// checkFlag validates key's flag value if it was passed on the command line,
+// so bad flag values fail before looking for a project.
+func (sf *settingFlags) checkFlag(key string) error {
+	name := config.Flags[key]
+	var set bool
+	sf.fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	if !set {
+		return nil
+	}
+	if err := config.Check(key, *sf.values[key]); err != nil {
+		return fmt.Errorf("--%s: %w", name, err)
+	}
+	return nil
 }
 
 // apply sets the settings whose flags were given.

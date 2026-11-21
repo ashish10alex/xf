@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/ashish10alex/xf/internal/backend"
 	"github.com/ashish10alex/xf/internal/backend/dbt"
@@ -29,10 +30,20 @@ type dbtTargets struct {
 	mu       sync.Mutex
 	backends map[string]*dbt.Backend
 	sources  map[string]*changes.Source
+	wt       map[string]*wtCompile
+	// compileWT overrides working-tree compilation for tests.
+	compileWT func(ctx context.Context, target string) (*project.Graph, error)
 }
 
 func newDbtTargets(b *dbt.Backend, root string, logger *log.Logger) *dbtTargets {
-	return &dbtTargets{b: b, root: root, logger: logger, backends: map[string]*dbt.Backend{}, sources: map[string]*changes.Source{}}
+	return &dbtTargets{
+		b:        b,
+		root:     root,
+		logger:   logger,
+		backends: map[string]*dbt.Backend{},
+		sources:  map[string]*changes.Source{},
+		wt:       map[string]*wtCompile{},
+	}
 }
 
 // other says whether target is another than the one xf compiles with, so
@@ -88,20 +99,68 @@ func (t *dbtTargets) commit(ctx context.Context, target, sha string) (*project.G
 }
 
 // worktree compiles the working tree with target, which is another than
-// xf's. A compile with errors, or one that only parsed the SQL, is an
-// error: neither has SQL to dry run.
-func (t *dbtTargets) worktree(ctx context.Context, target string) (*project.Graph, error) {
-	g, err := t.backend(target).Compile(ctx, t.root)
-	if err != nil {
-		return nil, fmt.Errorf("compiling with %s %q: %w", config.KeyDbtProdTarget, target, err)
+// xf's, coalescing concurrent compiles and caching the graph for sig so
+// parallel ColumnImpact and QueryCost never run two dbt compiles at once.
+// A compile with errors, or one that only parsed the SQL, is an error:
+// neither has SQL to dry run.
+func (t *dbtTargets) worktree(ctx context.Context, target, sig string) (*project.Graph, error) {
+	t.mu.Lock()
+	if wc := t.wt[target]; wc.fresh(sig, time.Now()) {
+		t.mu.Unlock()
+		select {
+		case <-wc.done:
+			return wc.graph, wc.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	if g.HasErrors() {
-		return nil, fmt.Errorf("compiling with %s %q: %s", config.KeyDbtProdTarget, target, g.Errors[0].Message)
+	wc := &wtCompile{sig: sig, done: make(chan struct{})}
+	t.wt[target] = wc
+	compileFn := t.compileWT
+	t.mu.Unlock()
+
+	go func() {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), changes.DefaultCompileTimeout)
+		defer cancel()
+		var g *project.Graph
+		var err error
+		if compileFn != nil {
+			g, err = compileFn(cctx, target)
+		} else {
+			g, err = t.backend(target).Compile(cctx, t.root)
+		}
+		switch {
+		case err != nil:
+			err = fmt.Errorf("compiling with %s %q: %w", config.KeyDbtProdTarget, target, err)
+		case g.HasErrors():
+			err = fmt.Errorf("compiling with %s %q: %s", config.KeyDbtProdTarget, target, g.Errors[0].Message)
+		default:
+			if cerr := compiledSQL(g); cerr != nil {
+				err = fmt.Errorf("compiling with %s %q: %w", config.KeyDbtProdTarget, target, cerr)
+			}
+		}
+		if err != nil {
+			wc.err = err
+			t.mu.Lock()
+			if t.wt[target] == wc {
+				delete(t.wt, target)
+			}
+			t.mu.Unlock()
+		} else {
+			wc.graph = g
+			t.mu.Lock()
+			wc.finishedAt = time.Now()
+			t.mu.Unlock()
+		}
+		close(wc.done)
+	}()
+
+	select {
+	case <-wc.done:
+		return wc.graph, wc.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	if err := compiledSQL(g); err != nil {
-		return nil, fmt.Errorf("compiling with %s %q: %w", config.KeyDbtProdTarget, target, err)
-	}
-	return g, nil
 }
 
 // compiledSQL refuses a graph whose SQL dbt only parsed (dbt v2 with
@@ -147,7 +206,7 @@ func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) eng
 		var toProd func(string) string
 		if targets.other(target) {
 			progress(impact.Progress{Phase: "Compiling with " + config.KeyDbtProdTarget})
-			prod, err := targets.worktree(ctx, target)
+			prod, err := targets.worktree(ctx, target, impact.Signature(res, g))
 			if err != nil {
 				return nil, err
 			}
@@ -183,7 +242,7 @@ func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) eng
 		return impact.Run(ctx, res, g, impact.Deps{
 			Schema:  tables.Schema,
 			DryRun:  dryRun,
-			Readers: lineage.NewSource(client, tables, g, toProd),
+			Readers: lineage.NewSource(client, tables, g, toProd).WithProjects(config.ParseLineageProjects(req.LineageProjects)...),
 			ToProd:  toProd,
 			Base:    base,
 		}, progress)

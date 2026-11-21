@@ -93,3 +93,60 @@ func TestPastRunsSnowflakeNoReadRows(t *testing.T) {
 		t.Errorf("markdown:\n%s", md)
 	}
 }
+
+func TestPastRunsEnrichedMetadataAndUnfiltered(t *testing.T) {
+	started := time.Date(2026, 11, 17, 6, 0, 0, 0, time.Local)
+	r := &Report{
+		Actions: []Action{},
+		PastRuns: &PastRuns{
+			Source:     "Snowflake Query History",
+			Target:     "prod",
+			Days:       30,
+			NoReadRows: true,
+			Runs: []PastRun{
+				{
+					Name:            "shop.marts.orders",
+					FileName:        "models/orders.sql",
+					Type:            "incremental",
+					Ran:             true,
+					Started:         started,
+					Duration:        50 * time.Second,
+					ReadBytes:       4 << 30,
+					Warehouse:       "PROD_WH",
+					WarehouseSize:   "Large",
+					Credits:         0.25,
+					StatementCount:  2,
+					RunCount:        6,
+					RunsCapped:      true,
+					MedianDuration:  40 * time.Second,
+					MedianReadBytes: 3 << 30,
+					Unfiltered:      []Unfiltered{{Table: "shop.raw.events", Column: "event_date"}},
+				},
+			},
+		},
+	}
+	if got := r.PastRuns.UnfilteredCount(); got != 1 {
+		t.Fatalf("UnfilteredCount = %d, want 1", got)
+	}
+	if got := r.UnfilteredCount(); got != 1 {
+		t.Fatalf("Report.UnfilteredCount = %d, want 1", got)
+	}
+	if !r.GateTripped(Options{FailOnUnfiltered: true}) {
+		t.Fatal("FailOnUnfiltered should trip on PastRuns with unfiltered queries")
+	}
+	if line := GateLine(r, Options{FailOnUnfiltered: true}); !strings.Contains(line, "Gate failed: 1 query missing a partition/cluster filter") {
+		t.Errorf("GateLine = %q", line)
+	}
+	text := Text(r, Options{})
+	for _, want := range []string{"PROD_WH (Large)", "0.250 credits", "≥6 runs, median 40s / 3.00 GiB", "2 statements", "MISSING PARTITION/CLUSTER FILTER: event_date on raw.events"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text missing %q:\n%s", want, text)
+		}
+	}
+	md := Markdown(r, Options{})
+	for _, want := range []string{"PROD_WH (Large)", "0.250 credits", "≥6 runs, median 40s / 3.00 GiB", "no partition/cluster filter: `event_date` of `raw.events`"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown missing %q:\n%s", want, md)
+		}
+	}
+}

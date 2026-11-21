@@ -44,14 +44,17 @@ func (e Estimate) Bound() string {
 	return ""
 }
 
-// Unfiltered is a partitioned table an action reads without naming the
+// Unfiltered is a partitioned table an action reads without filtering on the
 // column it is partitioned by, so no partition can be pruned.
 type Unfiltered struct {
-	// Table is the project.dataset.table read.
+	// Table is the project.dataset.table read (or merged into).
 	Table string `json:"table"`
 	// Column is its partition column: _PARTITIONTIME for a table
 	// partitioned by ingestion time.
 	Column string `json:"column"`
+	// MergeTarget is set when the query is a MERGE into a partitioned target
+	// table whose ON clause does not filter the target's partition column.
+	MergeTarget bool `json:"mergeTarget,omitempty"`
 }
 
 // Action is the estimate of one Changed Action.
@@ -72,6 +75,9 @@ type Action struct {
 	Full *Estimate `json:"full,omitempty"`
 	// New is set on an action the merge-base doesn't have.
 	New bool `json:"new,omitempty"`
+	// RenamedFrom is the merge-base action this one was renamed from
+	// (see changes.Changed.RenamedFrom), when paired with a deleted action.
+	RenamedFrom string `json:"renamedFrom,omitempty"`
 	// Base is what the action scanned at the merge-base; nil for a new
 	// action, and when it could not be estimated.
 	Base *Estimate `json:"base,omitempty"`
@@ -159,6 +165,10 @@ func (a Action) Runs() (full, incremental *Estimate, counted RunKind) {
 	}
 	return a.Estimate, nil, RunFull
 }
+
+// Added says whether the branch introduces a's target table (new or renamed
+// from another table), so it may not exist in BigQuery yet.
+func (a Action) Added() bool { return a.New || a.RenamedFrom != "" }
 
 // Delta is how many more bytes the action scans than at the merge-base; ok
 // is false when either side has no estimate.
@@ -270,6 +280,31 @@ func (r *Report) BaseTotal() (bytes int64, ok bool) {
 	return bytes, true
 }
 
+// Growth is the net bytes the branch adds across estimated actions: when
+// the merge-base could not be compiled or is pending, it falls back to
+// Total; otherwise each action with a Base contributes its delta, and a
+// new action or one whose own Base is missing contributes its head bytes
+// rather than discarding every other action's Base. Worth uses Growth while
+// totals and verdicts deliberately keep strict BaseTotal so partial bases
+// are never presented as a complete total delta.
+func (r *Report) Growth() int64 {
+	if r.BaseError != "" || r.BasePending {
+		total, _ := r.Total()
+		return total
+	}
+	var growth int64
+	for _, a := range r.Actions {
+		switch {
+		case a.Estimate == nil:
+		case a.Base != nil:
+			growth += a.Estimate.Bytes - a.Base.Bytes
+		default:
+			growth += a.Estimate.Bytes
+		}
+	}
+	return growth
+}
+
 // sum adds es up, with the bound Total says.
 func sum(es []Estimate) (bytes int64, bound string) {
 	for _, e := range es {
@@ -322,11 +357,54 @@ func (r *Report) Unestimated() int {
 	return n
 }
 
+// UnfilteredCount counts the actions (or past-run models) that read at least
+// one partitioned/clustered table without naming its partition/cluster column.
+func (r *Report) UnfilteredCount() int {
+	if r.PastRuns != nil {
+		return r.PastRuns.UnfilteredCount()
+	}
+	n := 0
+	for _, a := range r.Actions {
+		if a.Estimate != nil && len(a.Unfiltered) > 0 {
+			n++
+		}
+	}
+	return n
+}
+
 // Exceeds reports whether the report's total is over threshold bytes; a
 // threshold of 0 is no limit.
 func (r *Report) Exceeds(threshold int64) bool {
+	if r.PastRuns != nil {
+		return false
+	}
 	total, _ := r.Total()
 	return threshold > 0 && total > threshold
+}
+
+// ExceedsDelta reports whether the report's net scan growth over the
+// merge-base (see Growth) is over threshold bytes; a threshold of 0 is no
+// limit.
+func (r *Report) ExceedsDelta(threshold int64) bool {
+	return threshold > 0 && r.PastRuns == nil && r.Growth() > threshold
+}
+
+// HasGate reports whether any cost gate in o is enabled.
+func (r *Report) HasGate(o Options) bool {
+	return o.Threshold > 0 || o.DeltaThreshold > 0 || o.FailOnUnfiltered || o.FailOnUnestimated
+}
+
+// GateTripped reports whether any enabled cost gate in o tripped. On past-run
+// reports (Databricks, Snowflake), byte/estimate gates do not apply, while
+// FailOnUnfiltered gates on static partition/clustering filter warnings.
+func (r *Report) GateTripped(o Options) bool {
+	if r.PastRuns != nil {
+		return o.FailOnUnfiltered && r.PastRuns.UnfilteredCount() > 0
+	}
+	return r.Exceeds(o.Threshold) ||
+		r.ExceedsDelta(o.DeltaThreshold) ||
+		(o.FailOnUnfiltered && r.UnfilteredCount() > 0) ||
+		(o.FailOnUnestimated && r.Unestimated() > 0)
 }
 
 // sortActions puts the estimated actions first, most bytes first, then the

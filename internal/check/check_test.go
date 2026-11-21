@@ -64,6 +64,22 @@ func TestWorth(t *testing.T) {
 		{"impact failed", Report{ImpactError: "no lineage", Cost: costs(gib, gib)}, true},
 		{"a model not checked", Report{Impact: unchecked, Cost: costs(gib, gib)}, true},
 		{"no changes", Report{Impact: &impact.Report{}, Cost: &cost.Report{}}, false},
+		{"partial missing base with zero growth on big model", Report{Impact: clean(), Cost: &cost.Report{Actions: []cost.Action{
+			{Name: "acme.marts.big", Estimate: &cost.Estimate{Bytes: 500 * gib}, Base: &cost.Estimate{Bytes: 500 * gib}},
+			{Name: "acme.marts.small", Estimate: &cost.Estimate{Bytes: 10 << 20}},
+		}}}, false},
+		{"past runs small", Report{Impact: clean(), Cost: &cost.Report{PastRuns: &cost.PastRuns{
+			Runs: []cost.PastRun{{Name: "a", Ran: true, ReadBytes: 10 << 20}},
+		}}}, false},
+		{"past runs over QuietUnder", Report{Impact: clean(), Cost: &cost.Report{PastRuns: &cost.PastRuns{
+			Runs: []cost.PastRun{{Name: "a", Ran: true, ReadBytes: 2 * gib}},
+		}}}, true},
+		{"past runs truncated", Report{Impact: clean(), Cost: &cost.Report{PastRuns: &cost.PastRuns{
+			Truncated: true,
+		}}}, true},
+		{"past runs why", Report{Impact: clean(), Cost: &cost.Report{PastRuns: &cost.PastRuns{
+			Why: "query comment is off",
+		}}}, true},
 	} {
 		if got := c.r.Worth(opts); got != c.want {
 			t.Errorf("%s: Worth = %v, want %v", c.name, got, c.want)
@@ -259,6 +275,29 @@ func TestNotesOnADropThatBreaksTheIncrementalRun(t *testing.T) {
 	if v := impactVerdict(r); !strings.HasPrefix(v, "🚨 2 dropped columns") {
 		t.Errorf("verdict %q", v)
 	}
+	onlyOwn := &Report{Impact: &impact.Report{Comparison: comparison, ChangedCount: 1, AtRisk: []impact.Table{{
+		Table: "acme.marts.inventory", FileName: "definitions/inventory.sqlx", Type: "incremental",
+		Columns: []impact.Column{
+			{Column: "row_num", Change: impact.ColumnChange{Kind: impact.Dropped, BreaksRun: impact.BreaksRunUniqueKey}, Readers: []impact.Reader{}},
+		},
+	}}}}
+	if got, want := impactVerdict(onlyOwn), "🚨 1 dropped column breaks the incremental run"; got != want {
+		t.Errorf("breaksRun-only verdict = %q, want %q", got, want)
+	}
+	delAndOwn := &Report{Impact: &impact.Report{Comparison: comparison, ChangedCount: 2, AtRisk: []impact.Table{
+		onlyOwn.Impact.AtRisk[0],
+		{Table: "acme.marts.old", Deleted: true, Readers: []impact.Reader{{Table: "acme.fin.r"}}},
+	}}}
+	if got, want := impactVerdict(delAndOwn), "🚨 1 dropped column breaks the incremental run, and 1 deleted table still read"; got != want {
+		t.Errorf("deleted+breaksRun verdict = %q, want %q", got, want)
+	}
+	allThree := &Report{Impact: &impact.Report{Comparison: comparison, ChangedCount: 2, AtRisk: []impact.Table{
+		r.Impact.AtRisk[0],
+		{Table: "acme.marts.old", Deleted: true, Readers: []impact.Reader{{Table: "acme.fin.r"}}},
+	}}}
+	if got, want := impactVerdict(allThree), "🚨 1 dropped column and 1 deleted table still read, and 1 dropped column breaks the incremental run"; got != want {
+		t.Errorf("dropped+deleted+breaksRun verdict = %q, want %q", got, want)
+	}
 }
 
 func TestLines(t *testing.T) {
@@ -277,6 +316,13 @@ func TestLines(t *testing.T) {
 	}
 	if got := removedLine(diff, "nothing"); got != 1 {
 		t.Errorf("removedLine none = %d", got)
+	}
+	// Dotted nested STRUCT fields fall back to the leaf field name.
+	if got := namingLine("select\n  struct(id, zip) as user\n", "user.zip"); got != 2 {
+		t.Errorf("namingLine nested = %d, want 2", got)
+	}
+	if got := removedLine("@@ -4 +4,0 @@\n-  zip\n", "user.zip"); got != 4 {
+		t.Errorf("removedLine nested = %d, want 4", got)
 	}
 }
 
@@ -340,5 +386,246 @@ func TestMarkdownWithAttention(t *testing.T) {
 	}
 	if strings.Contains(md, "`daily`") {
 		t.Errorf("daily listed:\n%s", md)
+	}
+}
+
+func TestPhase3GatesAndInlineNotes(t *testing.T) {
+	// 1. --fail-on unknown trips on SeverityUnknown and promotes its note to Error.
+	unkReport := &Report{
+		Impact: &impact.Report{
+			Comparison:   comparison,
+			ChangedCount: 1,
+			AtRisk: []impact.Table{{
+				Table:    "acme.marts.orders",
+				FileName: "definitions/orders.sqlx",
+				Type:     "table",
+				Columns: []impact.Column{{
+					Column:       "discount",
+					Change:       impact.ColumnChange{Kind: impact.Dropped, From: "FLOAT64"},
+					ReadersError: "lineage unavailable",
+				}},
+			}},
+		},
+	}
+	if unkReport.ImpactTripped(Options{Gate: true, FailOn: impact.SeverityWarning}) {
+		t.Error("--fail-on warning should not trip on SeverityUnknown")
+	}
+	if !unkReport.ImpactTripped(Options{Gate: true, FailOn: impact.SeverityUnknown}) {
+		t.Error("--fail-on unknown should trip on SeverityUnknown")
+	}
+	unkNotes := Notes(unkReport, Options{Gate: true, FailOn: impact.SeverityUnknown}, files{}, "")
+	if len(unkNotes) != 1 || unkNotes[0].Level != Error {
+		t.Errorf("--fail-on unknown notes = %+v, want 1 Error", unkNotes)
+	}
+	warnNotes := Notes(unkReport, Options{Gate: true, FailOn: impact.SeverityWarning}, files{}, "")
+	if len(warnNotes) != 1 || warnNotes[0].Level != Notice {
+		t.Errorf("--fail-on warning notes for unknown = %+v, want 1 Notice", warnNotes)
+	}
+
+	// 2. --fail-on-unchecked ignores permanent structural entries (scripts/unbuilt tables)
+	// and trips only on real check failures, emitting file-level xf/unchecked notes.
+	permanentUnchecked := &Report{
+		Impact: &impact.Report{
+			Comparison:   comparison,
+			ChangedCount: 3,
+			Unchecked: []impact.Unchecked{
+				{Table: "acme.ops.script", FileName: "definitions/script.sqlx", Reason: "operation: a dry run of a script has no schema"},
+				{Table: "acme.marts.empty", FileName: "definitions/empty.sqlx", Reason: "nothing to dry run"},
+				{Table: "acme.marts.unbuilt", FileName: "definitions/unbuilt.sqlx", Reason: "no table in acme yet"},
+			},
+		},
+	}
+	if permanentUnchecked.ImpactTripped(Options{FailOnUnchecked: true}) {
+		t.Error("--fail-on-unchecked should not trip on permanent structural unchecked entries")
+	}
+	if got := Notes(permanentUnchecked, Options{FailOnUnchecked: true}, files{}, ""); len(got) != 0 {
+		t.Errorf("permanent unchecked notes = %+v, want none", got)
+	}
+
+	uncheckedReport := &Report{
+		Impact: &impact.Report{
+			Comparison:   comparison,
+			ChangedCount: 2,
+			Unchecked: []impact.Unchecked{
+				{Table: "acme.ops.script", FileName: "definitions/script.sqlx", Reason: "operation: a dry run of a script has no schema"},
+				{Table: "acme.marts.broken", FileName: "definitions/broken.sqlx", Reason: "dry run failed\ndetails"},
+			},
+		},
+	}
+	if uncheckedReport.ImpactTripped(Options{}) {
+		t.Error("unchecked model should not trip without FailOnUnchecked")
+	}
+	if !uncheckedReport.ImpactTripped(Options{FailOnUnchecked: true}) {
+		t.Error("unchecked model should trip with FailOnUnchecked")
+	}
+	ucNotes := Notes(uncheckedReport, Options{FailOnUnchecked: true}, files{}, "warehouse")
+	if len(ucNotes) != 1 || ucNotes[0].Level != Error || ucNotes[0].Check != "xf/unchecked" || ucNotes[0].File != "warehouse/definitions/broken.sqlx" {
+		t.Errorf("unchecked notes = %+v", ucNotes)
+	}
+
+	// 3. --fail-over-delta, --fail-on-unfiltered, --fail-on-unestimated: verdict + notes + CodeQuality.
+	costReport := &Report{
+		Impact: &impact.Report{Comparison: comparison},
+		Cost: &cost.Report{
+			Comparison: comparison,
+			Actions: []cost.Action{
+				{
+					Name:       "acme.marts.big",
+					FileName:   "definitions/big.sqlx",
+					Type:       "table",
+					Estimate:   &cost.Estimate{Bytes: 20 * gib},
+					Base:       &cost.Estimate{Bytes: 5 * gib},
+					Unfiltered: []cost.Unfiltered{{Table: "acme.raw.events", Column: "event_date"}},
+				},
+				{
+					Name:     "acme.marts.tiny_growth",
+					FileName: "definitions/tiny.sqlx",
+					Type:     "table",
+					Estimate: &cost.Estimate{Bytes: 5*gib + 1},
+					Base:     &cost.Estimate{Bytes: 5 * gib},
+				},
+				{
+					Name:     "acme.marts.medium_growth",
+					FileName: "definitions/medium.sqlx",
+					Type:     "table",
+					Estimate: &cost.Estimate{Bytes: 7 * gib},
+					Base:     &cost.Estimate{Bytes: 5 * gib},
+				},
+				{
+					Name:     "acme.marts.smaller",
+					FileName: "definitions/smaller.sqlx",
+					Type:     "table",
+					Estimate: &cost.Estimate{Bytes: 2 * gib},
+					Base:     &cost.Estimate{Bytes: 4 * gib},
+				},
+				{
+					Name:     "acme.marts.missing",
+					FileName: "definitions/missing.sqlx",
+					Type:     "table",
+					Reason:   "not found",
+				},
+			},
+		},
+	}
+	co := Options{
+		QuietUnder: DefaultQuietUnder,
+		Cost: cost.Options{
+			DeltaThreshold:    10 * gib,
+			FailOnUnfiltered:  true,
+			FailOnUnestimated: true,
+		},
+	}
+	if !costReport.CostTripped(co) || costReport.Code(co) != Tripped {
+		t.Fatalf("expected CostTripped and Tripped exit code")
+	}
+	verdict := Verdict(costReport, co)
+	for _, want := range []string{"growth over the 10.00 GiB limit", "❌ 1 query without a partition filter", "1 action not estimated"} {
+		if !strings.Contains(verdict, want) {
+			t.Errorf("Verdict = %q, missing %q", verdict, want)
+		}
+	}
+	if strings.Contains(verdict, "⚠️ 1 query without a partition filter") {
+		t.Errorf("Verdict should fold unfiltered warning into ❌ when gated: %q", verdict)
+	}
+	notes := Notes(costReport, co, files{}, "")
+	var deltaNotes []Note
+	byCheck := map[string]Note{}
+	for _, n := range notes {
+		byCheck[n.Check] = n
+		if n.Check == "xf/cost-delta" {
+			deltaNotes = append(deltaNotes, n)
+		}
+	}
+	for _, checkName := range []string{"xf/missing-partition-filter", "xf/not-estimated", "xf/cost-delta-limit"} {
+		n, ok := byCheck[checkName]
+		if !ok {
+			t.Errorf("missing note %q in %+v", checkName, notes)
+			continue
+		}
+		if n.Level != Error {
+			t.Errorf("note %q level = %q, want error", checkName, n.Level)
+		}
+	}
+	// Tiny +1 B growth is excluded; big (+15 GiB) is Error, medium (+2 GiB < 10/2 GiB) is Warning.
+	if len(deltaNotes) != 2 ||
+		deltaNotes[0].File != "definitions/big.sqlx" || deltaNotes[0].Level != Error ||
+		deltaNotes[1].File != "definitions/medium.sqlx" || deltaNotes[1].Level != Warning {
+		t.Errorf("xf/cost-delta notes = %+v", deltaNotes)
+	}
+	cq, err := CodeQuality(notes)
+	if err != nil {
+		t.Fatalf("CodeQuality: %v", err)
+	}
+	if !strings.Contains(string(cq), `"xf/cost-delta"`) || strings.Contains(string(cq), `"xf/cost-delta-limit"`) {
+		t.Errorf("CodeQuality output unexpected:\n%s", cq)
+	}
+
+	// 4. --fail-over-delta with BaseError says no merge-base in verdict and notes.
+	noBaseReport := &Report{
+		Impact: &impact.Report{Comparison: comparison},
+		Cost: &cost.Report{
+			Comparison: comparison,
+			BaseError:  "merge-base compile failed",
+			Actions: []cost.Action{{
+				Name:     "acme.marts.big",
+				FileName: "definitions/big.sqlx",
+				Type:     "table",
+				Estimate: &cost.Estimate{Bytes: 70 * gib},
+			}},
+		},
+	}
+	noBaseOpts := Options{QuietUnder: DefaultQuietUnder, Cost: cost.Options{DeltaThreshold: 50 * gib}}
+	if v := Verdict(noBaseReport, noBaseOpts); !strings.Contains(v, "no merge-base: total over the 50.00 GiB delta limit") {
+		t.Errorf("no-base verdict = %q", v)
+	}
+	nbNotes := Notes(noBaseReport, noBaseOpts, files{}, "")
+	if len(nbNotes) != 2 || !strings.Contains(nbNotes[0].Text, "no merge-base") || !strings.Contains(nbNotes[1].Text, "No merge-base estimate") {
+		t.Errorf("no-base notes = %+v", nbNotes)
+	}
+}
+
+func TestPastRunsUnfilteredWorthVerdictAndNotes(t *testing.T) {
+	src := files{"models/orders.sql": {
+		"select id\nfrom shop.raw.events\n",
+		"",
+	}}
+	r := &Report{
+		Impact: clean(),
+		Cost: &cost.Report{
+			Comparison: comparison,
+			PastRuns: &cost.PastRuns{
+				Source: "Snowflake Query History",
+				Target: "prod",
+				Days:   30,
+				Runs: []cost.PastRun{{
+					Name:       "shop.marts.orders",
+					FileName:   "models/orders.sql",
+					Type:       "table",
+					Ran:        true,
+					ReadBytes:  10 << 20, // well under QuietUnder
+					Unfiltered: []cost.Unfiltered{{Table: "shop.raw.events", Column: "EVENT_DATE"}},
+				}},
+			},
+		},
+	}
+	if !r.Worth(opts) {
+		t.Error("PastRuns with unfiltered table should be Worth a comment")
+	}
+	if v := Verdict(r, opts); !strings.Contains(v, "⚠️ 1 query without a partition/cluster filter") {
+		t.Errorf("Verdict = %q", v)
+	}
+	notes := Notes(r, opts, src, "")
+	if len(notes) != 1 || notes[0].Check != "xf/missing-partition-filter" || notes[0].Level != Warning || notes[0].Line != 2 {
+		t.Errorf("Notes = %+v", notes)
+	}
+	gated := Options{QuietUnder: DefaultQuietUnder, Cost: cost.Options{FailOnUnfiltered: true}}
+	if !r.CostTripped(gated) || r.Code(gated) != Tripped {
+		t.Errorf("FailOnUnfiltered should trip on PastRuns")
+	}
+	if v := Verdict(r, gated); !strings.Contains(v, "❌ 1 query without a partition/cluster filter") {
+		t.Errorf("gated Verdict = %q", v)
+	}
+	if gn := Notes(r, gated, src, ""); len(gn) != 1 || gn[0].Level != Error {
+		t.Errorf("gated Notes = %+v, want Error", gn)
 	}
 }

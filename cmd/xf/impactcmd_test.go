@@ -2,14 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ashish10alex/xf/internal/changes"
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/impact"
+	"github.com/ashish10alex/xf/internal/project"
 )
 
 func TestImpactHelp(t *testing.T) {
@@ -121,4 +125,92 @@ func TestWriteReport(t *testing.T) {
 			t.Errorf("file got %q (%v), stdout %q; want %q in both", data, err, buf.String(), wantJSON)
 		}
 	})
+}
+
+func TestRunsToActionsCompilesPushedHeadSHA(t *testing.T) {
+	// With HeadPushed, runsToActions compiles res.HeadSHA via optSource
+	// (never the dirty working tree root) and maps prod targets back to g.
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "orders.sqlx"), []byte("SELECT 1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "orders.sqlx")
+	git("commit", "-q", "-m", "init")
+	sha := git("rev-parse", "HEAD")
+
+	// Dirty the working tree: the snapshot compiled from HeadSHA must not see it.
+	if err := os.WriteFile(filepath.Join(repo, "orders.sqlx"), []byte("DIRTY"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	devTarget := project.Target{Database: "dev", Schema: "marts", Name: "orders"}
+	g := project.NewGraph([]*project.Action{{ID: devTarget.ID(), Target: devTarget, CanonicalTarget: devTarget, Kind: project.KindTable}})
+	prodJSON := []byte(`{"tables":[{"type":"table","fileName":"orders.sqlx","target":{"database":"prod","schema":"marts","name":"orders"},"canonicalTarget":{"database":"dev","schema":"marts","name":"orders"},"query":"SELECT 1"}]}`)
+
+	var gotKey, gotOptions string
+	var gotArgs []string
+	optSource := func(key, options string, args []string) *changes.Source {
+		gotKey, gotOptions, gotArgs = key, options, args
+		return &changes.Source{
+			Root: repo,
+			Key:  "test",
+			Compile: func(_ context.Context, dir string) (*project.Graph, error) {
+				b, err := os.ReadFile(filepath.Join(dir, "orders.sqlx"))
+				if err != nil {
+					return nil, err
+				}
+				if string(b) != "SELECT 1" {
+					t.Errorf("compiled working tree instead of HeadSHA snapshot: %q", b)
+				}
+				return &project.Graph{JSON: prodJSON}, nil
+			},
+		}
+	}
+	res := &changes.Result{Head: changes.HeadPushed, HeadSHA: sha}
+	m, err := runsToActions(context.Background(), "nonexistent-dataform-bin", repo, config.KeyProdCompilerOptions, "--database-suffix=prod", g, res, optSource, func(impact.Progress) {})
+	if err != nil {
+		t.Fatalf("runsToActions: %v", err)
+	}
+	if gotKey != config.KeyProdCompilerOptions || gotOptions != "--database-suffix=prod" || len(gotArgs) != 1 {
+		t.Errorf("optSource args = %q %q %v", gotKey, gotOptions, gotArgs)
+	}
+	if got := m["prod.marts.orders"]; got != "dev.marts.orders" {
+		t.Errorf("DevToProd map = %v, want prod.marts.orders -> dev.marts.orders", m)
+	}
+
+	// HeadPushed with an empty HeadSHA must fail rather than silently compiling the working tree.
+	if _, err := runsToActions(context.Background(), "nonexistent-dataform-bin", repo, config.KeyProdCompilerOptions, "--database-suffix=prod", g, &changes.Result{Head: changes.HeadPushed}, optSource, func(impact.Progress) {}); err == nil {
+		t.Error("expected error when HeadPushed has empty HeadSHA")
+	}
+}
+
+func TestImpactRefusesBadFlagsBeforeLookingForAProject(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, args := range [][]string{
+		{"--fail-on", "minor"},
+		{"--web", "--fail-on", "unknown"},
+		{"--web", "--fail-on-unchecked"},
+		{"--web", "--json"},
+		{"--color", "sometimes"},
+		{"--lineage-projects", "bad/parent?x"},
+		{"stray"},
+	} {
+		if code := runImpact(args); code != impactFailed {
+			t.Errorf("xf impact %v exited %d, want %d", args, code, impactFailed)
+		}
+	}
+	if code := runImpact([]string{"--help"}); code != impactOK {
+		t.Errorf("xf impact --help exited %d", code)
+	}
 }

@@ -317,7 +317,11 @@ func columnChanges(t Table, base string) []string {
 	for _, c := range t.Columns {
 		text := "`" + c.Column + "`"
 		if c.Change.Kind == TypeChanged {
-			text += " (`" + c.Change.From + "` → `" + c.Change.To + "`)"
+			if c.Change.Widening {
+				text += " (`" + c.Change.From + "` → `" + c.Change.To + "`, safe widening)"
+			} else {
+				text += " (`" + c.Change.From + "` → `" + c.Change.To + "`)"
+			}
 		}
 		switch {
 		case c.Change.OnBase:
@@ -371,25 +375,33 @@ func ownRun(t Table, base string) []string {
 			table = append(table, c.Column)
 		}
 	}
+	keyField := "`uniqueKey`"
+	runDesc := "Dataform's MERGE or INSERT names "
+	refreshFlag := "a full refresh"
+	if t.Dbt {
+		keyField = "`unique_key`"
+		runDesc = "dbt's incremental run requires "
+		refreshFlag = "`--full-refresh`"
+	}
 	var out []string
 	if len(key) > 0 {
-		out = append(out, "**its own incremental run · fails every time: `uniqueKey` still names "+codeList(key)+", which its query no longer returns**")
+		out = append(out, "**its own incremental run · fails every time: "+keyField+" still names "+codeList(key)+", which its query no longer returns**")
 	}
 	if len(table) > 0 {
-		out = append(out, "**its own incremental run · fails: Dataform's MERGE or INSERT names "+codeList(table)+", which its table still has · until a full refresh rebuilds it**")
+		out = append(out, "**its own incremental run · fails: "+runDesc+codeList(table)+", which its table still has · until "+refreshFlag+" rebuilds it**")
 	}
 	if len(fixed) > 0 {
-		line := "its own incremental run · fixed here: `" + base + "`'s `uniqueKey` names " + codeList(fixed) + ", which its query no longer returns, and this branch's doesn't"
+		line := "its own incremental run · fixed here: `" + base + "`'s " + keyField + " names " + codeList(fixed) + ", which its query no longer returns, and this branch's doesn't"
 		if stillFails {
-			line += " · the next run still fails until a full refresh rebuilds it"
+			line += " · the next run still fails until " + refreshFlag + " rebuilds it"
 		}
 		out = append(out, line)
 	}
 	if len(baseKey) > 0 {
-		out = append(out, "its own incremental run · fails every time, as on `"+base+"`: `uniqueKey` still names "+codeList(baseKey)+", which its query no longer returns")
+		out = append(out, "its own incremental run · fails every time, as on `"+base+"`: "+keyField+" still names "+codeList(baseKey)+", which its query no longer returns")
 	}
 	if len(baseTable) > 0 {
-		out = append(out, "its own incremental run · fails, as on `"+base+"`: Dataform's MERGE or INSERT names "+codeList(baseTable)+", which its table still has · until a full refresh rebuilds it")
+		out = append(out, "its own incremental run · fails, as on `"+base+"`: "+runDesc+codeList(baseTable)+", which its table still has · until "+refreshFlag+" rebuilds it")
 	}
 	return out
 }

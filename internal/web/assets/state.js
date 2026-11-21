@@ -621,6 +621,7 @@ function startProject(p, ws) {
   if (hooks.forgeStart) hooks.forgeStart();
   if (p.scratch && (p.scratch.start || p.scratch.standalone) && hooks.startScratch) hooks.startScratch(p.scratch.standalone);
   if (p.check === 'impact') openImpact(); // xf impact --web
+  else if (p.check === 'cost') openCost(); // xf cost --web
 }
 
 // The events come over a WebSocket (ADR 0011), each {event, data}: an

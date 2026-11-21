@@ -137,18 +137,23 @@ type Searcher interface {
 }
 
 // Source finds the readers of a table's columns. Lineage is searched in the
-// table's own project and region. Lookups are cached for the life of the
+// table's own project and region, plus any extra projects configured via
+// WithProjects (for cross-project BigQuery jobs whose Dataplex links are
+// recorded in the consumer's project). Lookups are cached for the life of the
 // Source, which is meant to last one impact check.
 type Source struct {
-	search Searcher
-	tables *Tables
-	graph  *project.Graph
-	toProd func(string) string
-	sem    chan struct{}
+	search        Searcher
+	tables        *Tables
+	graph         *project.Graph
+	toProd        func(string) string
+	extraProjects []string
+	sem           chan struct{}
 	// tracked is whether Dataplex tracks a table's column lineage; readers
-	// are a table's table-level readers, the same for every column of it.
-	tracked memo[bool]
-	readers memo[[]Link]
+	// are a table's table-level readers cached per (parent, table) so a failing
+	// extra project does not force repeated searches on healthy projects.
+	tracked       memo[bool]
+	readers       memo[[]Link]
+	deniedParents sync.Map // parent -> permanent error (401/403)
 }
 
 // NewSource searches with search, reads tables with tables, and spots this
@@ -160,6 +165,23 @@ func NewSource(search Searcher, tables *Tables, graph *project.Graph, toProd fun
 		toProd = func(t string) string { return t }
 	}
 	return &Source{search: search, tables: tables, graph: graph, toProd: toProd, sem: make(chan struct{}, maxSearches)}
+}
+
+// WithProjects configures additional GCP projects to search in Dataplex Data
+// Lineage alongside each table's own project (same region), catching readers
+// whose BigQuery jobs ran in a different consumer/BI project.
+func (s *Source) WithProjects(projects ...string) *Source {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range projects {
+		p = strings.TrimSpace(p)
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	s.extraProjects = out
+	return s
 }
 
 // kind is the kind of the project's action table is a run of.
@@ -179,30 +201,124 @@ func (s *Source) isAssertion(table string) bool {
 	return ok && k == project.KindAssertion
 }
 
+func isPermanentLineageError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		parts := joined.Unwrap()
+		if len(parts) == 0 {
+			return false
+		}
+		for _, p := range parts {
+			if !isPermanentLineageError(p) {
+				return false
+			}
+		}
+		return true
+	}
+	if errors.Is(err, ErrAuth) {
+		return true
+	}
+	return strings.Contains(err.Error(), "no access to Data Lineage")
+}
+
 func (s *Source) searchLinks(ctx context.Context, req SearchRequest) ([]Link, error) {
+	if cached, ok := s.deniedParents.Load(req.Parent); ok {
+		return nil, cached.(error)
+	}
 	select {
 	case s.sem <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	defer func() { <-s.sem }()
-	return s.search.SearchLinks(ctx, req)
+	links, err := s.search.SearchLinks(ctx, req)
+	if isPermanentLineageError(err) {
+		s.deniedParents.Store(req.Parent, err)
+	}
+	return links, err
 }
 
-// parent is where table's lineage lives: its project and region.
-func (s *Source) parent(ctx context.Context, table string) (string, error) {
+// parents are the Dataplex search parents for table: its own project and
+// region first, followed by any configured extraProjects in the same region.
+func (s *Source) parents(ctx context.Context, table string) ([]string, error) {
 	md, err := s.tables.Table(ctx, table)
 	if err != nil || md == nil || md.Location == "" {
-		return "", fmt.Errorf("couldn't read %s to find its region", table)
+		return nil, fmt.Errorf("couldn't read %s to find its region", table)
 	}
-	return "projects/" + strings.SplitN(table, ".", 2)[0] + "/locations/" + strings.ToLower(md.Location), nil
+	loc := strings.ToLower(md.Location)
+	own := strings.SplitN(table, ".", 2)[0]
+	out := []string{"projects/" + own + "/locations/" + loc}
+	for _, p := range s.extraProjects {
+		if p != own {
+			out = append(out, "projects/"+p+"/locations/"+loc)
+		}
+	}
+	return out, nil
 }
 
-// readerLinks is the table-level links from table, searched once.
-func (s *Source) readerLinks(ctx context.Context, parent, table string) ([]Link, error) {
-	return s.readers.get(table, func() ([]Link, error) {
-		return s.searchLinks(ctx, SearchRequest{Parent: parent, Source: &EntityReference{FullyQualifiedName: FQN(table)}})
-	}, func(err error) bool { return err != nil })
+// searchAcross searches req across all parents concurrently and merges links.
+// If any parent fails, returns the merged links alongside the joined error so
+// callers don't silently miss readers in an unreachable configured project.
+func (s *Source) searchAcross(ctx context.Context, parents []string, req SearchRequest) ([]Link, error) {
+	if len(parents) == 1 {
+		r := req
+		r.Parent = parents[0]
+		return s.searchLinks(ctx, r)
+	}
+	type res struct {
+		links []Link
+		err   error
+	}
+	results := make([]res, len(parents))
+	var wg sync.WaitGroup
+	for i, parent := range parents {
+		wg.Go(func() {
+			r := req
+			r.Parent = parent
+			results[i].links, results[i].err = s.searchLinks(ctx, r)
+		})
+	}
+	wg.Wait()
+	var merged []Link
+	var errs []error
+	for _, r := range results {
+		merged = append(merged, r.links...)
+		if r.err != nil {
+			errs = append(errs, r.err)
+		}
+	}
+	return merged, errors.Join(errs...)
+}
+
+// readerLinks is the table-level links from table, searched once per parent
+// project so a failing extra project never retries healthy parents.
+func (s *Source) readerLinks(ctx context.Context, parents []string, table string) ([]Link, error) {
+	type res struct {
+		links []Link
+		err   error
+	}
+	results := make([]res, len(parents))
+	var wg sync.WaitGroup
+	for i, parent := range parents {
+		wg.Go(func() {
+			key := parent + "\x00" + table
+			results[i].links, results[i].err = s.readers.get(key, func() ([]Link, error) {
+				return s.searchLinks(ctx, SearchRequest{Parent: parent, Source: &EntityReference{FullyQualifiedName: FQN(table)}})
+			}, func(err error) bool { return err != nil && !isPermanentLineageError(err) })
+		})
+	}
+	wg.Wait()
+	var merged []Link
+	var errs []error
+	for _, r := range results {
+		merged = append(merged, r.links...)
+		if r.err != nil {
+			errs = append(errs, r.err)
+		}
+	}
+	return merged, errors.Join(errs...)
 }
 
 // hasColumnLineage is whether any of the table's first few columns has
@@ -210,7 +326,7 @@ func (s *Source) readerLinks(ctx context.Context, parent, table string) ([]Link,
 // untracked, so its readers are listed as ones that may read the column.
 func (s *Source) hasColumnLineage(ctx context.Context, table string) bool {
 	tracked, _ := s.tracked.get(table, func() (bool, error) {
-		parent, err := s.parent(ctx, table)
+		parents, err := s.parents(ctx, table)
 		if err != nil {
 			return false, nil
 		}
@@ -223,7 +339,7 @@ func (s *Source) hasColumnLineage(ctx context.Context, table string) bool {
 		found := make(chan probe, len(fields))
 		for _, f := range fields {
 			go func() {
-				links, err := s.searchLinks(ctx, SearchRequest{Parent: parent, Target: &EntityReference{FullyQualifiedName: FQN(table), Field: Field(f.Name)}})
+				links, err := s.searchAcross(ctx, parents, SearchRequest{Target: &EntityReference{FullyQualifiedName: FQN(table), Field: Field(f.Name)}})
 				found <- probe{len(links) > 0, err}
 			}()
 		}
@@ -239,9 +355,9 @@ func (s *Source) hasColumnLineage(ctx context.Context, table string) bool {
 		}
 		return false, errors.Join(errs...)
 	}, func(err error) bool {
-		// A failed probe, e.g. rate limited, is asked again next time
-		// rather than kept.
-		return err != nil
+		// A transient failed probe, e.g. rate limited, is asked again next time
+		// rather than kept; permanent 401/403 errors are not retried.
+		return err != nil && !isPermanentLineageError(err)
 	})
 	return tracked
 }
@@ -249,16 +365,16 @@ func (s *Source) hasColumnLineage(ctx context.Context, table string) bool {
 // ColumnLinks is the columns that read table.column directly, spelled as
 // each reader's schema spells them.
 func (s *Source) ColumnLinks(ctx context.Context, table, column string) ([]ColumnLink, error) {
-	parent, err := s.parent(ctx, table)
+	parents, err := s.parents(ctx, table)
 	if err != nil {
 		return nil, err
 	}
 	// Started now so it overlaps the column search; TableOnlyReaders picks
 	// it up from the cache.
-	go func() { _, _ = s.readerLinks(ctx, parent, table) }()
-	links, err := s.searchLinks(ctx, SearchRequest{Parent: parent, Source: &EntityReference{FullyQualifiedName: FQN(table), Field: Field(column)}})
-	if err != nil {
-		return nil, err
+	go func() { _, _ = s.readerLinks(ctx, parents, table) }()
+	links, searchErr := s.searchAcross(ctx, parents, SearchRequest{Source: &EntityReference{FullyQualifiedName: FQN(table), Field: Field(column)}})
+	if searchErr != nil && len(links) == 0 {
+		return nil, searchErr
 	}
 	found := ColumnLinksFromAPI(links)
 	var wg sync.WaitGroup
@@ -270,7 +386,7 @@ func (s *Source) ColumnLinks(ctx context.Context, table, column string) ([]Colum
 		})
 	}
 	wg.Wait()
-	return found, nil
+	return found, searchErr
 }
 
 func (s *Source) tableLink(reader string) ColumnLink {
@@ -283,13 +399,13 @@ func (s *Source) tableLink(reader string) ColumnLink {
 // probed too: some get column lineage (CREATE TABLE … CLONE), others, such
 // as procedures, don't.
 func (s *Source) TableOnlyReaders(ctx context.Context, table string, linked map[string]bool) ([]ColumnLink, error) {
-	parent, err := s.parent(ctx, table)
+	parents, err := s.parents(ctx, table)
 	if err != nil {
 		return nil, err
 	}
-	links, err := s.readerLinks(ctx, parent, table)
-	if err != nil {
-		return nil, err
+	links, searchErr := s.readerLinks(ctx, parents, table)
+	if searchErr != nil && len(links) == 0 {
+		return nil, searchErr
 	}
 	untracked := UntrackedReaders(ctx, TablesFromAPI(links), linked, func(ctx context.Context, reader string) bool {
 		if k, ok := s.kind(reader); ok && k == project.KindIncremental {
@@ -301,24 +417,24 @@ func (s *Source) TableOnlyReaders(ctx context.Context, table string, linked map[
 	for i, r := range untracked {
 		out[i] = s.tableLink(r)
 	}
-	return out, nil
+	return out, searchErr
 }
 
 // TableReaders is every reader of table, as table-level links: who loses a
 // table the branch deletes.
 func (s *Source) TableReaders(ctx context.Context, table string) ([]ColumnLink, error) {
-	parent, err := s.parent(ctx, table)
+	parents, err := s.parents(ctx, table)
 	if err != nil {
 		return nil, err
 	}
-	links, err := s.readerLinks(ctx, parent, table)
-	if err != nil {
-		return nil, err
+	links, searchErr := s.readerLinks(ctx, parents, table)
+	if searchErr != nil && len(links) == 0 {
+		return nil, searchErr
 	}
 	readers := TablesFromAPI(links)
 	out := make([]ColumnLink, len(readers))
 	for i, r := range readers {
 		out[i] = s.tableLink(r)
 	}
-	return out, nil
+	return out, searchErr
 }

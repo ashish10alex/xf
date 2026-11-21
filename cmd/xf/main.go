@@ -278,6 +278,9 @@ func projectDeps(root, name string, b backend.Backend, settings config.Loaded, c
 		Git:                 func(ctx context.Context) (dataformapi.GitState, error) { return dataformapi.ReadGit(ctx, root) },
 		Branches:            gitbranch.Repo{Dir: root},
 	}
+	if v, err := strconv.ParseFloat(settings.USDPerTiB, 64); err == nil && v > 0 {
+		deps.USDPerTiB = v
+	}
 	if d, ok := b.(*dbt.Backend); ok {
 		deps.Target = d.Target
 	}
@@ -298,6 +301,7 @@ func projectDeps(root, name string, b backend.Backend, settings config.Loaded, c
 		addDeferDeps(&deps, client)
 		deps.DeferWriter = nil // dbt defers itself: no proxy views
 		deps.DbtProdTarget = settings.DbtProdTarget
+		deps.LineageProjects = settings.LineageProjects
 		deps.Unset = unsetDbtProdTarget(settings, os.Getenv)
 	}
 	return deps
@@ -360,6 +364,7 @@ func addDataformDeps(deps *frontend.Deps, root, bin string, settings config.Load
 	addDeferDeps(deps, client)
 	deps.DevCompilerOptions = settings.DevCompilerOptions
 	deps.ProdCompilerOptions = settings.ProdCompilerOptions
+	deps.LineageProjects = settings.LineageProjects
 	deps.Unset = unsetProdOptions(settings)
 	// Asked for only where the answer would be read back: not with
 	// --config, which reads another file than the one it is saved to.
@@ -747,8 +752,9 @@ func addDataformEngine(cfg *engine.Config, b dataform.Backend, root string, bq f
 	cfg.Compile = compile
 	cfg.Saved = saved
 	cfg.Changes = source
-	cfg.Impact = impactChecker(bq, dryRun, b.Bin, root, source)
-	cfg.Cost = dataformCost(bq, dryRun, b, root, source, lookups, logger)
+	opts := newOptionSources(b.Bin, root, logger)
+	cfg.Impact = impactChecker(bq, dryRun, b.Bin, root, source, opts)
+	cfg.Cost = dataformCost(bq, dryRun, b, root, source, opts, lookups, logger)
 }
 
 // namesKind keeps apart the saved compiles and base snapshots of a

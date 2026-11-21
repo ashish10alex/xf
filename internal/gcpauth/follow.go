@@ -120,12 +120,25 @@ func (c *Credentials) QuotaProject() string {
 }
 
 // Client is an HTTP client that signs each request with the ADC as they
-// are when it is sent.
+// are when it is sent, bounding response-header waits so stalled sockets do
+// not hang without cutting off slow large response downloads.
 func (c *Credentials) Client() *http.Client {
-	return &http.Client{Transport: transport{c}}
+	base := http.DefaultTransport
+	if tr, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := tr.Clone()
+		clone.ResponseHeaderTimeout = 90 * time.Second
+		if clone.IdleConnTimeout == 0 {
+			clone.IdleConnTimeout = 90 * time.Second
+		}
+		base = clone
+	}
+	return &http.Client{Transport: transport{c: c, base: base}}
 }
 
-type transport struct{ c *Credentials }
+type transport struct {
+	c    *Credentials
+	base http.RoundTripper
+}
 
 func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ts, _, err := t.c.current()
@@ -135,5 +148,9 @@ func (t transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return nil, err
 	}
-	return (&oauth2.Transport{Source: ts, Base: http.DefaultTransport}).RoundTrip(req)
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return (&oauth2.Transport{Source: ts, Base: base}).RoundTrip(req)
 }

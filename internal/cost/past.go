@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ashish10alex/xf/internal/impact"
 	"github.com/ashish10alex/xf/internal/warehouse"
 )
 
@@ -56,10 +57,80 @@ type PastRun struct {
 	Duration time.Duration `json:"durationNs,omitempty"`
 	// ReadBytes and ReadRows are what the run read. Query History counts
 	// no rows a CREATE OR REPLACE TABLE writes.
-	ReadBytes int64  `json:"readBytes,omitempty"`
-	ReadRows  int64  `json:"readRows,omitempty"`
-	Warehouse string `json:"warehouse,omitempty"`
-	QueryID   string `json:"queryId,omitempty"`
+	ReadBytes       int64         `json:"readBytes,omitempty"`
+	ReadRows        int64         `json:"readRows,omitempty"`
+	Warehouse       string        `json:"warehouse,omitempty"`
+	WarehouseSize   string        `json:"warehouseSize,omitempty"`
+	Serverless      bool          `json:"serverless,omitempty"`
+	Credits         float64       `json:"credits,omitempty"`
+	StatementCount  int           `json:"statementCount,omitempty"`
+	RunCount        int           `json:"runCount,omitempty"`
+	RunsCapped      bool          `json:"runsCapped,omitempty"`
+	MedianDuration  time.Duration `json:"medianDurationNs,omitempty"`
+	MedianReadBytes int64         `json:"medianReadBytes,omitempty"`
+	QueryID         string        `json:"queryId,omitempty"`
+	// Unfiltered are upstream partitioned or clustered tables whose key column
+	// this model's compiled SQL never names.
+	Unfiltered []Unfiltered `json:"unfiltered,omitempty"`
+}
+
+// WarehouseLabel formats Warehouse with its size and serverless flag when
+// known (e.g. "Prod jobs (Medium, serverless)"), or plain Warehouse otherwise.
+func (r PastRun) WarehouseLabel() string {
+	var tags []string
+	if r.WarehouseSize != "" {
+		tags = append(tags, r.WarehouseSize)
+	}
+	if r.Serverless {
+		tags = append(tags, "serverless")
+	}
+	if len(tags) == 0 {
+		return r.Warehouse
+	}
+	if r.Warehouse == "" {
+		return strings.Join(tags, ", ")
+	}
+	return r.Warehouse + " (" + strings.Join(tags, ", ") + ")"
+}
+
+// CreditsText formats Snowflake compute credits, "" when zero.
+func (r PastRun) CreditsText() string {
+	if r.Credits <= 0 {
+		return ""
+	}
+	if r.Credits >= 1 {
+		return fmt.Sprintf("%.2f credits", r.Credits)
+	}
+	return fmt.Sprintf("%.3f credits", r.Credits)
+}
+
+// CadenceText summarizes multi-run cadence and median stats when more than one
+// run was observed in the history window, "" otherwise.
+func (r PastRun) CadenceText() string {
+	if r.RunCount <= 1 {
+		return ""
+	}
+	med := PastRun{Duration: r.MedianDuration}.Took()
+	prefix := ""
+	if r.RunsCapped {
+		prefix = "≥"
+	}
+	return fmt.Sprintf("%s%d runs, median %s / %s", prefix, r.RunCount, med, warehouse.FormatBytes(r.MedianReadBytes))
+}
+
+// UnfilteredCount returns how many models in p have at least one unfiltered
+// partition/clustering warning.
+func (p *PastRuns) UnfilteredCount() int {
+	if p == nil {
+		return 0
+	}
+	n := 0
+	for _, r := range p.Runs {
+		if len(r.Unfiltered) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // SortPastRuns orders runs as PastRuns.Runs are.
@@ -187,17 +258,39 @@ func pastText(r *Report, o Options) string {
 	}
 	for _, run := range p.Runs {
 		name := run.Name + strings.Repeat(" ", width-len(run.Name))
+		var extra []string
+		if cr := run.CreditsText(); cr != "" {
+			extra = append(extra, cr)
+		}
+		if cad := run.CadenceText(); cad != "" {
+			extra = append(extra, cad)
+		}
+		if run.StatementCount > 1 {
+			extra = append(extra, fmt.Sprintf("%d statements", run.StatementCount))
+		}
+		suffix := ""
+		if len(extra) > 0 {
+			suffix = " · " + strings.Join(extra, " · ")
+		}
+		var warnParts []string
+		for _, u := range run.Unfiltered {
+			warnParts = append(warnParts, o.paint(fmt.Sprintf("[MISSING PARTITION/CLUSTER FILTER: %s on %s]", u.Column, impact.ShortTable(u.Table)), ansiYellow))
+		}
+		warnSuffix := ""
+		if len(warnParts) > 0 {
+			warnSuffix = "  " + strings.Join(warnParts, "  ")
+		}
 		if !run.Ran {
-			fmt.Fprintf(&b, "  %s  %s\n", name, o.paint(run.NoRunText(p), ansiDim))
+			fmt.Fprintf(&b, "  %s  %s%s\n", name, o.paint(run.NoRunText(p), ansiDim), warnSuffix)
 			continue
 		}
 		if p.NoReadRows {
-			fmt.Fprintf(&b, "  %s  ran %s · %s · read %s · on %s\n", name, run.When(), run.Took(),
-				warehouse.FormatBytes(run.ReadBytes), run.Warehouse)
+			fmt.Fprintf(&b, "  %s  ran %s · %s · read %s · on %s%s%s\n", name, run.When(), run.Took(),
+				warehouse.FormatBytes(run.ReadBytes), run.WarehouseLabel(), suffix, warnSuffix)
 			continue
 		}
-		fmt.Fprintf(&b, "  %s  ran %s · %s · read %s, %s rows · on %s\n", name, run.When(), run.Took(),
-			warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.Warehouse)
+		fmt.Fprintf(&b, "  %s  ran %s · %s · read %s, %s rows · on %s%s%s\n", name, run.When(), run.Took(),
+			warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.WarehouseLabel(), suffix, warnSuffix)
 	}
 	if len(p.Runs) == 0 {
 		b.WriteString(o.paint("Nothing to show: the branch changes no model.", ansiDim) + "\n")
@@ -227,27 +320,50 @@ func pastMarkdown(r *Report, o Options) string {
 		lines = append(lines, "Nothing to show: the branch changes no model.")
 		return strings.Join(lines, "\n") + "\n"
 	}
+	whCell := func(run PastRun) string {
+		parts := []string{}
+		if wh := run.WarehouseLabel(); wh != "" {
+			parts = append(parts, cell(wh))
+		}
+		if cr := run.CreditsText(); cr != "" {
+			parts = append(parts, cr)
+		}
+		if cad := run.CadenceText(); cad != "" {
+			parts = append(parts, cad)
+		}
+		for _, u := range run.Unfiltered {
+			parts = append(parts, fmt.Sprintf("⚠️ no partition/cluster filter: `%s` of `%s`", cell(u.Column), cell(impact.ShortTable(u.Table))))
+		}
+		return strings.Join(parts, " · ")
+	}
+	noRunCell := func(run PastRun) string {
+		parts := []string{run.NoRunText(p)}
+		for _, u := range run.Unfiltered {
+			parts = append(parts, fmt.Sprintf("⚠️ no partition/cluster filter: `%s` of `%s`", cell(u.Column), cell(impact.ShortTable(u.Table))))
+		}
+		return strings.Join(parts, " · ")
+	}
 	if p.NoReadRows {
 		lines = append(lines, "**"+PastTotalLine(r)+"**", "",
 			"| Model | Type | Last run | Took | Read | Warehouse |", "| --- | --- | --- | --: | --: | --- |")
 		for _, run := range p.Runs {
 			if !run.Ran {
-				lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | |", run.Name, run.Type, run.NoRunText(p)))
+				lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | |", run.Name, run.Type, noRunCell(run)))
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s |", run.Name, run.Type, run.When(), run.Took(),
-				warehouse.FormatBytes(run.ReadBytes), run.Warehouse))
+				warehouse.FormatBytes(run.ReadBytes), whCell(run)))
 		}
 	} else {
 		lines = append(lines, "**"+PastTotalLine(r)+"**", "",
 			"| Model | Type | Last run | Took | Read | Rows read | Warehouse |", "| --- | --- | --- | --: | --: | --: | --- |")
 		for _, run := range p.Runs {
 			if !run.Ran {
-				lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | | |", run.Name, run.Type, run.NoRunText(p)))
+				lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | | | | |", run.Name, run.Type, noRunCell(run)))
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("| `%s` | %s | %s | %s | %s | %s | %s |", run.Name, run.Type, run.When(), run.Took(),
-				warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), run.Warehouse))
+				warehouse.FormatBytes(run.ReadBytes), RowsText(run.ReadRows), whCell(run)))
 		}
 	}
 	if line := GateLine(r, o); line != "" {

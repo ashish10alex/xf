@@ -40,9 +40,10 @@ func runImpact(args []string) int {
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
 		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
-		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions)
+		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions, config.KeyLineageProjects)
 	pushed := fs.Bool("pushed", false, "compare the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
-	failOn := fs.String("fail-on", "", "exit 1 when a change of this `severity` or worse is found: critical or warning")
+	failOn := fs.String("fail-on", "", "exit 1 when a change of this `severity` or worse is found: critical, warning or unknown")
+	failOnUnchecked := fs.Bool("fail-on-unchecked", false, "exit 1 when any changed model failed to check (dry run or schema error; ignores operations/scripts and tables not yet built)")
 	output := fs.String("output", "", "also write the report to `path`: as Markdown, for a pull request comment, or as JSON with --json")
 	fs.StringVar(output, "o", "", "")
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of text")
@@ -70,12 +71,16 @@ when the check could not be made.`)
 	if err == nil && fs.NArg() > 0 {
 		err = fmt.Errorf("unexpected arguments: %v (see xf impact --help)", fs.Args())
 	}
-	threshold, ok := map[string]impact.Severity{"": 0, "critical": impact.SeverityCritical, "warning": impact.SeverityWarning}[*failOn]
-	if err == nil && !ok {
-		err = fmt.Errorf("--fail-on must be critical or warning, not %q", *failOn)
+	var threshold impact.Severity
+	var gate bool
+	if err == nil {
+		err = sf.checkFlag(config.KeyLineageProjects)
 	}
-	if err == nil && *web && (*pushed || *failOn != "" || *output != "" || *asJSON || *attention) {
-		err = errors.New("--web can't be used with --pushed, --fail-on, --output, --json or --attention")
+	if err == nil {
+		threshold, gate, err = parseFailOn(*failOn)
+	}
+	if err == nil && *web && (*pushed || *failOn != "" || *failOnUnchecked || *output != "" || *asJSON || *attention) {
+		err = errors.New("--web can't be used with --pushed, --fail-on, --fail-on-unchecked, --output, --json or --attention")
 	}
 	if err == nil && *attention && *asJSON {
 		err = errors.New("--attention can't be used with --json, which has every model: keep those whose severity isn't low")
@@ -91,7 +96,7 @@ when the check could not be made.`)
 	}
 	if err == nil {
 		var code int
-		if code, err = checkImpact(pf, sf, *pushed, *failOn != "", threshold, *output, *asJSON, useColour, *attention); err == nil {
+		if code, err = checkImpact(pf, sf, *pushed, gate, threshold, *failOnUnchecked, *output, *asJSON, useColour, *attention); err == nil {
 			return code
 		}
 	}
@@ -99,7 +104,7 @@ when the check could not be made.`)
 	return impactFailed
 }
 
-func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold impact.Severity, output string, asJSON, color, attention bool) (int, error) {
+func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold impact.Severity, failOnUnchecked bool, output string, asJSON, color, attention bool) (int, error) {
 	root, name, err := pf.find()
 	if err != nil {
 		return 0, err
@@ -124,7 +129,7 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 	defer client.Close()
 
 	req := engine.ImpactRequest{DefaultBranch: cmp.Or(settings.DefaultBranch, config.DefaultBranch), Head: changes.HeadWorktree, Refresh: true,
-		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, Unset: unsetProdOptions(settings)}
+		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, LineageProjects: settings.LineageProjects, Unset: unsetProdOptions(settings)}
 	if name == backend.DBT {
 		req.DevCompilerOptions, req.ProdCompilerOptions = "", ""
 		req.DbtProdTarget, req.Unset = settings.DbtProdTarget, unsetDbtProdTarget(settings, os.Getenv)
@@ -153,12 +158,14 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 		fmt.Fprintln(os.Stderr, "xf impact:", strings.ReplaceAll(hint, "`", ""))
 	}
 	worst, found := impact.Worst(report)
-	if unknown := countUnknown(report); unknown == 1 {
-		fmt.Fprintln(os.Stderr, "xf impact: the readers of 1 change could not be looked up; --fail-on doesn't count it")
-	} else if unknown > 1 {
-		fmt.Fprintf(os.Stderr, "xf impact: the readers of %d changes could not be looked up; --fail-on doesn't count them\n", unknown)
+	if !(gate && threshold <= impact.SeverityUnknown) {
+		if unknown := countUnknown(report); unknown == 1 {
+			fmt.Fprintln(os.Stderr, "xf impact: the readers of 1 change could not be looked up; --fail-on doesn't count it (use --fail-on unknown to fail on it)")
+		} else if unknown > 1 {
+			fmt.Fprintf(os.Stderr, "xf impact: the readers of %d changes could not be looked up; --fail-on doesn't count them (use --fail-on unknown to fail on them)\n", unknown)
+		}
 	}
-	if gate && found && worst >= threshold {
+	if (gate && found && worst >= threshold) || (failOnUnchecked && len(impact.UncheckedFailures(report)) > 0) {
 		return impactFailOn, nil
 	}
 	return impactOK, nil
@@ -212,22 +219,29 @@ func countUnknown(r *impact.Report) int {
 // progressPrinter shows progress on one line rewritten in place on a
 // terminal, else a line per phase, so CI logs stay short.
 type progressPrinter struct {
+	mu       sync.Mutex
 	w        io.Writer
 	terminal bool
-	phase    string
+	phases   map[string]string
 	shown    bool
 }
 
 func newProgressPrinter(f *os.File) *progressPrinter {
 	st, err := f.Stat()
-	return &progressPrinter{w: f, terminal: err == nil && st.Mode()&os.ModeCharDevice != 0}
+	return &progressPrinter{w: f, terminal: err == nil && st.Mode()&os.ModeCharDevice != 0, phases: map[string]string{}}
 }
 
 func (p *progressPrinter) say(text string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.terminal {
 		_, _ = fmt.Fprintf(p.w, "\r\x1b[K%s…", text)
 		p.shown = true
 		return
+	}
+	key := ""
+	if prefix, _, ok := strings.Cut(text, ":"); ok {
+		key = prefix
 	}
 	phase := text
 	for i := len(text) - 1; i >= 0; i-- {
@@ -236,13 +250,18 @@ func (p *progressPrinter) say(text string) {
 			break
 		}
 	}
-	if phase != p.phase {
-		p.phase = phase
+	if p.phases == nil {
+		p.phases = map[string]string{}
+	}
+	if phase != p.phases[key] {
+		p.phases[key] = phase
 		_, _ = fmt.Fprintln(p.w, text+"…")
 	}
 }
 
 func (p *progressPrinter) done() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.terminal && p.shown {
 		_, _ = fmt.Fprint(p.w, "\r\x1b[K")
 	}
@@ -255,8 +274,11 @@ func (p *progressPrinter) done() {
 // that are dev or prod runs fold into the actions they run, and with prod
 // options the changes are compared with the tables prod runs build. plain
 // compiles the merge-base, as it did for the Changed Actions.
-func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error), bin, root string, plain *changes.Source) engine.ImpactFunc {
+func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error), bin, root string, plain *changes.Source, opts *optionSources) engine.ImpactFunc {
 	lc := lazyLineage()
+	if opts == nil {
+		opts = newOptionSources(bin, root, nil)
+	}
 	return func(ctx context.Context, req engine.ImpactRequest, res *changes.Result, g *project.Graph, progress func(impact.Progress)) (*impact.Report, error) {
 		if g == nil {
 			var err error
@@ -268,11 +290,11 @@ func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun
 		if err != nil {
 			return nil, err
 		}
-		devRuns, err := runsToActions(ctx, bin, root, config.KeyDevCompilerOptions, req.DevCompilerOptions, g, res, progress)
+		devRuns, err := runsToActionsWith(ctx, bin, root, config.KeyDevCompilerOptions, req.DevCompilerOptions, g, res, opts, progress)
 		if err != nil {
 			return nil, err
 		}
-		prodRuns, err := runsToActions(ctx, bin, root, config.KeyProdCompilerOptions, req.ProdCompilerOptions, g, res, progress)
+		prodRuns, err := runsToActionsWith(ctx, bin, root, config.KeyProdCompilerOptions, req.ProdCompilerOptions, g, res, opts, progress)
 		if err != nil {
 			return nil, err
 		}
@@ -285,7 +307,7 @@ func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun
 		return impact.Run(ctx, res, g, impact.Deps{
 			Schema:     tables.Schema,
 			DryRun:     dryRun,
-			Readers:    lineage.NewSource(client, tables, g, toAction),
+			Readers:    lineage.NewSource(client, tables, g, toAction).WithProjects(config.ParseLineageProjects(req.LineageProjects)...),
 			ToProd:     toAction,
 			ProdTarget: prodTarget,
 			// The merge-base as Changed Actions compiled it, to tell the
@@ -303,7 +325,23 @@ func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun
 
 // runsToActions maps the targets of a compile with the compiler options of
 // key to the project's actions (see impact.DevToProd); nil without options.
-func runsToActions(ctx context.Context, bin, root, key, options string, g *project.Graph, res *changes.Result, progress func(impact.Progress)) (map[string]string, error) {
+// With res.Head == changes.HeadPushed, it compiles the pushed commit
+// res.HeadSHA rather than the working tree.
+func runsToActions(ctx context.Context, bin, root, key, options string, g *project.Graph, res *changes.Result, optSource func(key, options string, args []string) *changes.Source, progress func(impact.Progress)) (map[string]string, error) {
+	return runsToActionsCore(ctx, bin, root, key, options, g, res, optSource, nil, progress)
+}
+
+func runsToActionsWith(ctx context.Context, bin, root, key, options string, g *project.Graph, res *changes.Result, opts *optionSources, progress func(impact.Progress)) (map[string]string, error) {
+	var optSource func(key, options string, args []string) *changes.Source
+	var wt func(ctx context.Context, options string, args []string, sig string) (*project.Graph, error)
+	if opts != nil {
+		optSource = opts.get
+		wt = opts.worktree
+	}
+	return runsToActionsCore(ctx, bin, root, key, options, g, res, optSource, wt, progress)
+}
+
+func runsToActionsCore(ctx context.Context, bin, root, key, options string, g *project.Graph, res *changes.Result, optSource func(key, options string, args []string) *changes.Source, wt func(ctx context.Context, options string, args []string, sig string) (*project.Graph, error), progress func(impact.Progress)) (map[string]string, error) {
 	if options == "" {
 		return nil, nil
 	}
@@ -312,7 +350,21 @@ func runsToActions(ctx context.Context, bin, root, key, options string, g *proje
 		return nil, fmt.Errorf("%s: %w", key, err)
 	}
 	progress(impact.Progress{Phase: "Compiling with " + key})
-	other, err := dataform.CompileWith(ctx, bin, root, args)
+	var other *project.Graph
+	if res.Head == changes.HeadPushed {
+		if res.HeadSHA == "" || optSource == nil {
+			return nil, fmt.Errorf("compiling with %s: pushed head commit is unknown", key)
+		}
+		var data []byte
+		data, err = optSource(key, options, args).Commit(ctx, res.HeadSHA)
+		if err == nil {
+			other, err = dataform.ParseCompileJSON(data)
+		}
+	} else if wt != nil {
+		other, err = wt(ctx, options, args, impact.Signature(res, g))
+	} else {
+		other, err = dataform.CompileWith(ctx, bin, root, args)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("compiling with %s: %w", key, err)
 	}

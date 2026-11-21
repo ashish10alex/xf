@@ -71,3 +71,57 @@ func TestDbtRunsFromQueryHistory(t *testing.T) {
 		t.Errorf("another target found %+v", h.Runs)
 	}
 }
+
+func TestDbtRunsForBurstGroupingMetadataAndEarlyExit(t *testing.T) {
+	pages := 0
+	day := time.Date(2026, 11, 17, 6, 0, 0, 0, time.UTC).UnixMilli()
+	comment := `/* {"app": "dbt", "target_name": "prod", "node_id": "model.shop.orders"} */` + "\n"
+	q := func(id, typ string, start, dur, read int64) string {
+		out, _ := json.Marshal(map[string]any{
+			"query_id": id, "status": "FINISHED", "statement_type": typ, "warehouse_id": "wh1",
+			"query_start_time_ms": start, "duration": dur, "query_text": comment + typ,
+			"metrics": map[string]any{"read_bytes": read, "rows_read_count": read / 10},
+		})
+		return string(out)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/2.0/sql/history/queries", func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		if pages > 1 {
+			t.Errorf("expected early exit after page 1 once %d bursts found, got page %d", minRunsForEarlyExit, pages)
+		}
+		// 5 distinct runs: latest run is a 2-statement burst (CREATE TEMP + MERGE 20s apart).
+		_, _ = io.WriteString(w, `{"res":[`+
+			q("m5", "MERGE", day+20_000, 10_000, 1<<30)+","+
+			q("c5", "CREATE", day, 40_000, 3<<30)+","+
+			q("r4", "MERGE", day-1*86_400_000, 30_000, 2<<30)+","+
+			q("r3", "MERGE", day-2*86_400_000, 30_000, 2<<30)+","+
+			q("r2", "MERGE", day-3*86_400_000, 20_000, 1<<30)+","+
+			q("r1", "MERGE", day-4*86_400_000, 20_000, 1<<30)+
+			`],"next_page_token":"p2","has_next_page":true}`)
+	})
+	mux.HandleFunc("GET /api/2.0/sql/warehouses", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"warehouses":[{"id":"wh1","name":"Prod jobs","state":"RUNNING","cluster_size":"Medium","enable_serverless_compute":true}]}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := New(Config{Host: srv.URL, Token: static("dapi-test"), HTTP: srv.Client()})
+
+	h, err := c.DbtRunsFor(context.Background(), time.Now().AddDate(0, 0, -30), "prod", []string{"model.shop.orders"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages != 1 || h.Truncated {
+		t.Fatalf("pages=%d truncated=%v, want 1 and false", pages, h.Truncated)
+	}
+	run := h.Runs["model.shop.orders"]
+	if run.StatementCount != 2 || run.QueryID != "c5" || run.ReadBytes != 4<<30 || run.Duration != 50*time.Second {
+		t.Fatalf("burst run = %+v", run)
+	}
+	if run.Warehouse != "Prod jobs" || run.WarehouseSize != "Medium" || !run.Serverless {
+		t.Fatalf("warehouse metadata = %+v", run)
+	}
+	if !h.Sampled || run.RunCount != 5 || run.MedianReadBytes != 2<<30 || run.MedianDuration != 30*time.Second {
+		t.Fatalf("sampled=%v cadence/medians = %+v", h.Sampled, run)
+	}
+}

@@ -385,6 +385,8 @@ func defaultSetting(key string, l config.Loaded, root string) (value, from strin
 		return strconv.Itoa(config.DefaultWebAutoExitSeconds), "default (off with --allow-host)"
 	case config.KeyForgePollSeconds:
 		return strconv.Itoa(config.DefaultForgePollSeconds), "default"
+	case config.KeyUSDPerTiB:
+		return config.Defaults[config.KeyUSDPerTiB], "default"
 	case config.KeyEditor:
 		return defaultEditor(os.Getenv)
 	case config.KeyVimFormat:
@@ -405,6 +407,8 @@ func defaultSetting(key string, l config.Loaded, root string) (value, from strin
 			return "(none)", "default: column impact compares with the default targets, in " + p
 		}
 		return "(none)", "default: column impact compares with the default targets"
+	case config.KeyLineageProjects:
+		return "(none)", "default: Dataplex lineage is searched only in each table's own project"
 	case config.KeyDataformLocation:
 		if loc := settingsValue(root, "defaultLocation"); loc != "" {
 			return loc, dataform.SettingsFile + " (defaultLocation)"

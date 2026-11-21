@@ -170,6 +170,9 @@ type Project struct {
 	// run, in GiB, at which the page turns it amber, and red and asks
 	// before running; 0 uses the defaults.
 	ScratchWarnGB, ScratchConfirmGB float64
+	// USDPerTiB is the BigQuery price in dollars of a TiB scanned; 0 uses
+	// BigQuery's on-demand price.
+	USDPerTiB float64
 	// SourceAutosaveMs is how long the source pane waits after an edit
 	// before saving; 0 is off.
 	SourceAutosaveMs int
@@ -206,8 +209,8 @@ type Project struct {
 	// and nothing else. StartScratch opens the Scratch view on a new empty
 	// scratch when the page starts.
 	Standalone, StartScratch bool
-	// StartCheck opens that tab of the Checks page ("impact") when the
-	// first page starts (xf impact --web).
+	// StartCheck opens that tab of the Checks page ("impact" or "cost") when the
+	// first page starts (xf impact --web, xf cost --web).
 	StartCheck string
 	// InstallCLI is how to install the tool's CLI, for a project that
 	// opened without it (a Dataform project with no dataform on PATH);

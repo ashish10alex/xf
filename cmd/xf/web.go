@@ -120,7 +120,7 @@ type webStart struct {
 	// standalone against warehouse ("bigquery" or "databricks").
 	scratch                      bool
 	warehouse, project, location string
-	// check opens the Checks page on that tab ("impact").
+	// check opens the Checks page on that tab ("impact" or "cost").
 	check string
 }
 
@@ -335,6 +335,7 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 	}
 	p.ScratchWarnGB, _ = strconv.ParseFloat(settings.ScratchWarnGB, 64)
 	p.ScratchConfirmGB, _ = strconv.ParseFloat(settings.ScratchConfirmGB, 64)
+	p.USDPerTiB = deps.USDPerTiB
 	p.SourceAutosaveMs, _ = strconv.Atoi(settings.SourceAutosaveMs)
 	p.DiffStyle = settings.DiffStyle
 	p.PythonLanguageServer = settings.PythonLanguageServer
