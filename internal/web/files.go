@@ -437,7 +437,11 @@ func (p *projectState) renameFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.hub.send("files", struct{}{})
-	writeJSON(w, okView{OK: true, Message: "renamed " + req.From + " to " + req.To})
+	verb := "renamed "
+	if path.Base(req.From) == path.Base(req.To) {
+		verb = "moved "
+	}
+	writeJSON(w, okView{OK: true, Message: verb + req.From + " to " + req.To})
 }
 
 // deleteFile moves a file or folder to the system's trash.

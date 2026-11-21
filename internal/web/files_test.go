@@ -172,9 +172,19 @@ func TestFilesNewRenameDelete(t *testing.T) {
 		t.Errorf("x.js = %q", got)
 	}
 
-	postJSON(t, c, ts.URL+"/api/files/rename", map[string]any{"from": "includes/x.js", "to": "includes/lib/y.js"}, nil)
-	if exists("includes/x.js") || !exists("includes/lib/y.js") {
-		t.Fatal("not renamed")
+	var renamed okView
+	postJSON(t, c, ts.URL+"/api/files/rename", map[string]any{"from": "includes/x.js", "to": "includes/lib/y.js"}, &renamed)
+	if exists("includes/x.js") || !exists("includes/lib/y.js") || renamed.Message != "renamed includes/x.js to includes/lib/y.js" {
+		t.Fatalf("not renamed: %+v", renamed)
+	}
+	var moved okView
+	postJSON(t, c, ts.URL+"/api/files/rename", map[string]any{"from": "includes/lib/y.js", "to": "y.js"}, &moved)
+	if exists("includes/lib/y.js") || !exists("y.js") || moved.Message != "moved includes/lib/y.js to y.js" {
+		t.Fatalf("not moved to root: %+v", moved)
+	}
+	postJSON(t, c, ts.URL+"/api/files/rename", map[string]any{"from": "y.js", "to": "includes/lib/y.js"}, &moved)
+	if exists("y.js") || !exists("includes/lib/y.js") || moved.Message != "moved y.js to includes/lib/y.js" {
+		t.Fatalf("not moved back: %+v", moved)
 	}
 	for _, bad := range []map[string]any{
 		{"from": "includes", "to": "includes/lib/inner"},               // into itself

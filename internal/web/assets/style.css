@@ -1515,7 +1515,7 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .proj-row.proj-found:not(.cur) .proj-name { opacity: 0.6; }
 .proj-mark { flex: none; font-size: 11px; }
 .tree-pane .pane-body { padding: 4px 0 2px; }
-.tree-list { flex: 1; min-height: 0; overflow: auto; outline: none; }
+.tree-list { flex: 1; min-height: 0; overflow: auto; outline: none; user-select: none; padding-bottom: 24px; }
 .tree-row {
   display: flex; align-items: center; gap: 0.6ch; padding-right: 8px;
   height: var(--lh); white-space: nowrap; cursor: pointer;
@@ -1523,6 +1523,18 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .tree-row:hover { background: color-mix(in srgb, var(--sel) 45%, transparent); }
 .tree-row.cur { background: color-mix(in srgb, var(--sel) 55%, transparent); }
 .tree-row.cur.focused { background: var(--sel); }
+/* Drag-and-drop move: the dragged row dims, the destination folder (and
+   its rows) or the root list highlights in the focus colour. */
+.tree-row.dragging { opacity: 0.45; }
+.tree-row.drop-target {
+  background: color-mix(in srgb, var(--focus) 22%, transparent);
+  outline: 1px solid var(--focus); outline-offset: -1px;
+}
+.tree-row.drop-in { background: color-mix(in srgb, var(--focus) 9%, transparent); }
+.tree-list.drop-root {
+  box-shadow: inset 0 0 0 1px var(--focus);
+  background: color-mix(in srgb, var(--focus) 6%, transparent);
+}
 /* The file open in the source pane: a bar on its left, wherever the
    cursor is, and a flash when cmd+b reveals it. */
 .tree-row.active { box-shadow: inset 2px 0 0 var(--focus); }

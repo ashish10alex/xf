@@ -44,6 +44,10 @@ export const T = {
   // path, value, check, busy}; check is the rename's renameCheck once
   // the server says the rename renames actions.
   prompt: null,
+  // drag is an in-progress drag-and-drop move: {from, over}, where over
+  // is the destination folder path ('' for the project's root, null when
+  // not over a valid drop target).
+  drag: null,
 };
 
 export const treeKey = onMac ? '⌘b' : 'ctrl+b';
@@ -58,7 +62,8 @@ let loadedFor = null;
 function restore() {
   if (loadedFor === root()) return;
   loadedFor = root();
-  Object.assign(T, { projCursor: '', shown: false, view: 'files', width: 0, open: {}, files: [], dirs: [], loaded: false, error: '', cursor: '', centre: null, filter: '', filtering: false, prompt: null });
+  cancelDragExpand();
+  Object.assign(T, { projCursor: '', shown: false, view: 'files', width: 0, open: {}, files: [], dirs: [], loaded: false, error: '', cursor: '', centre: null, filter: '', filtering: false, prompt: null, drag: null });
   try {
     const v = JSON.parse(localStorage.getItem(storeKey()) || '{}');
     T.shown = !!v.shown && !phone(); // on a phone it would cover the page
@@ -549,8 +554,7 @@ export async function submitPrompt() {
 }
 
 async function rename(from, to) {
-  T.prompt = { ...T.prompt, busy: true };
-  redraw();
+  if (T.prompt) { T.prompt = { ...T.prompt, busy: true }; redraw(); }
   const r = await post('/api/files/rename', { from, to });
   T.prompt = null;
   const open = SRC.file;
@@ -561,9 +565,129 @@ async function rename(from, to) {
     showPlainFile(now);
     reveal(now);
   } else reveal(to);
-  if (T.open[from]) { setOpen(from, false); setOpen(to, true); }
+  let openChanged = false;
+  for (const k of Object.keys(T.open)) {
+    if (k === from || k.startsWith(from + '/')) {
+      delete T.open[k];
+      T.open[to + k.slice(from.length)] = true;
+      openChanged = true;
+    }
+  }
+  if (openChanged) keep();
   say(r.message);
   await load();
+}
+
+// ---- drag and drop ----
+
+let dragExpandTimer = 0, dragExpandPath = '';
+
+function cancelDragExpand() {
+  clearTimeout(dragExpandTimer);
+  dragExpandTimer = 0;
+  dragExpandPath = '';
+}
+
+const parentDir = (path) => {
+  const i = path.lastIndexOf('/');
+  return i < 0 ? '' : path.slice(0, i);
+};
+
+const baseName = (path) => path.slice(path.lastIndexOf('/') + 1);
+
+// dropDir is the folder dropping onto row r moves into: r itself for a
+// folder, its parent folder for a file ('' for a top-level file or empty
+// space).
+export function dropDir(r) {
+  return folderAt(r);
+}
+
+// targetPath is where moving from into folder dir lands.
+export function targetPath(from, dir) {
+  const name = baseName(from);
+  return dir ? dir + '/' + name : name;
+}
+
+// canDrop says whether from can be moved into folder dir ('' for root):
+// not into its current folder, not onto itself or a descendant, and not
+// while it holds unsaved changes.
+export function canDrop(from, dir) {
+  if (!from || dir == null) return false;
+  if (holdsDirty(from)) return false;
+  if (dir === parentDir(from)) return false;
+  if (dir === from || dir.startsWith(from + '/')) return false;
+  return true;
+}
+
+// startDrag starts dragging path; returns false when refused (an open
+// prompt or unsaved changes in path).
+export function startDrag(path) {
+  if (!path || T.prompt) return false;
+  if (holdsDirty(path)) { say(unsavedIn(SRC.file)); return false; }
+  cancelDragExpand();
+  T.drag = { from: path, over: null };
+  // Next frame so the browser captures the drag ghost before .dragging dims the row.
+  requestAnimationFrame(() => redraw());
+  return true;
+}
+
+// dragOver tracks the target folder under the pointer during a drag,
+// opening a collapsed folder after hovering over it briefly, as VS Code
+// does. Returns true when dropping here is valid.
+export function dragOver(dir, r) {
+  if (!T.drag) return false;
+  if (r && r.dir && !r.open && r.path !== T.drag.from && !r.path.startsWith(T.drag.from + '/')) {
+    if (dragExpandPath !== r.path) {
+      cancelDragExpand();
+      dragExpandPath = r.path;
+      dragExpandTimer = setTimeout(() => {
+        dragExpandTimer = 0;
+        if (T.drag && dragExpandPath === r.path && !T.open[r.path]) {
+          setOpen(r.path, true);
+          redraw();
+        }
+      }, 500);
+    }
+  } else {
+    cancelDragExpand();
+  }
+  const ok = canDrop(T.drag.from, dir);
+  const next = ok ? dir : null;
+  if (T.drag.over !== next) {
+    T.drag.over = next;
+    redraw();
+  }
+  return ok;
+}
+
+export function dragLeave() {
+  cancelDragExpand();
+  if (T.drag && T.drag.over !== null) {
+    T.drag.over = null;
+    redraw();
+  }
+}
+
+export function endDrag() {
+  cancelDragExpand();
+  if (T.drag) {
+    T.drag = null;
+    redraw();
+  }
+}
+
+// dropInto finishes a drag by moving T.drag.from into folder dir.
+export async function dropInto(dir) {
+  const d = T.drag;
+  endDrag();
+  if (!d || !canDrop(d.from, dir)) return false;
+  try {
+    await rename(d.from, targetPath(d.from, dir));
+    return true;
+  } catch (e) {
+    say(e.message);
+    return false;
+  }
 }
 
 // promptKey is a key while the rename's confirmation shows.

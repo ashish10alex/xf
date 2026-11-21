@@ -291,6 +291,7 @@ See [ADR 0035](adr/0035-xf-web-has-a-rail-of-icons.md).
 It lists what git does (tracked and untracked files, not ignored ones), marks each with its git status, its compile errors and ● for unsaved changes, and follows files made or removed outside the page.
 `j`/`k` move, `l` or `enter` opens a folder or a file, `h` closes a folder, `a` makes a file (end the name with `/` for a folder), `r` renames or moves, `m` moves (the same box, with the folder selected to type another; a folder that isn't there is made), `d` moves to the system's trash, `y` copies the absolute path and `Y` the path in the project, `/` filters.
 A click on a file opens it and leaves the keys in the tree; a double-click gives them to the editor.
+Drag a file or folder onto a folder (or the empty space below, for the project's root) to move it; hovering over a closed folder opens it.
 A right-click shows a menu: New File… on a folder (or the empty space below the files, for the project's root), Copy Path, Copy Relative Path, Rename…, Move… and Delete.
 Opening an action's file selects its action; any other file (an include, `workflow_settings.yaml`, a `schema.yml`) opens in the source pane on its own, with nothing selected, and `ctrl+^` goes back to the file before.
 Renaming an action's file renames the action when it is named after its file; the confirmation says how many actions refer to it.

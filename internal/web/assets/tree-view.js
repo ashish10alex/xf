@@ -21,12 +21,47 @@ const T = tr.T;
 const gitWord = { M: 'changed', A: 'added', U: 'untracked', C: 'in conflict' };
 
 function Row({ r, cur, focused }) {
-  const cls = 'tree-row' + (r.dir ? ' dir' : '') + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '') + (!r.dir && r.path === SRC.file ? ' active' : '') + (r.git ? ' git-' + r.git : '') + (r.errors ? ' has-errors' : '');
+  const drag = T.drag;
+  const dragging = drag && (r.path === drag.from || r.path.startsWith(drag.from + '/'));
+  const dropTarget = drag && drag.over && r.dir && r.path === drag.over;
+  const dropIn = drag && drag.over && r.path.startsWith(drag.over + '/');
+  const cls = 'tree-row'
+    + (r.dir ? ' dir' : '')
+    + (cur ? ' cur' : '')
+    + (cur && focused ? ' focused' : '')
+    + (!r.dir && r.path === SRC.file ? ' active' : '')
+    + (r.git ? ' git-' + r.git : '')
+    + (r.errors ? ' has-errors' : '')
+    + (dragging ? ' dragging' : '')
+    + (dropTarget ? ' drop-target' : '')
+    + (dropIn ? ' drop-in' : '');
   const why = [r.path, r.git && gitWord[r.git], r.errors && r.errors + ' error' + (r.errors === 1 ? '' : 's'), r.actions && r.actions + ' action' + (r.actions === 1 ? '' : 's')].filter(Boolean).join(' · ');
   return html`<div class=${cls} title=${why} style=${'padding-left:' + (0.5 + r.depth * 1.5) + 'ch'}
-      onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); if (e.button === 0) tr.clickRow(r); }}
+      draggable=${!T.prompt}
+      onMouseDown=${(e) => { if (e.button === 0) { e.stopPropagation(); if (S.focus !== 'tree') { setFocus('tree'); redraw(); } } }}
+      onClick=${(e) => { e.stopPropagation(); if (e.button === 0) tr.clickRow(r); }}
       onDblClick=${(e) => { e.stopPropagation(); tr.dblClickRow(r); }}
       onContextMenu=${(e) => openMenu(e, r)}
+      onDragStart=${(e) => {
+        if (!tr.startDrag(r.path)) { e.preventDefault(); return; }
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', r.path);
+      }}
+      onDragOver=${(e) => {
+        if (!T.drag) return;
+        e.stopPropagation();
+        if (tr.dragOver(tr.dropDir(r), r)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }
+      }}
+      onDrop=${(e) => {
+        if (!T.drag) return;
+        e.preventDefault();
+        e.stopPropagation();
+        tr.dropInto(tr.dropDir(r));
+      }}
+      onDragEnd=${() => tr.endDrag()}
       ref=${(el) => { if (el && cur) nearest(el); }}>
     <span class="tree-caret">${r.dir ? (r.open ? '▾' : '▸') : ''}</span>
     <span class="tree-name">${r.name}${r.dir ? '/' : ''}</span>
@@ -218,14 +253,31 @@ export function TreePane() {
   else if (!T.loaded) body = html`<div class="dim pad">listing…</div>`;
   else if (!rows.length) body = html`<div class="dim pad">${T.filter ? 'no file matches' : 'no files'}</div>`;
   else body = rows.map((r) => html`<${Row} key=${r.path} r=${r} cur=${r.path === T.cursor} focused=${focused} />`);
-  const note = focused ? 'a new · r rename · d delete' : tr.treeKey + ' hides';
+  const dropRoot = T.drag && T.drag.over === '';
+  const dest = T.drag && T.drag.over !== null ? 'move to ' + (T.drag.over ? T.drag.over + '/' : 'project root') : '';
+  const note = dest || (focused ? 'a new · r rename · d delete' : tr.treeKey + ' hides');
   return html`<section class=${'pane tree-pane' + (focused ? ' focused' : '')} data-pane="tree" style=${style}
-      onMouseDown=${() => { setFocus('tree'); redraw(); }}>
+      onMouseDown=${() => { setFocus('tree'); redraw(); }}
+      onDragOver=${(e) => {
+        if (!T.drag) return;
+        if (tr.dragOver('', null)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }
+      }}
+      onDragLeave=${(e) => {
+        if (T.drag && !e.currentTarget.contains(e.relatedTarget)) tr.dragLeave();
+      }}
+      onDrop=${(e) => {
+        if (!T.drag) return;
+        e.preventDefault();
+        tr.dropInto('');
+      }}>
     <${ColumnTitle} />
     <div class="pane-body">
       <${Filter} />
       ${T.prompt && html`<${Prompt} />`}
-      <div class="tree-list" ref=${list} onContextMenu=${(e) => openMenu(e, null)}>${body}</div>
+      <div class=${'tree-list' + (dropRoot ? ' drop-root' : '')} ref=${list} onContextMenu=${(e) => openMenu(e, null)}>${body}</div>
     </div>
     <footer class="pane-note">${note}</footer>
   </section>`;
