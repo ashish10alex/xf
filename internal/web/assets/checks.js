@@ -193,6 +193,7 @@ export async function openCheck(which, refresh) {
   if (which === 'cost' && !S.caps.cost) { say('query cost is not available'); return; }
   S.zoomed = false;
   S.overlay = null;
+  if (S.checks !== which) S.checksTermZoomed = false;
   S.checks = which;
   const o = S[which] && S[which].api === S.flags.api && S[which].base === S.boot.defaultBranch ? S[which] : { report: null };
   const stale = !!o.report && checkStale(o);
@@ -231,6 +232,7 @@ export async function openCheck(which, refresh) {
 export function closeChecks() {
   if (termFocused()) document.activeElement.blur();
   S.checks = null;
+  S.checksTermZoomed = false;
   if (S.overlay === 'prod') S.overlay = null;
   if (S.focus === 'source' && hooks.sourceReturn) queueMicrotask(hooks.sourceReturn);
 }
@@ -244,9 +246,22 @@ export function toggleChecksTerm(panel) {
   if (S.checksTerm && (panel || termFocused())) {
     if (termFocused()) document.activeElement.blur();
     S.checksTerm = false;
+    S.checksTermZoomed = false;
     return;
   }
   S.checksTerm = true;
+  S.checksTermFocus = true;
+}
+
+// toggleChecksTermZoom is ⌘z (alt+z) in the Checks page's terminal:
+// fill the page with it, or put the report back above it.
+export function toggleChecksTermZoom() {
+  if (S.checksTerm && S.checksTermZoomed) {
+    S.checksTermZoomed = false;
+  } else {
+    S.checksTerm = true;
+    S.checksTermZoomed = true;
+  }
   S.checksTermFocus = true;
 }
 
@@ -295,8 +310,9 @@ export function checkStale(o) {
 export function checkKey(which, k) {
   const o = S[which];
   switch (k) {
-    case 'I': openCheck('impact'); return;
-    case 'C': openCheck('cost'); return;
+    case 'esc': if (S.checksTermZoomed) S.checksTermZoomed = false; return;
+    case 'I': S.checksTermZoomed = false; openCheck('impact'); return;
+    case 'C': S.checksTermZoomed = false; openCheck('cost'); return;
     case 'tab': case 'shift+tab': {
       const tabs = checksTabs();
       const i = tabs.indexOf(which);
@@ -310,11 +326,13 @@ export function checkKey(which, k) {
       return;
     }
     case 'c':
+      S.checksTermZoomed = false;
       if (o.err && o.err.kind === 'compile') compile();
       openCheck(which, true);
       return;
     case 'a':
       if (!S.caps.api) { say('API runs are not available'); return; }
+      S.checksTermZoomed = false;
       S.flags.api = !S.flags.api;
       refreshView();
       openCheck(which);

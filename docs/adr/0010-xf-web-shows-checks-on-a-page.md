@@ -15,7 +15,7 @@ Its tables, verdict, notes and legend take the page's width, and a name wraps at
 On a phone, a table scrolls sideways in its own box.
 
 While the page shows, it has only its own keys: the palette, `?`, `r` and the panes' keys wait until you leave it. ctrl+, still opens settings, and closing them comes back to the page.
-Amended 2026-11-20, at the user's request: the terminal's keys work there too. `` ctrl+` `` (and `⌘j`) shows the project's shells under the report, the same ones as the log pane's terminal tab, without touching the project view's log pane or focus; `` ctrl+shift+` ``, `alt+w` and `⌥⌘→/←` open, close and go round them. Zooming the terminal (`alt+z`) stays the project view's.
+Amended 2026-11-20, at the user's request: the terminal's keys work there too. `` ctrl+` `` (and `⌘j`) shows the project's shells under the report, the same ones as the log pane's terminal tab, without touching the project view's log pane or focus; `` ctrl+shift+` ``, `alt+w`, `⌥⌘→/←` and `⌘z`/`alt+z` open, close, go round and zoom them to fill the page.
 The page adds nothing to the browser's history, as settings and Scratch don't: the back button doesn't close it.
 The first check of a session can still stop to ask for the prod compiler options, in the same prompt, over the page.
 

@@ -108,7 +108,7 @@ export async function closeTerm(id = activeTerm()) {
   } catch (e) { say('terminal: ' + e.message); redraw(); return; }
   if (shown && v && v.ids && v.ids.length) S.termId = v.ids[Math.max(i - 1, 0)];
   setTerms(v);
-  if (S.checks) { if (last) S.checksTerm = false; else S.checksTermFocus = true; }
+  if (S.checks) { if (last) { S.checksTerm = false; S.checksTermZoomed = false; } else S.checksTermFocus = true; }
   else if (last && S.logTab === 'term' && S.showLog) togglePanel();
   else if (S.logTab === 'term' && S.showLog) setFocus('log');
   say('closed ' + (label === 'terminal' ? 'the terminal' : label));

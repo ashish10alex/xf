@@ -3,7 +3,7 @@
 import { h, render } from './vendor/preact.mjs';
 import { App, LostNotice } from './view.js';
 import { runScratch, toggleResults, toggleList, flushSave, SC } from './scratch.js';
-import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, isTermCloseKey, closeTerm, toggleTermZoom, termHasKey, termFocused, activeTerm, toggleChecksTerm, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
+import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, isTermCloseKey, closeTerm, toggleTermZoom, termHasKey, termFocused, activeTerm, toggleChecksTerm, toggleChecksTermZoom, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
 import { SET, reopenAfterReload, openSettings, closeSettings } from './settings.js';
 import { T, closeThemePicker } from './theme.js';
 import { track } from './windows.js';
@@ -328,10 +328,11 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   // alt+z (and ⌘z on a Mac) zooms the terminal tab from inside it, where
-  // z is the shell's.
-  if (isTermZoomKey(e) && t instanceof Element && t.closest('.xterm') && S.mode === 'project' && !S.overlay && !S.checks) {
+  // z is the shell's, on the project view and the Checks page alike.
+  if (isTermZoomKey(e) && S.mode === 'project' && !S.overlay && !SET.open && !SC.open &&
+      ((t instanceof Element && t.closest('.xterm')) || (S.checks && S.caps.terminal && S.checksTerm && S.checksTermZoomed))) {
     e.preventDefault();
-    toggleTermZoom();
+    if (S.checks) toggleChecksTermZoom(); else toggleTermZoom();
     redraw();
     return;
   }

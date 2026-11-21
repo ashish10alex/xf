@@ -1665,7 +1665,13 @@ function ChecksPage() {
     onClick=${key(k)}><kbd>${k}</kbd> ${label}</button>`;
   const against = (api, label) => html`<button class=${'tab' + (o.api === api ? ' on' : '')} title="a switches"
     onClick=${o.api === api ? undefined : key('a')}>${label}</button>`;
-  return html`<div class=${'app checks-page' + (o.api ? ' api' : '')}>
+  const zoomed = S.caps.terminal && S.checksTerm && S.checksTermZoomed;
+  const zoomKey = st.onMac ? '⌘z' : 'alt+z';
+  const footerKeys = S.caps.terminal && S.checksTerm && st.termFocused()
+    ? [[zoomKey, zoomed ? 'unzoom' : 'zoom'], [st.logTabLabel, 'next tab'], ['ctrl+shift+`', 'new'], [st.termCloseLabel, 'close'], [st.termKeyLabel, 'hide']]
+    : [['j/k', 'scroll'], ...(tabs.length > 1 ? [['tab', 'Impact/Cost']] : []),
+      ...(S.caps.terminal ? [[st.termKeyLabel, 'terminal']] : []), ['ctrl+q', 'back']];
+  return html`<div class=${'app checks-page' + (o.api ? ' api' : '') + (zoomed ? ' checks-term-zoomed' : '')}>
     <header class="set-top">
       <h1><span class="badge">XF</span> Checks${o.api && html`<span class="gcp"> · GCP</span>`}</h1>
       <span class="dim">${S.boot.name}</span>
@@ -1685,8 +1691,7 @@ function ChecksPage() {
       <${GitLine} verb="check" />
     </div>
     ${S.caps.terminal && S.checksTerm && html`<${ChecksTerm} />`}
-    <div class="footer set-footer"><${Keys} list=${[['j/k', 'scroll'], ...(tabs.length > 1 ? [['tab', 'Impact/Cost']] : []),
-      ...(S.caps.terminal ? [[st.termKeyLabel, 'terminal']] : []), ['ctrl+q', 'back']]} />
+    <div class="footer set-footer"><${Keys} list=${footerKeys} />
       <span class="spacer"></span>${S.flash && html`<span class="warn">${S.flash}</span>`}</div>
     ${S.overlay === 'prod' && S.prod && html`<${ProdPrompt} />`}
     ${S.overlay === 'base' && S.base && html`<${BaseOverlay} />`}
@@ -1698,8 +1703,9 @@ function ChecksPage() {
 // in it gives it the keys; outlined while it has them.
 function ChecksTerm() {
   const focus = st.takeChecksTermFocus();
+  const zoomKey = st.onMac ? '⌘z' : 'alt+z';
   return html`<${Pane} cls="checks-term" focused=${st.termFocused()}
-      title=${html`${termTabs(true)}<span class="dim"> · ${st.termKeyLabel} hides</span>`}>
+      title=${html`${termTabs(true)}<span class="dim"> · ${zoomKey} ${S.checksTermZoomed ? 'unzooms' : 'zooms'} · ${st.termKeyLabel} hides</span>`}>
     <div class="checks-term-body" onfocusin=${() => redraw()} onfocusout=${() => redraw()}><${TermBody} focused=${focus} /></div><//>`;
 }
 

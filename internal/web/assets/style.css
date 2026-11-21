@@ -1936,6 +1936,8 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 /* The terminal ctrl+` shows under the report: the log pane's shells. */
 .checks-term { flex: 0 0 38%; min-height: 140px; margin: 14px 18px 8px; }
 .checks-term-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.checks-page.checks-term-zoomed .checks-main { display: none; }
+.checks-page.checks-term-zoomed .checks-term { flex: 1; min-height: 0; }
 .checks-main pre { white-space: pre-wrap; font: inherit; margin: 2px 0 6px; padding-left: 2ch; }
 .checks-main .report p { margin: 4px 0; }
 .table-wrap { overflow-x: auto; max-width: 100%; }
