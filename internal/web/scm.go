@@ -70,7 +70,7 @@ const scmOutputMax = 200
 const (
 	scmTimeout    = 30 * time.Second
 	scmNetTimeout = 3 * time.Minute
-	scmLogPage    = 10
+	scmLogPage    = 20
 )
 
 // scmEvent is the "scm" event: the page reads the status again.

@@ -574,44 +574,134 @@ func (r *Repo) Fetch(ctx context.Context) (string, error) {
 
 // ---- history ----
 
+// CommitRef is a branch, remote branch or tag pointing at a commit.
+type CommitRef struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"` // "head", "branch", "remote", "tag"
+}
+
 // Commit is a commit as Recent commits lists it.
 type Commit struct {
-	SHA     string    `json:"sha"`
-	Short   string    `json:"short"`
-	Subject string    `json:"subject"`
-	Author  string    `json:"author"`
-	Date    time.Time `json:"date"`
+	SHA     string      `json:"sha"`
+	Short   string      `json:"short"`
+	Subject string      `json:"subject"`
+	Author  string      `json:"author"`
+	Date    time.Time   `json:"date"`
+	Parents []string    `json:"parents,omitempty"`
+	Refs    []CommitRef `json:"refs,omitempty"`
+	Head    bool        `json:"head,omitempty"`
 	// Unpushed is set for a commit its upstream doesn't have.
 	Unpushed bool `json:"unpushed,omitempty"`
 }
 
-// Log is n of HEAD's commits after the first skip, newest first.
+// Log is n commits from HEAD (plus its upstream and default remote base,
+// as VS Code's commit graph does) after the first skip, in topo order.
 func (r *Repo) Log(ctx context.Context, skip, n int) ([]Commit, error) {
 	if !r.hasHead(ctx) {
 		return []Commit{}, nil
 	}
-	out, err := r.read(ctx, "log", "--skip="+strconv.Itoa(skip), "-n", strconv.Itoa(n), "--format=%H%x1f%h%x1f%s%x1f%an%x1f%ct%x1e", "HEAD", "--")
-	if err != nil {
-		return nil, err
-	}
+	revs := []string{"HEAD"}
 	unpushed := map[string]bool{}
 	if _, err := r.read(ctx, "rev-parse", "--verify", "--quiet", "@{upstream}"); err == nil {
+		revs = append(revs, "@{upstream}")
 		if u, err := r.read(ctx, "rev-list", "@{upstream}..HEAD"); err == nil {
 			for s := range strings.FieldsSeq(u) {
 				unpushed[s] = true
 			}
 		}
 	}
+	if base := r.defaultRemoteRef(ctx); base != "" {
+		revs = append(revs, base)
+	}
+	args := []string{
+		"log", "--topo-order", "--decorate=full",
+		"--skip=" + strconv.Itoa(skip), "-n", strconv.Itoa(n),
+		"--format=%H%x1f%h%x1f%s%x1f%an%x1f%ct%x1f%P%x1f%D%x1e",
+	}
+	args = append(args, revs...)
+	args = append(args, "--")
+	out, err := r.read(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
 	list := []Commit{}
 	for rec := range strings.SplitSeq(out, "\x1e") {
 		f := strings.Split(strings.TrimLeft(rec, "\n"), "\x1f")
-		if len(f) != 5 {
+		if len(f) != 7 {
 			continue
 		}
 		secs, _ := strconv.ParseInt(strings.TrimSpace(f[4]), 10, 64)
-		list = append(list, Commit{SHA: f[0], Short: f[1], Subject: f[2], Author: f[3], Date: time.Unix(secs, 0), Unpushed: unpushed[f[0]]})
+		var parents []string
+		if p := strings.TrimSpace(f[5]); p != "" {
+			parents = strings.Fields(p)
+		}
+		refs, head := parseCommitRefs(f[6])
+		list = append(list, Commit{
+			SHA: f[0], Short: f[1], Subject: f[2], Author: f[3], Date: time.Unix(secs, 0),
+			Parents: parents, Refs: refs, Head: head, Unpushed: unpushed[f[0]],
+		})
 	}
 	return list, nil
+}
+
+// defaultRemoteRef is origin's default branch ref (e.g. refs/remotes/origin/develop)
+// when present, so the graph shows incoming commits on the base branch beside HEAD.
+func (r *Repo) defaultRemoteRef(ctx context.Context) string {
+	if out, err := r.read(ctx, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); err == nil {
+		if ref := strings.TrimSpace(out); ref != "" {
+			return ref
+		}
+	}
+	for _, ref := range []string{"refs/remotes/origin/main", "refs/remotes/origin/master", "refs/remotes/origin/develop"} {
+		if _, err := r.read(ctx, "rev-parse", "--verify", "--quiet", ref); err == nil {
+			return ref
+		}
+	}
+	return ""
+}
+
+// parseCommitRefs reads git's --decorate=full %D field into CommitRefs.
+func parseCommitRefs(raw string) ([]CommitRef, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, false
+	}
+	var refs []CommitRef
+	head := false
+	for tok := range strings.SplitSeq(raw, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if after, ok := strings.CutPrefix(tok, "HEAD -> "); ok {
+			head = true
+			name := strings.TrimPrefix(after, "refs/heads/")
+			refs = append(refs, CommitRef{Name: name, Kind: "head"})
+			continue
+		}
+		if tok == "HEAD" {
+			head = true
+			refs = append(refs, CommitRef{Name: "HEAD", Kind: "head"})
+			continue
+		}
+		if after, ok := strings.CutPrefix(tok, "tag: "); ok {
+			name := strings.TrimPrefix(after, "refs/tags/")
+			refs = append(refs, CommitRef{Name: name, Kind: "tag"})
+			continue
+		}
+		if after, ok := strings.CutPrefix(tok, "refs/remotes/"); ok {
+			if strings.HasSuffix(after, "/HEAD") {
+				continue
+			}
+			refs = append(refs, CommitRef{Name: after, Kind: "remote"})
+			continue
+		}
+		if after, ok := strings.CutPrefix(tok, "refs/heads/"); ok {
+			refs = append(refs, CommitRef{Name: after, Kind: "branch"})
+			continue
+		}
+	}
+	return refs, head
 }
 
 // CommitFiles are the files sha changed from its first parent, and that

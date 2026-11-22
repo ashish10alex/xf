@@ -100,18 +100,72 @@ function StashRow({ r, cur, focused }) {
   </div>`;
 }
 
-function CommitRow({ r, cur, focused }) {
-  const cls = 'scm-row commit' + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '');
-  // A merge says the branch it brought in; the tooltip has the SHA and subject.
-  const subj = sc.commitSubject(r.subject);
-  return html`<div class=${cls} title=${r.short + ' · ' + r.subject + ' · ' + r.author + (r.unpushed ? ' · not pushed' : '')} style="padding-left:2ch"
+const graphStep = 12;
+const graphRowH = 22;
+const laneX = (col) => 8 + col * graphStep;
+
+function GraphSVG({ g, cols, head }) {
+  const w = Math.max(1, cols) * graphStep + 4;
+  const mid = graphRowH / 2;
+  const cx = laneX(g.lane);
+  return html`<svg class="scm-g-svg" width=${w} height=${graphRowH} viewBox=${`0 0 ${w} ${graphRowH}`} aria-hidden="true">
+    ${g.segs.map((s) => {
+      const x1 = laneX(s.from), x2 = laneX(s.to);
+      if (s.kind === 'v') return html`<line x1=${x1} y1="0" x2=${x1} y2=${graphRowH} stroke=${s.color} stroke-width="1.5" />`;
+      if (s.kind === 'top') return html`<line x1=${x1} y1="0" x2=${x1} y2=${mid} stroke=${s.color} stroke-width="1.5" />`;
+      if (s.kind === 'bot') return html`<line x1=${x1} y1=${mid} x2=${x1} y2=${graphRowH} stroke=${s.color} stroke-width="1.5" />`;
+      if (s.kind === 'in') return html`<path d=${`M ${x1} 0 C ${x1} ${mid * 0.7}, ${x2} ${mid * 0.3}, ${x2} ${mid}`} fill="none" stroke=${s.color} stroke-width="1.5" />`;
+      return html`<path d=${`M ${x1} ${mid} C ${x1} ${mid + (graphRowH - mid) * 0.7}, ${x2} ${mid + (graphRowH - mid) * 0.3}, ${x2} ${graphRowH}`} fill="none" stroke=${s.color} stroke-width="1.5" />`;
+    })}
+    ${head
+      ? html`<circle cx=${cx} cy=${mid} r="3.8" fill="var(--panel)" stroke=${g.color} stroke-width="2" />`
+      : g.merge
+        ? html`<g><circle cx=${cx} cy=${mid} r="4.4" fill="var(--panel)" stroke=${g.color} stroke-width="1.35" /><circle cx=${cx} cy=${mid} r="1.8" fill=${g.color} /></g>`
+        : html`<circle cx=${cx} cy=${mid} r="3.3" fill=${g.color} />`}
+  </svg>`;
+}
+
+function GraphContSVG({ lanes, cols, height = 20 }) {
+  const w = Math.max(1, cols) * graphStep + 4;
+  return html`<svg class="scm-g-svg" width=${w} height=${height} viewBox=${`0 0 ${w} ${height}`} aria-hidden="true">
+    ${(lanes || []).map((l) => html`<line x1=${laneX(l.col)} y1="0" x2=${laneX(l.col)} y2=${height} stroke=${l.color} stroke-width="1.5" />`)}
+  </svg>`;
+}
+
+function CommitFileRow({ r, cur, focused }) {
+  const g = r.git;
+  const cls = 'scm-row scm-g-file' + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '') + ' git-' + g + (r.file ? '' : ' outside');
+  const why = [r.file || r.path, gitWord[r.git], !r.file && 'outside the project'].filter(Boolean).join(' · ');
+  return html`<div class=${cls} title=${why}
       onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.clickRow(r); }}
       ref=${(el) => { if (el && cur) nearest(el); }}>
-    <span class="tree-caret">${r.open ? '▾' : '▸'}</span>
-    ${r.unpushed ? html`<span class="scm-ahead" title="not pushed">↑</span>` : ''}
-    <span class="scm-name">${subj.merge && html`<span class="dim scm-merge">⑂ </span>`}${subj.text}</span>
-    <span class="dim scm-author" title=${r.author}>${sc.initials(r.author)}</span>
-    <span class="dim">${r.age}</span>
+    <${GraphContSVG} lanes=${r.afterLanes} cols=${r.cols} height=${20} />
+    <span class="scm-git">${g}</span>
+    <span class="scm-name">${r.name}</span>
+    ${r.dir && html`<span class="scm-dir">${r.dir}</span>`}
+  </div>`;
+}
+
+function RefPill({ rf, color }) {
+  const cls = 'scm-g-ref ref-' + rf.kind + (rf.compact ? ' compact' : '');
+  const style = rf.kind === 'head' || rf.kind === 'remote' ? '--ref-c:' + color : '';
+  if (rf.compact) return html`<span class=${cls} style=${style} title=${rf.name}>☁</span>`;
+  const icon = rf.kind === 'head' ? '◎' : rf.kind === 'remote' ? '☁' : rf.kind === 'tag' ? '⚑' : '⎇';
+  return html`<span class=${cls} style=${style} title=${rf.name}><span class="scm-g-ref-ico">${icon}</span><span class="scm-g-ref-name">${rf.name}</span></span>`;
+}
+
+function CommitGraphRow({ r, cur, focused }) {
+  const g = r.graph;
+  const refs = sc.compactRefs(r.refs);
+  const cls = 'scm-row scm-g-row' + (r.head ? ' head' : '') + (r.open ? ' open' : '') + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '');
+  const tip = [r.short, r.subject, r.author, r.age, r.unpushed && 'not pushed', refs.length && refs.map((x) => x.name).join(', ')].filter(Boolean).join(' · ');
+  return html`<div class=${cls} title=${tip}
+      onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.clickRow(r); }}
+      ref=${(el) => { if (el && cur) nearest(el); }}>
+    <${GraphSVG} g=${g} cols=${r.cols} head=${!!r.head} />
+    <span class="scm-g-subj">${r.subject}</span>
+    <span class="scm-g-author">${r.author}</span>
+    ${refs.length > 0 && html`<span class="scm-g-refs">${refs.map((rf) => html`<${RefPill} key=${rf.kind + ':' + rf.name} rf=${rf} color=${g.color} />`)}</span>`}
   </div>`;
 }
 
@@ -216,9 +270,10 @@ function Row({ r, cur, focused }) {
   if (r.key.startsWith('f:')) return html`<${ForgeRow} r=${r} cur=${cur} focused=${focused} onClick=${sc.clickRow} refEl=${(el) => { if (el && cur) nearest(el); }} />`;
   switch (r.kind) {
     case 'section': return html`<${SectionRow} r=${r} cur=${cur} focused=${focused} />`;
-    case 'file': case 'sfile': case 'cfile': return html`<${FileRow} r=${r} cur=${cur} focused=${focused} />`;
+    case 'file': case 'sfile': return html`<${FileRow} r=${r} cur=${cur} focused=${focused} />`;
+    case 'cfile': return html`<${CommitFileRow} r=${r} cur=${cur} focused=${focused} />`;
     case 'stash': return html`<${StashRow} r=${r} cur=${cur} focused=${focused} />`;
-    case 'commit': return html`<${CommitRow} r=${r} cur=${cur} focused=${focused} />`;
+    case 'commit': return html`<${CommitGraphRow} r=${r} cur=${cur} focused=${focused} />`;
     case 'blame': return html`<${BlameAuthorRow} r=${r} cur=${cur} focused=${focused} />`;
     case 'more': return html`<div class=${'scm-row more' + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '')} style="padding-left:3.5ch"
         onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.clickRow(r); }} ref=${(el) => { if (el && cur) nearest(el); }}>more…</div>`;
@@ -561,6 +616,15 @@ export function ScmPane({ header, style }) {
         const group = [];
         while (i < gitRows.length && gitRows[i].kind === 'blamerange') group.push(gitRows[i++]);
         body.push(html`<${BlameMapPanel} key="bl:map" rangeRows=${group} focused=${focused} />`);
+      } else if (gitRows[i].kind === 'commit') {
+        const items = [];
+        while (i < gitRows.length && (gitRows[i].kind === 'commit' || gitRows[i].commitChild)) {
+          const item = gitRows[i++];
+          items.push(item.kind === 'note'
+            ? html`<div key=${item.key} class="scm-row note dim scm-g-file"><${GraphContSVG} lanes=${item.afterLanes} cols=${item.cols} height=${20} /><span>${item.text}</span></div>`
+            : row(item));
+        }
+        body.push(html`<div class="scm-graph" key="c:graph">${items}</div>`);
       } else {
         body.push(row(gitRows[i++]));
       }

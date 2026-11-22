@@ -213,6 +213,20 @@ export function commitSubject(s) {
   return { merge: false, text: s };
 }
 
+// parseCommit splits a commit subject into merge branch or conventional
+// commit type/scope and clean message text for the timeline rail.
+export function parseCommit(s) {
+  const subj = commitSubject(s);
+  if (subj.merge) return { merge: true, type: '', scope: '', breaking: false, text: subj.text };
+  const m = /^(feat|fix|chore|refactor|style|docs|perf|test|ci|build)(?:\(([^)]+)\))?(!)?:\s*(.+)$/i.exec(subj.text);
+  if (m) return { merge: false, type: m[1].toLowerCase(), scope: m[2] || '', breaking: !!m[3], text: m[4] };
+  return { merge: false, type: '', scope: '', breaking: false, text: subj.text };
+}
+
+export function copySha(r) {
+  if (r && r.sha) copy(r.sha, 'copied ' + r.sha.slice(0, 7));
+}
+
 // formatRange formats a 1-based line range as L42 or L1–29.
 export function formatRange(start, end) {
   return start === end ? 'L' + start : 'L' + start + '–' + end;
@@ -267,6 +281,109 @@ export function blameSegments() {
   }
   segments.sort((a, b) => a.range.start - b.range.start);
   return { totalLines: sum.totalLines, segments };
+}
+
+const graphColors = ['var(--amber)', 'var(--blue)', 'var(--pink)', 'var(--purple)', 'var(--green)', 'var(--red)'];
+
+// layoutCommitGraph assigns each commit a graph lane, color, and the
+// vertical/curved SVG segments to draw for that row (as VS Code's Graph
+// view does). Each row also records afterLanes so expanded file lists keep
+// the vertical lane lines running smoothly beneath it.
+export function layoutCommitGraph(commits) {
+  const lanes = []; // slot → {sha, color} | null
+  let nextColor = 0;
+  let maxCols = 1;
+  const out = [];
+  const alloc = () => {
+    const empty = lanes.indexOf(null);
+    return empty >= 0 ? empty : lanes.length;
+  };
+  for (const c of commits) {
+    const hits = [];
+    for (let i = 0; i < lanes.length; i++) if (lanes[i] && lanes[i].sha === c.sha) hits.push(i);
+    let lane, color, isTip = false;
+    if (hits.length) {
+      lane = hits[0];
+      color = lanes[lane].color;
+    } else {
+      lane = alloc();
+      color = graphColors[nextColor++ % graphColors.length];
+      lanes[lane] = { sha: c.sha, color };
+      isTip = true;
+    }
+    const segs = []; // {kind: 'v'|'top'|'bot'|'in'|'out', from, to, color}
+    const hitSet = new Set(hits);
+    // Converging lanes above that also pointed to c.sha curve into lane.
+    for (let k = 1; k < hits.length; k++) {
+      const h = hits[k];
+      segs.push({ kind: 'in', from: h, to: lane, color: lanes[h].color });
+      lanes[h] = null;
+    }
+    // Pass-through vertical lines for unrelated active lanes.
+    for (let i = 0; i < lanes.length; i++) {
+      if (i !== lane && lanes[i] && !hitSet.has(i)) {
+        segs.push({ kind: 'v', from: i, to: i, color: lanes[i].color });
+      }
+    }
+    if (!isTip) segs.push({ kind: 'top', from: lane, to: lane, color });
+
+    const parents = c.parents || [];
+    if (parents.length > 0) {
+      const p0 = parents[0];
+      const existing = lanes.findIndex((s, i) => i !== lane && s && s.sha === p0);
+      if (existing >= 0) {
+        segs.push({ kind: 'out', from: lane, to: existing, color });
+        lanes[lane] = null;
+      } else {
+        lanes[lane] = { sha: p0, color };
+        segs.push({ kind: 'bot', from: lane, to: lane, color });
+      }
+      for (let m = 1; m < parents.length; m++) {
+        const pm = parents[m];
+        const target = lanes.findIndex((s) => s && s.sha === pm);
+        if (target >= 0) {
+          segs.push({ kind: 'out', from: lane, to: target, color: lanes[target].color });
+        } else {
+          const slot = alloc();
+          const bc = graphColors[nextColor++ % graphColors.length];
+          lanes[slot] = { sha: pm, color: bc };
+          segs.push({ kind: 'out', from: lane, to: slot, color: bc });
+        }
+      }
+    } else {
+      lanes[lane] = null;
+    }
+
+    while (lanes.length && lanes[lanes.length - 1] === null) lanes.pop();
+    const afterLanes = [];
+    for (let i = 0; i < lanes.length; i++) if (lanes[i]) afterLanes.push({ col: i, color: lanes[i].color });
+    let rowMax = lane + 1;
+    for (const s of segs) rowMax = Math.max(rowMax, s.from + 1, s.to + 1);
+    maxCols = Math.max(maxCols, rowMax);
+    out.push({ lane, color, merge: parents.length > 1, segs, afterLanes });
+  }
+  return { rows: out, maxCols };
+}
+
+// compactRefs folds matching local + remote pairs (e.g. archive_proj +
+// origin/archive_proj) into a branch pill plus a compact cloud icon, as
+// VS Code's graph does.
+export function compactRefs(refs) {
+  if (!refs || !refs.length) return [];
+  const locals = new Set(refs.filter((r) => r.kind === 'head' || r.kind === 'branch').map((r) => r.name));
+  const out = [];
+  for (const r of refs) {
+    if (r.kind === 'remote') {
+      const slash = r.name.indexOf('/');
+      const short = slash >= 0 ? r.name.slice(slash + 1) : r.name;
+      if (locals.has(short)) {
+        out.push({ ...r, compact: true });
+        continue;
+      }
+    }
+    out.push({ ...r, compact: false });
+  }
+  return out;
 }
 
 function matchesBlameSeg(seg) {
@@ -394,16 +511,19 @@ export function rows() {
       }
     }
   }
-  out.push({ key: 's:commits', kind: 'section', id: 'commits', label: 'Recent commits', count: -1, open: !!G.open.commits });
+  out.push({ key: 's:commits', kind: 'section', id: 'commits', label: 'Graph', count: -1, open: !!G.open.commits });
   if (G.open.commits) {
     if (!G.logLoaded) out.push({ key: 'c:…', kind: 'note', text: 'listing…' });
-    for (const c of G.commits) {
+    const graph = layoutCommitGraph(G.commits);
+    for (let i = 0; i < G.commits.length; i++) {
+      const c = G.commits[i];
       const k = 'c:' + c.sha;
-      out.push({ key: k, kind: 'commit', ...c, open: !!G.open[k] });
+      const g = graph.rows[i];
+      out.push({ key: k, kind: 'commit', ...c, graph: g, cols: graph.maxCols, open: !!G.open[k] });
       if (G.open[k]) {
         const cf = G.commitFiles[c.sha];
-        if (!cf) out.push({ key: k + ':…', kind: 'note', text: 'listing…' });
-        else for (const f of cf.files.filter(matches)) out.push(fileRow(k + ':' + f.path, 'cfile', f, { sha: c.sha, parent: cf.parent }));
+        if (!cf) out.push({ key: k + ':…', kind: 'note', commitChild: true, afterLanes: g.afterLanes, cols: graph.maxCols, text: 'listing…' });
+        else for (const f of cf.files.filter(matches)) out.push(fileRow(k + ':' + f.path, 'cfile', f, { sha: c.sha, parent: cf.parent, commitChild: true, afterLanes: g.afterLanes, cols: graph.maxCols }));
       }
     }
     if (G.more) out.push({ key: 'c:more', kind: 'more' });

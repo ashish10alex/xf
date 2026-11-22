@@ -196,6 +196,12 @@ func TestCommitAmendAndLog(t *testing.T) {
 	if err != nil || len(log) != 2 || log[0].Subject != "second, amended" || !log[0].Unpushed || log[1].Unpushed {
 		t.Fatalf("log %+v %v", log, err)
 	}
+	if !log[0].Head || len(log[0].Parents) != 1 || log[0].Parents[0] != log[1].SHA || len(log[0].Refs) == 0 || log[0].Refs[0].Kind != "head" {
+		t.Errorf("head/parents/refs on log[0]: %+v", log[0])
+	}
+	if log[1].Head || len(log[1].Parents) != 0 {
+		t.Errorf("root commit metadata on log[1]: %+v", log[1])
+	}
 	files, parent, err := r.CommitFiles(ctx, log[0].SHA)
 	if err != nil || parent != log[1].SHA || !slices.Equal(paths(files), []string{"M sub/a.sqlx"}) {
 		t.Errorf("files %v %q %v", files, parent, err)

@@ -1742,8 +1742,36 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .scm-count { flex: none; font-size: 10px; padding: 0 5px; border-radius: 8px; background: color-mix(in srgb, var(--sel) 80%, transparent); color: var(--fg); letter-spacing: 0; }
 .scm-author { overflow: hidden; text-overflow: ellipsis; max-width: 12ch; font-size: 11px; }
 /* A commit's subject truncates; its author's initials and age always show. */
-.scm-row.commit .scm-name { flex: 1 1 0; }
-.scm-row.commit .scm-author { flex: none; width: 3ch; text-align: center; }
+/* Commit graph: proportional sans-serif + multi-lane SVG DAG (VS Code style). */
+.scm-graph { font-family: var(--sans); padding: 1px 0 4px; }
+.scm-row.scm-g-row { height: 22px; padding: 0 6px 0 2px; gap: 5px; font: 400 12px/22px var(--sans); }
+.scm-row.scm-g-row.head .scm-g-subj { font-weight: 600; color: var(--fg); }
+.scm-row.scm-g-row.open { background: color-mix(in srgb, var(--sel) 40%, transparent); }
+.scm-g-svg { flex: none; display: block; overflow: visible; }
+.scm-g-subj { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.scm-g-author { flex: 0 99 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 11px; }
+.scm-g-refs { flex: none; display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
+.scm-g-ref {
+  display: inline-flex; align-items: center; gap: 3px; max-width: 115px;
+  height: 16px; padding: 0 6px; border-radius: 99px;
+  font: 500 10.5px/16px var(--sans); white-space: nowrap;
+  background: color-mix(in srgb, var(--ref-c, var(--dim)) 24%, var(--panel));
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--ref-c, var(--dim)) 55%, transparent);
+}
+.scm-g-ref.ref-head {
+  background: color-mix(in srgb, var(--ref-c, var(--blue)) 85%, var(--panel));
+  color: var(--bg); font-weight: 600;
+}
+.scm-g-ref.ref-remote {
+  background: color-mix(in srgb, var(--ref-c, var(--amber)) 78%, var(--panel));
+  color: var(--bg); font-weight: 600;
+}
+.scm-g-ref.compact { padding: 0 5px; font-size: 10px; background: color-mix(in srgb, var(--purple) 68%, var(--panel)); color: var(--bg); border-color: transparent; }
+.scm-g-ref-ico { flex: none; font-size: 10px; line-height: 1; }
+.scm-g-ref-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.scm-row.scm-g-file { height: 20px; padding: 0 8px 0 2px; gap: 4px; font: 400 11.5px/20px var(--sans); }
+.scm-row.scm-g-file .scm-git { font-family: var(--mono); font-size: 10.5px; }
 /* Blame summary (Option C): author lens bars + vertical file minimap + range feed. */
 .scm-blame-authors { display: flex; flex-direction: column; gap: 3px; padding: 2px 8px 6px; }
 .scm-row.scm-blame-author {
