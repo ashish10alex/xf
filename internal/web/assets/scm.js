@@ -25,7 +25,7 @@ export const G = {
   busy: '',        // the git command running, as the header says it
   failed: '',      // the last command's error, red in the header
   cursor: '',      // the row the keys act on, by key
-  open: { mr: true, conflicts: true, staged: true, changes: true, stashes: false, blame: true, commits: true },
+  open: { mr: true, conflicts: true, staged: true, changes: true, stashes: false, blame: false, commits: true },
   filter: '',
   filtering: false,
   blame: { file: '', state: 'none', error: '', summary: null },
@@ -62,7 +62,7 @@ function restore() {
   Object.assign(G, { loaded: false, error: '', st: null, busy: '', failed: '', cursor: '', filter: '', filtering: false,
     blame: { file: '', state: 'none', error: '', summary: null }, blameLens: '', blameActive: null,
     commits: [], more: false, logLoaded: false, logHead: '', commitFiles: {}, stashFiles: {}, prompt: null, amend: false, output: null, diff: null });
-  G.open = { mr: true, conflicts: true, staged: true, changes: true, stashes: false, blame: true, commits: true };
+  G.open = { mr: true, conflicts: true, staged: true, changes: true, stashes: false, blame: false, commits: true };
   draft = '';
   try {
     const v = JSON.parse(localStorage.getItem(storeKey()) || '{}');
@@ -462,6 +462,23 @@ export function rows() {
       }
     }
   }
+  out.push({ key: 's:commits', kind: 'section', id: 'commits', label: 'Graph', count: -1, open: !!G.open.commits });
+  if (G.open.commits) {
+    if (!G.logLoaded) out.push({ key: 'c:…', kind: 'note', text: 'listing…' });
+    const graph = layoutCommitGraph(G.commits);
+    for (let i = 0; i < G.commits.length; i++) {
+      const c = G.commits[i];
+      const k = 'c:' + c.sha;
+      const g = graph.rows[i];
+      out.push({ key: k, kind: 'commit', ...c, graph: g, cols: graph.maxCols, open: !!G.open[k] });
+      if (G.open[k]) {
+        const cf = G.commitFiles[c.sha];
+        if (!cf) out.push({ key: k + ':…', kind: 'note', commitChild: true, afterLanes: g.afterLanes, cols: graph.maxCols, text: 'listing…' });
+        else for (const f of cf.files.filter(matches)) out.push(fileRow(k + ':' + f.path, 'cfile', f, { sha: c.sha, parent: cf.parent, commitChild: true, afterLanes: g.afterLanes, cols: graph.maxCols }));
+      }
+    }
+    if (G.more) out.push({ key: 'c:more', kind: 'more' });
+  }
   const blameFile = SRC.shown && SRC.file ? SRC.file : '';
   if (blameFile) {
     const bs = G.blame.file === blameFile ? G.blame : null;
@@ -510,23 +527,6 @@ export function rows() {
         }
       }
     }
-  }
-  out.push({ key: 's:commits', kind: 'section', id: 'commits', label: 'Graph', count: -1, open: !!G.open.commits });
-  if (G.open.commits) {
-    if (!G.logLoaded) out.push({ key: 'c:…', kind: 'note', text: 'listing…' });
-    const graph = layoutCommitGraph(G.commits);
-    for (let i = 0; i < G.commits.length; i++) {
-      const c = G.commits[i];
-      const k = 'c:' + c.sha;
-      const g = graph.rows[i];
-      out.push({ key: k, kind: 'commit', ...c, graph: g, cols: graph.maxCols, open: !!G.open[k] });
-      if (G.open[k]) {
-        const cf = G.commitFiles[c.sha];
-        if (!cf) out.push({ key: k + ':…', kind: 'note', commitChild: true, afterLanes: g.afterLanes, cols: graph.maxCols, text: 'listing…' });
-        else for (const f of cf.files.filter(matches)) out.push(fileRow(k + ':' + f.path, 'cfile', f, { sha: c.sha, parent: cf.parent, commitChild: true, afterLanes: g.afterLanes, cols: graph.maxCols }));
-      }
-    }
-    if (G.more) out.push({ key: 'c:more', kind: 'more' });
   }
   // The branch's merge request and pipeline (forge.js) last: the view
   // draws them in a region docked below git's (inDock), behind a sash.

@@ -89,15 +89,25 @@ afterEach(() => {
   G.blameActive = null;
 });
 
-test('Blame section lists author lens rows with percentages, then file-order ranges', () => {
+test('Blame section sits after Graph, defaults closed on fresh project, and lists author lens rows + file-order ranges when open', () => {
+  const savedBoot = S.boot;
+  S.boot = { ...(S.boot || {}), root: '/r/fresh-blame-default' };
+  getDraft();
+  assert.equal(G.open.blame, false, 'Blame starts closed by default');
+  S.boot = savedBoot;
+  getDraft();
+  G.st = st();
+  G.open = { ...G.open, conflicts: true, staged: true, changes: true, stashes: false, blame: true, commits: false };
+  G.blame = { file: 'definitions/orders.sqlx', state: 'ok', error: '', summary: sampleSummary };
+
   const rs = rows();
   const blameIdx = rs.findIndex((r) => r.key === 's:blame');
   const commitsIdx = rs.findIndex((r) => r.key === 's:commits');
-  assert.ok(blameIdx > -1 && blameIdx < commitsIdx, 'Blame sits above Recent commits');
+  assert.ok(commitsIdx > -1 && blameIdx > commitsIdx, 'Blame sits after Graph');
   assert.equal(rs[blameIdx].sub, 'orders.sqlx');
   assert.equal(rs[blameIdx].meta, '30L');
 
-  const blameRows = rs.slice(blameIdx + 1, commitsIdx);
+  const blameRows = rs.slice(blameIdx + 1);
   assert.deepEqual(blameRows.map((r) => [r.key, r.kind]), [
     ['bl:fresh', 'blame'],
     ['bl:m:alice@co', 'blame'],
