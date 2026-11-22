@@ -268,6 +268,63 @@ function hasMatch(n, matches) {
   return false;
 }
 
+// ---- file-type icons ----
+
+// Generic file-type icons (drawn in CSS via ::before mask-image, zero extra
+// DOM nodes). Lookup tables use null-prototype maps so filenames like
+// "constructor" or "toString" never collide with Object.prototype.
+const ICON_BY_NAME = Object.create(null);
+const ICON_BY_EXT = Object.create(null);
+function mapIcons(dst, groups) {
+  for (const [icon, list] of groups) {
+    for (const k of list.split(' ')) dst[k] = icon;
+  }
+}
+mapIcons(ICON_BY_NAME, [
+  ['git', '.gitignore .gitattributes .gitmodules .gitkeep .gitmessage'],
+  ['lock', 'package-lock.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb npm-shrinkwrap.json composer.lock gemfile.lock poetry.lock pipfile.lock uv.lock cargo.lock flake.lock go.sum podfile.lock mix.lock pubspec.lock'],
+  ['config', 'dockerfile containerfile makefile gnumakefile justfile procfile vagrantfile jenkinsfile brewfile gemfile rakefile pipfile cmakelists.txt go.mod go.work .env .editorconfig .dockerignore .npmignore .npmrc .nvmrc .node-version .python-version .ruby-version .tool-versions .sqlfluff .sqlfluffignore .eslintrc .prettierrc .babelrc .prettierignore .eslintignore .browserslistrc requirements.txt constraints.txt'],
+  ['sh', '.bashrc .bash_profile .zshrc .zprofile .profile'],
+  ['md', 'readme'],
+  ['txt', 'license licence copying notice authors contributors codeowners changelog todo'],
+]);
+mapIcons(ICON_BY_EXT, [
+  ['sql', 'sql sqlx ddl dml bq psql pgsql plsql sqlite db'],
+  ['js', 'js mjs cjs jsx'],
+  ['ts', 'ts mts cts tsx'],
+  ['py', 'py pyi pyw ipynb pyx'],
+  ['code', 'go rs rb java kt kts c h cpp cc cxx hpp hh cs fs php swift m mm lua r scala sc clj cljs ex exs erl hs ml zig nim dart groovy pl pm jl v sol proto graphql gql wasm wat vim'],
+  ['json', 'json jsonc json5 jsonl ndjson geojson webmanifest har map'],
+  ['yaml', 'yml yaml'],
+  ['config', 'toml ini cfg conf config properties props env plist dockerfile nix'],
+  ['hcl', 'tf tfvars hcl nomad'],
+  ['md', 'md mdx markdown rst adoc org tex'],
+  ['txt', 'txt text log out diff patch rtf'],
+  ['csv', 'csv tsv psv parquet avro orc xls xlsx ods feather arrow'],
+  ['sh', 'sh bash zsh fish ksh csh ps1 psm1 psd1 bat cmd awk sed'],
+  ['web', 'html htm xhtml xml xsl xslt vue svelte astro jinja jinja2 j2 ejs hbs pug twig tmpl gotmpl'],
+  ['css', 'css scss sass less styl pcss'],
+  ['img', 'png jpg jpeg gif webp svg ico bmp avif tif tiff heic psd ai eps'],
+  ['lock', 'lock lockb pem key crt cer pub p12'],
+  ['archive', 'zip tar gz tgz bz2 xz 7z rar zst lz4 jar war whl deb rpm dmg pkg'],
+]);
+
+// fileIcon returns the CSS icon key (.fi-<key>) for a tree row in O(1).
+export function fileIcon(name, dir, open) {
+  if (dir) return open ? 'dir-open' : 'dir';
+  if (!name) return 'file';
+  const lower = name.toLowerCase();
+  const exact = ICON_BY_NAME[lower];
+  if (exact) return exact;
+  if (lower.startsWith('.env.') || lower.startsWith('dockerfile.')) return 'config';
+  const dot = lower.lastIndexOf('.');
+  if (dot > 0) {
+    const ext = ICON_BY_EXT[lower.slice(dot + 1)];
+    if (ext) return ext;
+  }
+  return 'file';
+}
+
 function rowPaths() { return new Set(rows().map((r) => r.path)); }
 
 // filesIn counts the files under folder path.

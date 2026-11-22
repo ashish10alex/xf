@@ -25,7 +25,7 @@ function Row({ r, cur, focused }) {
   const dragging = drag && (r.path === drag.from || r.path.startsWith(drag.from + '/'));
   const dropTarget = drag && drag.over && r.dir && r.path === drag.over;
   const dropIn = drag && drag.over && r.path.startsWith(drag.over + '/');
-  const cls = 'tree-row'
+  const cls = 'tree-row fi fi-' + tr.fileIcon(r.name, r.dir, r.open)
     + (r.dir ? ' dir' : '')
     + (cur ? ' cur' : '')
     + (cur && focused ? ' focused' : '')
