@@ -41,10 +41,13 @@ test('the pyrefly note names the config, or offers to create one', async () => {
   const { pyreflyNote } = await import('../assets/settings-view.js');
   assert.equal(pyreflyNote(null), null);
   assert.equal(pyreflyNote({ off: true }), null);
-  const none = pyreflyNote({ interpreter: '/p/.venv/bin/python', label: '.venv', where: 'picked' });
+  const none = pyreflyNote({ interpreter: '/p/.venv/bin/python', label: '.venv', venv: '.venv', where: 'picked', version: 'pyrefly 1.5.0' });
   assert.equal(none.config, '');
   assert.equal(none.canCreate, true);
   assert.equal(none.interpreter, '.venv');
+  assert.equal(none.venv, '.venv');
+  assert.equal(none.interpreterPath, '/p/.venv/bin/python');
+  assert.equal(none.version, 'pyrefly 1.5.0');
   assert.equal(pyreflyNote({ missing: 'pyrefly not found' }).canCreate, false);
   const mine = pyreflyNote({ config: 'pyrefly.toml' });
   assert.equal(mine.inProject, true);

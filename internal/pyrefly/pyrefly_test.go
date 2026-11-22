@@ -241,6 +241,75 @@ func TestLabel(t *testing.T) {
 	if got := Label("/opt/homebrew/bin/python3"); got != "python3" {
 		t.Errorf("Label of a python = %q", got)
 	}
+	conda := filepath.Join(t.TempDir(), "analytics")
+	if err := os.MkdirAll(filepath.Join(conda, "conda-meta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := VenvDir(filepath.Join(conda, "bin", "python")); got != conda {
+		t.Errorf("VenvDir of a conda env = %q, want %q", got, conda)
+	}
+	if got := Label(filepath.Join(conda, "bin", "python")); got != "analytics" {
+		t.Errorf("Label of a conda env = %q", got)
+	}
+	if got := VenvDir("/opt/homebrew/bin/python3"); got != "" {
+		t.Errorf("VenvDir of system python = %q", got)
+	}
+}
+
+func TestConfigSetsInterpreter(t *testing.T) {
+	dir := t.TempDir()
+	toml := filepath.Join(dir, "pyrefly.toml")
+	touch(t, toml, "project-includes = [\"**/*.py\"]\n# python-interpreter-path = \"ignored\"\n")
+	if ConfigSetsInterpreter(toml) {
+		t.Error("commented python-interpreter-path counted as set")
+	}
+	touch(t, toml, "project-includes = [\"**/*.py\"]\npython-interpreter-path = \".venv/bin/python\"\n")
+	if !ConfigSetsInterpreter(toml) {
+		t.Error("python-interpreter-path in pyrefly.toml not detected")
+	}
+	touch(t, toml, "skip-interpreter-query = true\n")
+	if !ConfigSetsInterpreter(toml) {
+		t.Error("skip-interpreter-query in pyrefly.toml not detected")
+	}
+
+	pyproj := filepath.Join(dir, "pyproject.toml")
+	touch(t, pyproj, "[tool.other]\npython-interpreter-path = \"/a/b\"\n[tool.pyrefly]\nproject-includes = [\"**/*.py\"]\n")
+	if ConfigSetsInterpreter(pyproj) {
+		t.Error("key outside [tool.pyrefly] counted as set")
+	}
+	touch(t, pyproj, "[tool.pyrefly]\nconda_environment = \"dbt\"\n[tool.other]\n")
+	if !ConfigSetsInterpreter(pyproj) {
+		t.Error("conda_environment inside [tool.pyrefly] not detected")
+	}
+}
+
+func TestParseDumpConfig(t *testing.T) {
+	out := `Configuration at ` + "`/proj/pyrefly.toml`" + `
+  Using interpreter: /proj/.venv/bin/python
+  Covered files:
+    ...and 3 more
+  Resolving imports from:
+    Import root (inferred from project layout): "/proj"
+    Site packages path from user: ["/proj/extra"]
+    Site packages path queried from interpreter: ["/usr/lib/python3.14", "/proj/.venv/lib/python3.14/site-packages"]
+Default configuration
+  Using interpreter: /other/python3
+`
+	got := ParseDumpConfig(out)
+	if got.Config != filepath.Clean("/proj/pyrefly.toml") {
+		t.Errorf("Config = %q", got.Config)
+	}
+	if got.Interpreter != filepath.Clean("/proj/.venv/bin/python") {
+		t.Errorf("Interpreter = %q", got.Interpreter)
+	}
+	if len(got.SitePackages) != 3 || got.SitePackages[0] != filepath.Clean("/proj/extra") {
+		t.Errorf("SitePackages = %v", got.SitePackages)
+	}
+
+	skipped := ParseDumpConfig("Default configuration for project root marked by `/proj/pyproject.toml`\n  Using interpreter: <interpreter query skipped>\n")
+	if skipped.Config != "" || skipped.ConfigMarker != filepath.Clean("/proj/pyproject.toml") || skipped.Interpreter != "" || !skipped.Skipped {
+		t.Errorf("skipped = %+v", skipped)
+	}
 }
 
 func TestFindBin(t *testing.T) {
@@ -335,9 +404,17 @@ func TestRealPyrefly(t *testing.T) {
 	if _, _, _, err := c.Sync(file, text); err != nil {
 		t.Fatal(err)
 	}
-	ds := pub.wait(t, file, func(_ int, ds []Diagnostic) bool { return len(ds) > 0 })
-	if ds[0].Code != "bad-assignment" || ds[0].Range.Start.Line != 3 {
+	ds := pub.wait(t, file, func(_ int, ds []Diagnostic) bool {
+		return slices.ContainsFunc(ds, func(d Diagnostic) bool { return d.Code == "bad-assignment" })
+	})
+	if !slices.ContainsFunc(ds, func(d Diagnostic) bool { return d.Code == "bad-assignment" && d.Range.Start.Line == 3 }) {
 		t.Errorf("errors = %+v", ds)
+	}
+	if env, err := Inspect(context.Background(), bin, root, file, ""); err != nil || env.Config == "" || env.Interpreter == "" {
+		t.Errorf("Inspect = %+v, %v", env, err)
+	}
+	if v := Version(context.Background(), bin); !strings.HasPrefix(v, "pyrefly ") {
+		t.Errorf("Version = %q", v)
 	}
 	ctx := context.Background()
 	if h, err := c.Hover(ctx, file, Position{3, 9}); err != nil || h == nil || !strings.Contains(h.Markdown, "def f") {

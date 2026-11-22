@@ -4,7 +4,10 @@
 import { h } from './vendor/preact.mjs';
 import htm from './vendor/htm.mjs';
 import { redraw, hooks, keyName } from './state.js';
-import { PY, interpreterLabel, interpreterRows, pickInterpreter, openInterpreterPicker, createConfig, pythonKey, closePython } from './python.js';
+import {
+  PY, interpreterLabel, interpreterSource, interpreterRows,
+  pickInterpreter, openInterpreterPicker, openPyreflyConfig, createConfig, pythonKey, closePython,
+} from './python.js';
 import { Modal } from './view.js';
 
 const html = htm.bind(h);
@@ -29,8 +32,11 @@ function keys(list) {
   return html`<div class="overlay-keys"><span class="keys">${list.map(([k, d]) => html`<span class="key"><kbd>${k}</kbd> ${d}</span>`)}</span></div>`;
 }
 
-// PythonIndicator is the status line's interpreter while a Python file
-// shows: a click picks another. It says when pyrefly can't run.
+const isProjectPath = (p) => !!p && !/^(\/|[A-Za-z]:)/.test(p);
+const configBasename = (p) => (p ? p.split(/[\\/]/).pop() : '');
+
+// PythonIndicator is the status line's interpreter and config while a
+// Python file shows: a click inspects or picks another.
 function PythonIndicator() {
   const st = PY.status;
   if (!PY.file || !st || st.off) return null;
@@ -38,29 +44,100 @@ function PythonIndicator() {
     const why = st.missing || PY.unavailable;
     return html`<button class="link warn py-ind" title=${why} onClick=${() => { openInterpreterPicker(); }}>py: ${st.missing ? 'no pyrefly' : 'pyrefly stopped'}</button>`;
   }
-  const where = st.where === 'picked' ? 'picked' : st.where ? 'found at the root' : 'pyrefly\'s own choice';
-  const title = (st.interpreter || 'no interpreter given: pyrefly picks one') + '\n' + where +
-    (st.config ? '\nconfig: ' + st.config : '\nno pyrefly config: type errors are off') + '\nclick to pick another';
-  return html`<button class=${'link py-ind ' + (st.config ? 'dim' : 'warn')} title=${title} onClick=${() => { openInterpreterPicker(); }}>py: ${interpreterLabel(st)}${st.config ? '' : ' · no config'}</button>`;
+  const lines = [];
+  if (st.version) lines.push(st.version + (st.bin ? ' (' + st.bin + ')' : ''));
+  if (st.venv) lines.push('venv: ' + st.venv);
+  else if (st.interpreter) lines.push('venv: none (not a virtual environment)');
+  lines.push('python: ' + (st.interpreter || 'none') + ' (' + interpreterSource(st.where, st.config) + ')');
+  lines.push('config: ' + (st.config || 'none (type errors are off)'));
+  if (st.configSetsInterpreter) lines.push('note: ' + (st.config || 'config') + ' sets python-interpreter-path and overrides xf');
+  if (st.configError) lines.push('config error: ' + st.configError);
+  if (st.sitePackages && st.sitePackages.length) lines.push('site-packages: ' + st.sitePackages.join(', '));
+  lines.push('click to inspect or change');
+  const warn = !st.config || !!st.configError;
+  const cfgTag = st.configError ? ' · config error'
+    : st.config ? ' · ' + configBasename(st.config)
+    : ' · no config';
+  return html`<button class=${'link py-ind ' + (warn ? 'warn' : 'dim')} title=${lines.join('\n')} onClick=${() => { openInterpreterPicker(); }}>py: ${interpreterLabel(st)}${cfgTag}</button>`;
+}
+
+function ActiveSummary({ st }) {
+  if (!st) return null;
+  const src = interpreterSource(st.where, st.config);
+  const inProj = isProjectPath(st.config);
+  return html`<div class="py-env">
+    <div class="py-env-row">
+      <span class="py-env-k">venv</span>
+      <span class="py-env-v">
+        ${st.venv
+          ? html`<code class="ok">${st.venv}</code> <span class="dim small">(${src})</span>`
+          : st.interpreter
+            ? html`<span class="warn">none</span> <span class="dim small">(not a virtual environment · ${src})</span>`
+            : st.where === 'config'
+              ? html`<span class="dim">skipped in ${st.config || 'config'}</span>`
+              : html`<span class="dim">unknown</span>`}
+      </span>
+    </div>
+    <div class="py-env-row">
+      <span class="py-env-k">python</span>
+      <span class="py-env-v">
+        ${st.interpreter
+          ? html`<code>${st.interpreter}</code>`
+          : html`<span class="dim">not resolved</span>`}
+      </span>
+    </div>
+    <div class="py-env-row">
+      <span class="py-env-k">config</span>
+      <span class="py-env-v">
+        ${st.config
+          ? inProj
+            ? html`<button class="link" title="Open in the source pane" onClick=${() => openPyreflyConfig(st.config)}><code>${st.config}</code></button>`
+            : html`<code>${st.config}</code>`
+          : html`<span class="warn">none</span> <span class="dim small">(type errors off)</span>${!st.missing && html` · <button class="link" onClick=${() => createConfig()}>create pyrefly.toml</button>`}`}
+      </span>
+    </div>
+    ${st.sitePackages && st.sitePackages.length > 0 && html`<div class="py-env-row">
+      <span class="py-env-k">packages</span>
+      <span class="py-env-v py-env-pkgs">${st.sitePackages.map((p) => html`<code class="dim small">${p}</code>`)}</span>
+    </div>`}
+    ${(st.version || st.bin || st.missing) && html`<div class="py-env-row">
+      <span class="py-env-k">pyrefly</span>
+      <span class="py-env-v">
+        ${st.missing
+          ? html`<span class="warn">${st.missing}</span>`
+          : html`<span>${st.version || 'pyrefly'}</span>${st.bin && html` <code class="dim small">${st.bin}</code>`}`}
+      </span>
+    </div>`}
+    ${st.configError && html`<p class="error small py-env-note">${st.configError}</p>`}
+    ${st.configSetsInterpreter && html`<p class="warn small py-env-note">Interpreter is set in <code>${st.config || 'config'}</code>, which overrides xf's picker below.</p>`}
+  </div>`;
 }
 
 function InterpreterPicker() {
   const o = PY.overlay;
+  const st = o.status || PY.status || { interpreter: o.current, where: o.where };
   const rows = interpreterRows();
   const custom = rows[o.cursor] && rows[o.cursor].custom;
   const pick = (i) => { o.cursor = i; pickInterpreter(); };
-  return html`<${Modal} title="Python interpreter for pyrefly" onClose=${() => { closePython(); redraw(); }}>
+  const overridden = !!st.configSetsInterpreter;
+  return html`<${Modal} title="Python environment for pyrefly" onClose=${() => { closePython(); redraw(); }}>
     <div class="editor-pick" tabindex="-1" ref=${(e) => !custom && grab(e)}>
       ${o.loading ? html`<p class="dim">…</p>` : html`
-        <p>pyrefly resolves imports with <code>${o.current || 'its own choice'}</code>${o.where === 'picked' ? ' (picked)' : ''}. Pick another:</p>
-        <p class="dim small">Kept for you in this project only, outside the repo.</p>
+        <${ActiveSummary} st=${st} />
+        <p class="dim small">Pick an interpreter for this project (kept outside the repo):</p>
         <div class="ed-list">
           ${rows.map((r, i) => html`<div class=${'ed-row' + (i === o.cursor ? ' sel' : '')}
               onMouseMove=${() => { if (o.cursor !== i) { o.cursor = i; redraw(); } }}
               onClick=${() => { if (!r.custom) pick(i); else { o.cursor = i; redraw(); } }}>
             <span class="lead">${i === o.cursor ? '▸' : ''}</span>
             ${r.auto
-              ? html`<span class="ed-name">found by xf</span><span class="dim">the root's .venv/ or venv/, else pyrefly's choice</span>${o.where !== 'picked' && html`<span class="ok small">current</span>`}`
+              ? html`<span class="ed-name">auto (xf)</span>
+                  <span class="dim">${o.auto && o.auto.path
+                    ? html`<code>${o.auto.path}</code> (${o.auto.where})`
+                    : !o.picked && st.interpreter && st.where === 'pyrefly'
+                      ? html`pyrefly's choice · <code>${st.interpreter}</code>`
+                      : "the root's .venv/ or venv/, else pyrefly's choice"}</span>
+                  ${!o.picked && !overridden && html`<span class="ok small">current</span>`}`
               : r.custom
                 ? html`<span class="ed-name">another path</span>
                   <input class="text" value=${o.custom} placeholder="e.g. ~/envs/dbt/bin/python" spellcheck="false"
@@ -79,7 +156,11 @@ function InterpreterPicker() {
                       }
                     }} />`
                 : html`<span class="ed-name">${r.where}</span><code class="dim">${r.path}</code>
-                  ${o.where === 'picked' && r.path === o.current && html`<span class="ok small">current</span>`}`}
+                  ${o.picked && r.path === o.picked && !overridden
+                    ? html`<span class="ok small">current</span>`
+                    : st.interpreter && r.path === st.interpreter
+                      ? html`<span class="ok small">in use</span>`
+                      : ''}`}
           </div>`)}
         </div>
         ${o.saving && html`<p class="warn">saving…</p>`}

@@ -39,6 +39,28 @@ func isFile(path string) bool {
 	return err == nil && fi.Mode().IsRegular()
 }
 
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
+// VenvDir is the virtual or Conda environment directory containing the
+// Python executable at path, or "" when path is not inside one.
+func VenvDir(path string) string {
+	if path == "" {
+		return ""
+	}
+	parent := filepath.Dir(path)
+	if isDir(filepath.Join(parent, "conda-meta")) {
+		return parent
+	}
+	env := filepath.Dir(parent)
+	if isFile(filepath.Join(env, "pyvenv.cfg")) || isDir(filepath.Join(env, "conda-meta")) {
+		return env
+	}
+	return ""
+}
+
 // Interpreters are the Pythons xf offers for the project at root: a
 // virtual environment at its root (.venv, venv, env), $VIRTUAL_ENV's,
 // $CONDA_PREFIX's, then python3 and python on PATH. Each path is listed
@@ -94,8 +116,7 @@ func Label(path string) string {
 	if path == "" {
 		return ""
 	}
-	env := filepath.Dir(filepath.Dir(path))
-	if isFile(filepath.Join(env, "pyvenv.cfg")) {
+	if env := VenvDir(path); env != "" {
 		return filepath.Base(env)
 	}
 	return filepath.Base(path)
@@ -155,6 +176,60 @@ func hasPyreflyTable(path string) bool {
 	for sc.Scan() {
 		if pyreflyTable.MatchString(sc.Text()) {
 			return true
+		}
+	}
+	return false
+}
+
+var (
+	tomlHeader     = regexp.MustCompile(`^\s*\[`)
+	interpKeyLine  = regexp.MustCompile(`^\s*(python[-_]interpreter[-_]path|conda[-_]environment)\s*=\s*(.+)$`)
+	skipInterpLine = regexp.MustCompile(`^\s*skip[-_]interpreter[-_]query\s*=\s*true\b`)
+)
+
+// ConfigSetsInterpreter reports whether the pyrefly config file at path
+// (a pyrefly.toml or pyproject.toml) explicitly sets an interpreter
+// (python-interpreter-path, conda-environment, or skip-interpreter-query),
+// which takes precedence over LSP workspace/configuration pythonPath.
+func ConfigSetsInterpreter(path string) bool {
+	if path == "" {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	isPyproject := strings.EqualFold(filepath.Base(path), "pyproject.toml")
+	inSection := !isPyproject
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if isPyproject && tomlHeader.MatchString(trimmed) {
+			inSection = pyreflyTable.MatchString(trimmed)
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		// Strip trailing comment outside quotes (best-effort).
+		if skipInterpLine.MatchString(trimmed) {
+			return true
+		}
+		if m := interpKeyLine.FindStringSubmatch(trimmed); m != nil {
+			val := strings.TrimSpace(m[2])
+			if i := strings.IndexByte(val, '#'); i >= 0 {
+				val = strings.TrimSpace(val[:i])
+			}
+			val = strings.Trim(val, `"'`)
+			if val != "" {
+				return true
+			}
 		}
 	}
 	return false

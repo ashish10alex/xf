@@ -21,14 +21,78 @@ const Env = "XF_FAKE_PYREFLY"
 // LibEnv is a file the fake says "lib" is defined in, at its first line.
 const LibEnv = "XF_FAKE_PYREFLY_LIB"
 
+// InterpEnv, when set, is the interpreter the fake's `dump-config` reports
+// when no --python-interpreter-path flag is passed.
+const InterpEnv = "XF_FAKE_PYREFLY_INTERP"
+
 // Main runs Serve on stdin and stdout and exits, when Env is set; a
 // TestMain calls it first.
 func Main() {
 	if os.Getenv(Env) != "1" {
 		return
 	}
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-V":
+			fmt.Fprintln(os.Stdout, "pyrefly 0.0.0-fake")
+			os.Exit(0)
+		case "dump-config":
+			dumpConfig(os.Args[2:], os.Stdout)
+			os.Exit(0)
+		}
+	}
 	Serve(os.Stdin, os.Stdout)
 	os.Exit(0)
+}
+
+func dumpConfig(args []string, w io.Writer) {
+	interp := os.Getenv(InterpEnv)
+	var file string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--python-interpreter-path" && i+1 < len(args):
+			interp = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--python-interpreter-path="):
+			interp = strings.TrimPrefix(args[i], "--python-interpreter-path=")
+		case args[i] == "--max-files" && i+1 < len(args):
+			i++
+		case strings.HasPrefix(args[i], "-"):
+		default:
+			file = args[i]
+		}
+	}
+	dir, _ := os.Getwd()
+	if file != "" {
+		dir = filepath.Dir(file)
+	}
+	cfg := ""
+	for d := dir; d != ""; {
+		if p := filepath.Join(d, "pyrefly.toml"); isRegular(p) {
+			cfg = p
+			break
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	if cfg != "" {
+		fmt.Fprintf(w, "Configuration at `%s`\n", cfg)
+	} else {
+		fmt.Fprintln(w, "Default configuration")
+	}
+	if interp != "" {
+		fmt.Fprintf(w, "  Using interpreter: %s\n", interp)
+		sp, _ := json.Marshal([]string{filepath.Join(filepath.Dir(filepath.Dir(interp)), "lib", "python3.12", "site-packages")})
+		fmt.Fprintf(w, "  Resolving imports from:\n    Site packages path queried from interpreter: %s\n", sp)
+	}
+}
+
+func isRegular(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // Serve answers as pyrefly would, simply:

@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mdBlocks, interpreterLabel, pythonKey, PY } from '../assets/python.js';
+import { mdBlocks, interpreterLabel, interpreterSource, interpreterRows, pythonKey, PY } from '../assets/python.js';
 import { S } from '../assets/state.js';
 
 test('a hover splits into its code, rules and paragraphs', () => {
@@ -22,7 +22,26 @@ test('an interpreter is named by its environment, else its file', () => {
   assert.equal(interpreterLabel({ interpreter: 'C:\\envs\\dbt\\Scripts\\python.exe', where: 'picked' }), 'dbt');
   assert.equal(interpreterLabel({ interpreter: '/opt/homebrew/bin/python3', where: 'PATH' }), 'python3 (PATH)');
   assert.equal(interpreterLabel({ interpreter: '/usr/python3', where: 'picked' }), 'python3');
+  assert.equal(interpreterLabel({ interpreter: '/opt/homebrew/bin/python3', where: 'pyrefly' }), 'python3 (auto)');
+  assert.equal(interpreterLabel({ interpreter: '/p/.venv/bin/python', label: '.venv', where: 'config' }), '.venv (config)');
+  assert.equal(interpreterLabel({ interpreter: '', where: 'config' }), 'none (config)');
   assert.equal(interpreterLabel({ interpreter: '', where: '' }), "pyrefly's default");
+  assert.equal(interpreterSource('picked', 'pyrefly.toml'), 'picked in xf');
+  assert.equal(interpreterSource('config', 'pyrefly.toml'), 'from pyrefly.toml');
+  assert.equal(interpreterSource('pyrefly', ''), 'pyrefly auto');
+  assert.equal(interpreterSource('.venv', ''), 'found at .venv');
+});
+
+test('the interpreter picker keeps a custom picked path in its rows', () => {
+  PY.overlay = {
+    kind: 'interpreter', loading: false,
+    list: [{ path: '/custom/env/bin/python', where: 'picked' }, { path: '/a/.venv/bin/python', where: '.venv' }],
+    picked: '/custom/env/bin/python', cursor: 0, custom: '', saving: false, err: '',
+  };
+  const rows = interpreterRows();
+  assert.equal(rows.length, 4);
+  assert.equal(rows[1].path, '/custom/env/bin/python');
+  PY.overlay = null;
 });
 
 test('the interpreter picker moves within its rows and esc closes it', () => {

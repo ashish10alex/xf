@@ -261,7 +261,7 @@ function Control({ k, i }) {
 
 // pyreflyNote is the line under the Python language server's doc: the
 // pyrefly config the project uses, or that there is none, and the
-// interpreter. null while unknown, or with the server off.
+// active venv / interpreter. null while unknown, or with the server off.
 export function pyreflyNote(st) {
   if (!st || st.off) return null;
   const config = st.config || '';
@@ -272,21 +272,41 @@ export function pyreflyNote(st) {
     // pyrefly reports no type errors without a config; with no pyrefly it can't be written for.
     canCreate: !config && !st.missing,
     interpreter: st.label || st.interpreter || '',
+    interpreterPath: st.interpreter || '',
+    venv: st.venv || '',
     where: st.where || '',
+    version: st.version || '',
+    configSetsInterpreter: !!st.configSetsInterpreter,
+    configError: st.configError || '',
     missing: st.missing || '',
   };
+}
+
+function pyreflyWhereText(n) {
+  if (n.where === 'picked') return 'picked in xf';
+  if (n.where === 'config') return n.config ? 'from ' + n.config : 'from config';
+  if (n.where === 'pyrefly') return 'pyrefly auto';
+  if (n.where) return 'found at ' + n.where;
+  return '';
 }
 
 function PyreflyNote() {
   const n = pyreflyNote(SET.pyrefly);
   if (!n) return '';
+  const where = pyreflyWhereText(n);
   return html`<div class="set-doc set-py">
     ${n.config
       ? html`<span>config: </span>${n.inProject
         ? html`<button class="link" title="Open it in the source pane" onClick=${() => se.openPyreflyConfig()}><code>${n.config}</code></button>`
         : html`<code>${n.config}</code>`}`
       : html`<span>config: none (pyrefly reports no type errors without one) · </span>${n.canCreate && html`<button class="link" onClick=${() => se.createPyreflyConfig()}>create pyrefly.toml</button>`}`}
-    ${n.interpreter && html`<span> · interpreter: <code>${n.interpreter}</code>${n.where ? ' (' + n.where + ')' : ''}, kept in the project's session</span>`}
+    ${n.venv
+      ? html`<span> · venv: <code>${n.venv}</code>${where ? ' (' + where + ')' : ''}</span>`
+      : n.interpreterPath || n.interpreter
+        ? html`<span> · python: <code>${n.interpreterPath || n.interpreter}</code> (${where ? where + ', ' : ''}no venv)</span>`
+        : ''}
+    ${n.version && html`<span class="dim"> · ${n.version}</span>`}
+    ${n.configError && html`<div class="error">${n.configError}</div>`}
     ${n.missing && html`<div class="warn">${n.missing}</div>`}
   </div>`;
 }

@@ -2097,6 +2097,12 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .py-card .sc-card-line { white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 .py-card a.sc-card-link { cursor: pointer; }
 .py-config { font: 12px/1.45 var(--mono); background: var(--bg-2); padding: 6px 10px; border-radius: 4px; margin: 6px 0; white-space: pre; }
+.py-env { background: var(--bg-2); border: 1px solid var(--rule); border-radius: 4px; padding: 8px 10px; margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; }
+.py-env-row { display: flex; align-items: baseline; gap: 10px; }
+.py-env-k { min-width: 9ch; color: var(--dim); flex: 0 0 auto; }
+.py-env-v { min-width: 0; overflow-wrap: anywhere; }
+.py-env-pkgs { display: flex; flex-direction: column; gap: 1px; }
+.py-env-note { margin: 4px 0 0; }
 .py-diag { white-space: pre-wrap; max-width: 90ch; }
 .editor-pick:focus { outline: none; }
 

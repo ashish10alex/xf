@@ -34,6 +34,15 @@ const pyRetryAfter = 30 * time.Second
 // errPythonOff is pythonLanguageServer set to "off".
 var errPythonOff = errors.New("Python checking is off (pythonLanguageServer)")
 
+// pyInspectTTL bounds how long a `pyrefly dump-config` result is cached.
+const pyInspectTTL = 5 * time.Second
+
+type pyInspectCache struct {
+	key string
+	at  time.Time
+	env pyrefly.EnvInfo
+}
+
 // pyState is the project's pyrefly.
 type pyState struct {
 	mu     sync.Mutex
@@ -49,6 +58,10 @@ type pyState struct {
 	// library are the files outside the project pyrefly named, which the
 	// pane may show, read-only.
 	library map[string]bool
+	// versions caches `<bin> --version` by binary path.
+	versions map[string]string
+	// inspect caches `pyrefly dump-config` for a few seconds.
+	inspect pyInspectCache
 	// lookPath finds pyrefly and the interpreters on PATH; tests change
 	// it. nil is exec.LookPath.
 	lookPath func(string) (string, error)
@@ -66,6 +79,7 @@ func (s *pyState) stop() {
 	s.mu.Lock()
 	c := s.client
 	s.client, s.bin, s.err = nil, "", nil
+	s.inspect = pyInspectCache{}
 	s.mu.Unlock()
 	if c != nil {
 		c.Stop()
@@ -470,29 +484,110 @@ type pythonStatusView struct {
 	Off bool `json:"off,omitempty"`
 	// Missing is why pyrefly can't run: not found, or it failed to start.
 	Missing string `json:"missing,omitempty"`
-	// Interpreter is the Python pyrefly runs with, "" for pyrefly's own
-	// choice, and Where says why: "picked", or where it was found.
+	// Interpreter is the Python pyrefly resolves imports with (picked,
+	// found at root, set in config, or pyrefly's own auto-detected choice),
+	// "" when unknown or skipped.
 	Interpreter string `json:"interpreter"`
-	Where       string `json:"where"`
+	// Where says why Interpreter is in use: "picked", ".venv", "venv",
+	// "config" (pyrefly.toml / pyproject.toml), "pyrefly" (pyrefly's own
+	// choice), or "" when unknown.
+	Where string `json:"where"`
 	// Label is how the status line names it (pyrefly.Label).
 	Label string `json:"label,omitempty"`
+	// Venv is the virtual or Conda environment directory containing
+	// Interpreter (relative to the project root when inside it), "" when
+	// Interpreter is not in a virtual environment.
+	Venv string `json:"venv,omitempty"`
 	// Config is pyrefly's config file for the file, relative to the root
 	// when it is in the project; "" for none.
 	Config string `json:"config,omitempty"`
+	// ConfigSetsInterpreter is true when Config specifies its own
+	// interpreter (python-interpreter-path / conda-environment /
+	// skip-interpreter-query), which overrides xf's interpreter picker.
+	ConfigSetsInterpreter bool `json:"configSetsInterpreter,omitempty"`
+	// ConfigError is a parse/load error reported by `pyrefly dump-config`.
+	ConfigError string `json:"configError,omitempty"`
+	// SitePackages are the site-packages paths pyrefly searches.
+	SitePackages []string `json:"sitePackages,omitempty"`
+	// Bin is the pyrefly binary path, and Version is `pyrefly --version`.
+	Bin     string `json:"bin,omitempty"`
+	Version string `json:"version,omitempty"`
 	// Offer says the page may offer to write a pyrefly.toml: there is no
 	// config and the offer hasn't been turned down.
 	Offer bool `json:"offer,omitempty"`
 }
 
-func (p *projectState) pythonStatusOf(file string) pythonStatusView {
+func (p *projectState) pyVersion(ctx context.Context, bin string) string {
+	if bin == "" {
+		return ""
+	}
+	s := &p.py
+	s.mu.Lock()
+	v, ok := s.versions[bin]
+	s.mu.Unlock()
+	if ok {
+		return v
+	}
+	v = pyrefly.Version(ctx, bin)
+	s.mu.Lock()
+	if s.versions == nil {
+		s.versions = map[string]string{}
+	}
+	s.versions[bin] = v
+	s.mu.Unlock()
+	return v
+}
+
+func (p *projectState) pyInspect(ctx context.Context, bin, filePath, passInterp, cfgPath string) pyrefly.EnvInfo {
+	if bin == "" {
+		return pyrefly.EnvInfo{}
+	}
+	cfgStamp := ""
+	if cfgPath != "" {
+		if fi, err := os.Stat(cfgPath); err == nil {
+			cfgStamp = strconv.FormatInt(fi.ModTime().UnixNano(), 10) + ":" + strconv.FormatInt(fi.Size(), 10)
+		}
+	}
+	key := strings.Join([]string{bin, filePath, passInterp, cfgPath, cfgStamp}, "\x00")
+	s := &p.py
+	s.mu.Lock()
+	if s.inspect.key == key && time.Since(s.inspect.at) < pyInspectTTL {
+		env := s.inspect.env
+		s.mu.Unlock()
+		return env
+	}
+	s.mu.Unlock()
+	env, err := pyrefly.Inspect(ctx, bin, p.deps.Root, filePath, passInterp)
+	if err != nil {
+		return pyrefly.EnvInfo{}
+	}
+	s.mu.Lock()
+	s.inspect = pyInspectCache{key: key, at: time.Now(), env: env}
+	s.mu.Unlock()
+	return env
+}
+
+func (p *projectState) displayPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if rel, ok := p.relFile(path); ok {
+		return rel
+	}
+	return filepath.ToSlash(path)
+}
+
+func (p *projectState) pythonStatusOf(ctx context.Context, file string) pythonStatusView {
 	if !p.pythonOn() {
 		return pythonStatusView{Off: true}
 	}
 	interp := p.pyInterpreter()
-	v := pythonStatusView{Interpreter: interp.Path, Where: interp.Where, Label: pyrefly.Label(interp.Path)}
-	if _, err := pyrefly.FindBin(interp.Path, p.py.look()); err != nil {
+	v := pythonStatusView{Interpreter: interp.Path, Where: interp.Where}
+	bin, err := pyrefly.FindBin(interp.Path, p.py.look())
+	if err != nil {
 		v.Missing = err.Error()
 	} else {
+		v.Bin = bin
 		p.py.mu.Lock()
 		if p.py.err != nil {
 			v.Missing = p.py.err.Error()
@@ -500,16 +595,56 @@ func (p *projectState) pythonStatusOf(file string) pythonStatusView {
 		p.py.mu.Unlock()
 	}
 	dir := p.deps.Root
+	filePath := ""
 	library := false
 	if path, err := p.pyPath(file); err == nil {
 		dir = filepath.Dir(path)
+		filePath = path
 		library = p.libraryWhy(path) != ""
 	}
-	if cfg := pyrefly.ConfigFile(dir); cfg != "" {
-		v.Config = filepath.ToSlash(cfg)
-		if rel, ok := p.relFile(cfg); ok {
-			v.Config = rel
+	cfgPath := pyrefly.ConfigFile(dir)
+	if cfgPath != "" {
+		v.Config = p.displayPath(cfgPath)
+		v.ConfigSetsInterpreter = pyrefly.ConfigSetsInterpreter(cfgPath)
+	}
+	if v.Missing == "" && bin != "" {
+		v.Version = p.pyVersion(ctx, bin)
+		passInterp := interp.Path
+		if v.ConfigSetsInterpreter {
+			// In `pyrefly lsp`, a config file's python-interpreter-path wins
+			// over workspace/configuration's pythonPath.
+			passInterp = ""
 		}
+		env := p.pyInspect(ctx, bin, filePath, passInterp, cfgPath)
+		if env.Config != "" && v.Config == "" {
+			v.Config = p.displayPath(env.Config)
+			v.ConfigSetsInterpreter = pyrefly.ConfigSetsInterpreter(env.Config)
+		}
+		if env.ConfigError != "" {
+			v.ConfigError = env.ConfigError
+		}
+		if len(env.SitePackages) > 0 {
+			v.SitePackages = make([]string, 0, len(env.SitePackages))
+			for _, sp := range env.SitePackages {
+				v.SitePackages = append(v.SitePackages, p.displayPath(sp))
+			}
+		}
+		switch {
+		case v.ConfigSetsInterpreter:
+			v.Where = "config"
+			if env.Skipped {
+				v.Interpreter = ""
+			} else if env.Interpreter != "" {
+				v.Interpreter = env.Interpreter
+			}
+		case interp.Path == "" && env.Interpreter != "":
+			v.Interpreter = env.Interpreter
+			v.Where = "pyrefly"
+		}
+	}
+	v.Label = pyrefly.Label(v.Interpreter)
+	if venv := pyrefly.VenvDir(v.Interpreter); venv != "" {
+		v.Venv = p.displayPath(venv)
 	}
 	p.mu.Lock()
 	declined := p.sess.PyreflyDeclined
@@ -520,22 +655,29 @@ func (p *projectState) pythonStatusOf(file string) pythonStatusView {
 
 // pythonStatus answers with the project's pyrefly, for ?file.
 func (p *projectState) pythonStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, p.pythonStatusOf(r.URL.Query().Get("file")))
+	writeJSON(w, p.pythonStatusOf(r.Context(), r.URL.Query().Get("file")))
 }
 
 // pythonInterpreters answers with the Pythons the picker lists, and the
-// one in use.
+// active pyrefly status.
 func (p *projectState) pythonInterpreters(w http.ResponseWriter, r *http.Request) {
-	interp := p.pyInterpreter()
+	p.mu.Lock()
+	picked := p.sess.Python
+	p.mu.Unlock()
+	auto := pyrefly.DefaultInterpreter(p.deps.Root)
+	st := p.pythonStatusOf(r.Context(), r.URL.Query().Get("file"))
 	list := pyrefly.Interpreters(p.deps.Root, os.Getenv, p.py.look())
-	if interp.Path != "" && !containsInterpreter(list, interp.Path) {
-		list = append([]pyrefly.Interpreter{interp}, list...)
+	if picked != "" && !containsInterpreter(list, picked) {
+		list = append([]pyrefly.Interpreter{{Path: picked, Where: "picked"}}, list...)
 	}
 	writeJSON(w, struct {
 		Current string                `json:"current"`
 		Where   string                `json:"where"`
+		Picked  string                `json:"picked,omitempty"`
+		Auto    pyrefly.Interpreter   `json:"auto"`
+		Status  pythonStatusView      `json:"status"`
 		List    []pyrefly.Interpreter `json:"list"`
-	}{interp.Path, interp.Where, list})
+	}{st.Interpreter, st.Where, picked, auto, st, list})
 }
 
 func containsInterpreter(list []pyrefly.Interpreter, path string) bool {
@@ -553,6 +695,7 @@ func containsInterpreter(list []pyrefly.Interpreter, path string) bool {
 func (p *projectState) pythonSetInterpreter(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path string `json:"path"`
+		File string `json:"file"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -582,6 +725,7 @@ func (p *projectState) pythonSetInterpreter(w http.ResponseWriter, r *http.Reque
 	s.mu.Lock()
 	c, running := s.client, s.bin
 	s.err = nil
+	s.inspect = pyInspectCache{}
 	s.mu.Unlock()
 	if c != nil {
 		if bin, err := pyrefly.FindBin(interp.Path, s.look()); err == nil && bin != running {
@@ -590,7 +734,7 @@ func (p *projectState) pythonSetInterpreter(w http.ResponseWriter, r *http.Reque
 			c.ConfigChanged()
 		}
 	}
-	writeJSON(w, p.pythonStatusOf(""))
+	writeJSON(w, p.pythonStatusOf(r.Context(), req.File))
 }
 
 // pythonConfig writes the project's pyrefly.toml (create), or keeps that

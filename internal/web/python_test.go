@@ -100,7 +100,7 @@ func TestPython(t *testing.T) {
 
 	var st pythonStatusView
 	getJSON(t, c, u+"/api/python/status?file=scripts/a.py", &st)
-	if st.Off || st.Missing != "" || st.Interpreter != venvPy || st.Where != ".venv" || st.Config != "" || !st.Offer {
+	if st.Off || st.Missing != "" || st.Interpreter != venvPy || st.Where != ".venv" || st.Venv != ".venv" || st.Config != "" || !st.Offer || st.Version != "pyrefly 0.0.0-fake" || len(st.SitePackages) == 0 {
 		t.Errorf("status = %+v", st)
 	}
 
@@ -291,5 +291,55 @@ func TestPythonStopsWithTheProject(t *testing.T) {
 	case <-client.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("pyrefly outlived its project")
+	}
+}
+
+func TestPythonResolvedVenvAndConfigOverride(t *testing.T) {
+	// Project with no .venv at root: pyrefly's own choice comes from dump-config.
+	extEnv := filepath.Join(t.TempDir(), "myvenv")
+	extPy := filepath.Join(extEnv, "bin", "python")
+	if runtime.GOOS == "windows" {
+		extPy = filepath.Join(extEnv, "Scripts", "python.exe")
+	}
+	if err := os.MkdirAll(filepath.Dir(extPy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(extPy, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extEnv, "pyvenv.cfg"), []byte("home = /usr\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(pyreflytest.InterpEnv, extPy)
+
+	root, _, _, u, c := newPythonTest(t, map[string]string{
+		"a.py":             "x = 1\n",
+		"other/bin/python": "",
+	})
+	var st pythonStatusView
+	getJSON(t, c, u+"/api/python/status?file=a.py", &st)
+	if st.Interpreter != extPy || st.Where != "pyrefly" || st.Label != "myvenv" || st.Venv != filepath.ToSlash(extEnv) {
+		t.Errorf("auto-resolved status = %+v", st)
+	}
+
+	// /api/python/interpreters returns the resolved status too.
+	var list struct {
+		Current string           `json:"current"`
+		Where   string           `json:"where"`
+		Picked  string           `json:"picked"`
+		Status  pythonStatusView `json:"status"`
+	}
+	getJSON(t, c, u+"/api/python/interpreters?file=a.py", &list)
+	if list.Current != extPy || list.Where != "pyrefly" || list.Picked != "" || list.Status.Venv != filepath.ToSlash(extEnv) {
+		t.Errorf("interpreters = %+v", list)
+	}
+
+	// A pyrefly.toml that sets python-interpreter-path takes precedence over a picked interpreter.
+	if err := os.WriteFile(filepath.Join(root, "pyrefly.toml"), []byte("project-includes = [\"**/*.py\"]\npython-interpreter-path = \""+filepath.ToSlash(extPy)+"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	postJSON(t, c, u+"/api/python/interpreter", map[string]any{"path": "other/bin/python", "file": "a.py"}, &st)
+	if !st.ConfigSetsInterpreter || st.Where != "config" || st.Interpreter != extPy || st.Config != "pyrefly.toml" {
+		t.Errorf("config-overridden status = %+v", st)
 	}
 }

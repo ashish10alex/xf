@@ -445,15 +445,31 @@ export function pythonExtensions() {
 // ---- the interpreter ----
 
 // interpreterLabel is how the status line names the interpreter: the
-// environment's folder (.venv), or "python3 (PATH)" and the like.
+// environment's folder (.venv), or "python3 (PATH)" / "python3 (auto)".
 export function interpreterLabel(st) {
-  if (!st || !st.interpreter) return 'pyrefly\'s default';
-  if (st.label) return st.label + (st.where === 'PATH' ? ' (PATH)' : '');
+  if (!st || !st.interpreter) {
+    if (st && st.where === 'config') return 'none (config)';
+    return 'pyrefly\'s default';
+  }
+  const suffix = st.where === 'PATH' ? ' (PATH)'
+    : st.where === 'pyrefly' ? ' (auto)'
+    : st.where === 'config' ? ' (config)' : '';
+  if (st.label) return st.label + suffix;
   const parts = st.interpreter.split(/[\\/]/);
   const name = parts[parts.length - 1];
-  if (st.where === 'PATH') return name + ' (PATH)';
+  if (st.where === 'PATH' || (st.where === 'pyrefly' && !st.venv)) return name + suffix;
   const bin = parts.length > 2 && /^(bin|Scripts)$/.test(parts[parts.length - 2]);
-  return bin ? parts[parts.length - 3] : name;
+  return (bin ? parts[parts.length - 3] : name) + suffix;
+}
+
+// interpreterSource describes where pyrefly's active interpreter came from.
+export function interpreterSource(where, config) {
+  if (where === 'picked') return 'picked in xf';
+  if (where === 'config') return config ? 'from ' + config : 'from config';
+  if (where === 'pyrefly') return 'pyrefly auto';
+  if (where === 'PATH') return 'from PATH';
+  if (where) return 'found at ' + where;
+  return 'pyrefly auto';
 }
 
 // takeKeys gives an overlay the keys the editor has; closing it gives
@@ -466,26 +482,31 @@ function takeKeys() {
 
 export async function openInterpreterPicker() {
   takeKeys();
-  PY.overlay = { kind: 'interpreter', loading: true, list: [], current: '', where: '', cursor: 0, custom: '', saving: false, err: '' };
+  PY.overlay = {
+    kind: 'interpreter', loading: true, list: [], current: '', where: '',
+    picked: '', auto: null, status: PY.status, cursor: 0, custom: '', saving: false, err: '',
+  };
   redraw();
   try {
-    const r = await get('/api/python/interpreters');
+    const q = PY.file ? '?file=' + encodeURIComponent(PY.file) : '';
+    const r = await get('/api/python/interpreters' + q);
     const o = PY.overlay;
     if (!o || o.kind !== 'interpreter') return;
     Object.assign(o, r, { loading: false });
+    if (r.status && PY.file) PY.status = r.status;
     const rows = interpreterRows();
-    const at = rows.findIndex((x) => o.where === 'picked' ? x.path === o.current : x.auto);
+    const at = rows.findIndex((x) => o.picked ? x.path === o.picked : x.auto);
     o.cursor = Math.max(at, 0);
   } catch (e) { closePython(); say(e.message); }
   redraw();
 }
 
-// interpreterRows are the picker's rows: xf's own choice, each Python
-// found, and a path of your own.
+// interpreterRows are the picker's rows: xf's auto choice, each Python
+// found (plus a custom picked path if any), and a path of your own.
 export function interpreterRows() {
   const o = PY.overlay;
   if (!o || o.kind !== 'interpreter') return [];
-  return [{ auto: true }, ...(o.list || []).filter((i) => i.where !== 'picked'), { custom: true }];
+  return [{ auto: true }, ...(o.list || []), { custom: true }];
 }
 
 export async function pickInterpreter() {
@@ -497,15 +518,26 @@ export async function pickInterpreter() {
   o.saving = true; o.err = '';
   redraw();
   try {
-    PY.status = await post('/api/python/interpreter', { path });
+    PY.status = await post('/api/python/interpreter', { path, file: PY.file });
     closePython();
-    say('pyrefly checks with ' + (path || interpreterLabel(PY.status) + ' (found by xf)'));
+    if (PY.status && PY.status.configSetsInterpreter) {
+      say('saved, but ' + (PY.status.config || 'pyrefly config') + ' sets python-interpreter-path and takes precedence');
+    } else {
+      say('pyrefly checks with ' + (path || interpreterLabel(PY.status) + ' (auto)'));
+    }
     if (PY.file) { await readStatus(); sync(); }
   } catch (e) {
     o.saving = false;
     o.err = e.message;
   }
   redraw();
+}
+
+// openPyreflyConfig opens a project-local pyrefly config file in the source pane.
+export function openPyreflyConfig(file) {
+  if (!file || !hooks.openFile) return;
+  closePython();
+  hooks.openFile(file);
 }
 
 // ---- the config ----
