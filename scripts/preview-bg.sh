@@ -1,8 +1,8 @@
 #!/bin/sh
 # Starts scripts/preview.sh in the background on a free port and waits until
-# xf web answers, then prints its URL. For a preview of this checkout when
-# preview_start can't give one (a worktree: the app runs the main checkout's
-# launch.json in the main checkout). Open the URL with preview_start {url}.
+# xf web answers, then prints its URL. Use this in a worktree or whenever
+# launching the preview from the shell, then open the printed URL in the
+# browser preview.
 #
 #   scripts/preview-bg.sh [project]       (dataform by default)
 #   scripts/preview-bg.sh stop <port>

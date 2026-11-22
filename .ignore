@@ -1,0 +1,5 @@
+# Keep ripgrep and fd out of vendored minified bundles and generated artifacts.
+internal/web/assets/vendor/
+testdata/*.json
+testdata/examples/
+dist/

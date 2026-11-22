@@ -1,22 +1,24 @@
 # Checking a change
 
-How to see a change working before calling it done: Go tests, the TUI in tmux, xf web in the browser preview, and the rules for the user's real BigQuery.
+How to verify a change before calling it done: Go tests, `just jstest`, the TUI in tmux, xf web in the browser preview, and the rules for the user's real BigQuery.
 
 ## Go tests
 
-- While working, run the package you touched: `go test ./internal/<pkg>/`. `just check` (vet + every test, about 20s) is what pushing `main` runs.
+- While working, run the package you touched: `go test ./internal/<pkg>/` (or `just test-race ./internal/<pkg>/` for concurrent code). `just check` (`gofmt`, `go vet`, `GOOS=windows go build ./...`, and `go test ./...`, about 25s) is what pushing `main` runs.
+- Keep test paths Windows-portable: build absolute paths with `t.TempDir()` and `filepath.Join` rather than hardcoded Unix paths like `"/foo"`.
 - Run heavy jobs one at a time: the full suite, `just check-linux` (Docker) and the Windows VM suite share the Mac's RAM.
 - Before a ship, `go test` the packages you touched is enough: `just ship` runs `just check` on the commit, so don't run it yourself first.
-- Once the tests pass in the main checkout, `just install`, so `~/go/bin/xf` (which the user and nvim run) is current.
-  When another session's uncommitted Go work is in the checkout, or you're in a worktree, skip it: `just ship` installs.
+- Once the tests pass in the main checkout, `just install` updates `~/go/bin/xf` and `~/.local/bin/xf` and restarts `dev.xf.web`.
+  Skip `just install` when another session's uncommitted Go work is in the checkout or when working in a worktree: `just ship` installs the pushed commit.
 - A new message the engine sends to clients goes in `internal/remote/wire.go` with `ProtocolVersion` bumped.
 
 ## The page's JavaScript
 
-`internal/web/jstest/*.test.js` are `node:test` tests of `internal/web/assets`, run by `TestJS` in `go test ./internal/web/`. Run them alone while working:
+`internal/web/jstest/*.test.js` are `node:test` tests of `internal/web/assets`, run by `TestJS` in `go test ./internal/web/`. Run them directly while working:
 
 ```sh
-node --import ./internal/web/jstest/setup.js --test internal/web/jstest/*.test.js
+just jstest                       # full JS suite
+just jstest scm-blame.test.js     # specific file(s)
 ```
 
 - `setup.js` gives the modules the browser globals they touch when they load, and pins the platform to a non-Mac.
@@ -31,27 +33,19 @@ An `xf serve` from an older binary is reused while it lives: check `ps` for `xf 
 
 ## xf web in the browser preview
 
-Start it with `preview_start` and `xf-dataform` or `xf-dbt`, then open `/?project=dataform` (or `dbt`).
-The app gives each a free port when another session holds 7900 or 7901.
-In a worktree, use `scripts/preview-bg.sh` instead (see `docs/agents/parallel-sessions.md`).
-Both run `scripts/preview.sh`, whose header says what it sets up:
+Start this checkout's preview on a free port with `scripts/preview-bg.sh [dataform|dbt]`, which prints `http://127.0.0.1:<port>/?project=<name>`. Open that URL in the browser preview (in T3 Code: `preview_status`, then `preview_open` / `preview_navigate`), and stop the server when done with `scripts/preview-bg.sh stop <port>`.
+(In Claude Desktop's main checkout, `.claude/launch.json` also exposes `xf-dataform`, `xf-dbt`, and `xf-dataform-embedded`.)
 
-- A scratch git copy of the example under `$TMPDIR/xf-preview/<name>-<port>/`, kept between starts and made again when it is no longer a project; `XF_PREVIEW_FRESH=1` makes a new one.
-- Assets served from the checkout: a JS or CSS edit shows on a reload. A Go edit needs the preview restarted, which rebuilds xf.
+`scripts/preview.sh` sets up:
+
+- A scratch git copy of the example under `$TMPDIR/xf-preview/<name>-<port>/`, kept between starts and recreated when it is no longer a project; `XF_PREVIEW_FRESH=1` makes a new one.
+- Assets served from this checkout: a JS or CSS edit shows on a reload. A Go edit needs the preview restarted, which rebuilds xf.
 - xf's config in `<dir>/xdg/xf/config.json` (for example `{"sourceAutosaveMs": 500}`), read at start: restart after writing it.
-- To measure a load as a release serves it, use `xf-dataform-embedded` (7902): the assets built into xf, with their ETags, rather than the checkout's.
-
-### Keys
-
-- `type` inserts text without key events, so vim and xf's keys never see it.
-  Send keys with `key`, one key per token: capitals for shifted keys (`G`, `A`), and `:` or `!` as the key itself.
-- Plain text fields (the finder's input): click the field, then `type`.
-- `key` sends an empty `code`. Where a handler reads `code`, dispatch a `KeyboardEvent` that carries one from `javascript_tool`.
-- The pane denies the clipboard.
+- `XF_PREVIEW_EMBEDDED=1` serves the assets built into xf, with their ETags, to measure a release load.
 
 ### Reading and driving the page
 
-`await xfAgent()` in the page loads `agent.js` (outside the first load), the page as an agent sees it:
+`await xfAgent()` in the page (via `preview_evaluate`) loads `agent.js` (outside the first load), the page as an agent sees it:
 
 ```js
 const a = await xfAgent();
@@ -74,11 +68,9 @@ a.log(20);                                     // the page log's last lines, the
 ### Reading what the page shows
 
 - Read state, not pixels: `snapshot()` above, or `await import(new URL('state.js', location.href))` for the live `S`; `settings.js` gives `SET`.
-  Check the DOM by JS (for example `.cm-activeLine`) over a screenshot, which can lag a render while the pane is hidden.
-- A screenshot or zoom costs as much context as dozens of JS reads, and stays in it for the rest of the session.
-  Take one only when a look is the point (a layout, a colour), at `scale: 0.5`, and not inside a `browser_batch` of key presses.
+  Check the DOM via `preview_evaluate` (for example `.cm-activeLine`) over a screenshot, which can lag a render while the pane is hidden.
+- Take a screenshot (`preview_snapshot` with `includeImage: true`) only when layout or colour is the point, since images stay in context for the rest of the session.
 - `requestAnimationFrame` stops while the pane is hidden. To record something that changes over time, use a `MutationObserver` and `setTimeout`.
-- A `navigate` that hangs is an approval prompt waiting on the Mac: tell the user.
 - In the source editor, drive loads through `selectAction` (`act('selectAction', id)`) and `discard()`.
   Calling `ed.set()` directly skips `hooks.sourceLoaded`, and the next edit then logs "Mismatched change set lengths".
 

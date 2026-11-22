@@ -118,7 +118,9 @@ func TestCardWithoutBigQuery(t *testing.T) {
 // names Unity Catalog when the lookup fails.
 func TestCardFromUnityCatalog(t *testing.T) {
 	uc := sourceOf(&TableSource{Name: "Unity Catalog", AuthHint: "set DATABRICKS_TOKEN",
-		URL: func(t project.Target) string { return "https://dbc-1.cloud.databricks.com/explore/data/" + t.Database + "/" + t.Schema + "/" + t.Name }})
+		URL: func(t project.Target) string {
+			return "https://dbc-1.cloud.databricks.com/explore/data/" + t.Database + "/" + t.Schema + "/" + t.Name
+		}})
 	ref := navigate.TableRef{Source: navigate.SourceRaw, Target: project.Target{Database: "main", Schema: "shop", Name: "orders"}}
 	got := cardFrom(uc, ref, &warehouse.Table{Type: "MANAGED", Schema: []warehouse.Column{{Name: "id", Type: "bigint", Required: true}}}, nil, time.Second)
 	if !strings.HasPrefix(got, "#### [main.shop.orders](https://dbc-1.cloud.databricks.com/explore/data/main/shop/orders)") || !strings.Contains(got, "bigint NOT NULL") {

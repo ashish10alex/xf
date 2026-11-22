@@ -74,4 +74,3 @@ func TestResolveBinaryHints(t *testing.T) {
 		}
 	}
 }
-

@@ -11,12 +11,25 @@ local_project := env_var_or_default("XF_LOCAL_PROJECT", "")
 build:
     go build -o bin/xf ./cmd/xf
 
-# Install xf into $GOBIN (or ~/go/bin) so editors can start `xf lsp`; on a Mac with the launchd agent
-# (scripts/launchd/xf-web-agent.sh) it restarts xf web on the new binary, which a running one doesn't pick up
+# Install xf into $GOBIN (or ~/go/bin) and ~/.local/bin (when present) so CLI and editors stay in sync;
+# on a Mac with the launchd agent (scripts/launchd/xf-web-agent.sh) it restarts xf web on the new binary.
 [unix]
 install:
+    #!/usr/bin/env bash
+    set -euo pipefail
     go install ./cmd/xf
-    @if [ "$(uname)" = Darwin ] && launchctl print "gui/$(id -u)/dev.xf.web" >/dev/null 2>&1; then launchctl kickstart -k "gui/$(id -u)/dev.xf.web" && echo "restarted xf web (dev.xf.web) on the new xf"; fi
+    gobin=$(go env GOBIN)
+    bin="${gobin:-$HOME/go/bin}/xf"
+    if [ -d "$HOME/.local/bin" ] && [ ! "$bin" -ef "$HOME/.local/bin/xf" ]; then
+        # rm first: a cp over the old file leaves a binary macOS kills on launch.
+        rm -f "$HOME/.local/bin/xf"
+        cp "$bin" "$HOME/.local/bin/xf"
+        "$HOME/.local/bin/xf" cost --help >/dev/null 2>&1 || { echo "install: the new ~/.local/bin/xf doesn't run" >&2; exit 1; }
+    fi
+    if [ "$(uname)" = Darwin ] && launchctl print "gui/$(id -u)/dev.xf.web" >/dev/null 2>&1; then
+        launchctl kickstart -k "gui/$(id -u)/dev.xf.web"
+        echo "restarted xf web (dev.xf.web) on the new xf"
+    fi
 
 # Install xf into $GOBIN (or ~/go/bin), moving a running xf.exe aside first
 [windows]
@@ -30,13 +43,52 @@ run *args:
 test:
     go test ./...
 
-# go vet + go test here; what pushing main runs (see .githooks/pre-push)
+# Run Go tests with the race detector (defaults to all packages)
+test-race *pkgs="./...":
+    go test -race {{pkgs}}
+
+# Run xf web's node:test suite (all files, or named files under internal/web/jstest/)
+[unix]
+jstest *files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -z "{{files}}" ]; then
+        exec node --import ./internal/web/jstest/setup.js --test internal/web/jstest/*.test.js
+    fi
+    args=()
+    for f in {{files}}; do
+        if [ -e "$f" ]; then
+            args+=("$f")
+        elif [ -e "internal/web/jstest/$f" ]; then
+            args+=("internal/web/jstest/$f")
+        else
+            args+=("$f")
+        fi
+    done
+    exec node --import ./internal/web/jstest/setup.js --test "${args[@]}"
+
+# gofmt + go vet + Windows cross-compile + go test; what pushing main runs (see .githooks/pre-push)
+[unix]
+check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unformatted=$(gofmt -l .)
+    if [ -n "$unformatted" ]; then
+        echo "gofmt needed:" >&2
+        echo "$unformatted" >&2
+        exit 1
+    fi
+    go vet ./...
+    GOOS=windows go build ./...
+    go test ./...
+
+[windows]
 check:
     go vet ./...
     go test ./...
 
-# Ship committed work from the main checkout: rebase on origin/main, check that commit in a clean copy, push main,
-# fast-forward this checkout, install xf, remove the branch's worktree (see scripts/ship.sh)
+# Ship committed work: rebase on origin/main, check that commit in a clean copy, push main,
+# fast-forward main, install xf, and remove the branch's worktree when run from main (see scripts/ship.sh)
 [unix]
 ship branch="":
     sh scripts/ship.sh {{branch}}
@@ -69,6 +121,11 @@ release-snapshot:
 # Check .goreleaser.yaml
 release-check:
     go run {{goreleaser}} check
+
+# Run release pre-checks on a clean copy of HEAD: release-check, release-snapshot, Windows CI, XF_SKIP_WINGET
+[unix]
+release-preflight ref="HEAD":
+    sh scripts/release-preflight.sh {{ref}}
 
 # Pack the VS Code test extension for a VS Code target (win32-x64, win32-arm64, darwin-arm64, ...) with xf built for it
 vsix target="win32-x64":

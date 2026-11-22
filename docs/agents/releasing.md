@@ -10,7 +10,8 @@ A release is a `v*` tag on `main`. The tag runs `.github/workflows/release.yml`:
 ## Tagging a release
 
 1. **Check `main`.**
-   Done when `just check` and `just release-check` pass, `just release-snapshot` writes every package into `dist/`, and the Windows workflow is green on `main`'s last commit.
+   Run `just check` and `just release-preflight` (checks `.goreleaser.yaml`, builds a clean detached snapshot of `HEAD`, checks Windows CI on `HEAD`, and prints `XF_SKIP_WINGET`).
+   Done when `just check` and `just release-preflight` pass and the Windows workflow is green on `main`'s last commit.
 2. **Tag it.**
    Ask the user for the version, then `git tag -a vX.Y.Z -m vX.Y.Z` on `main` and push the tag.
    Done when the release workflow is green, the GitHub Release has every archive and `checksums.txt`, the tap and the bucket have a commit for the version, and the winget pull request is open (unless winget is skipped, below).
