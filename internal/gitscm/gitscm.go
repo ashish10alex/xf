@@ -9,6 +9,8 @@ package gitscm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -153,6 +155,10 @@ type Status struct {
 	Upstream string `json:"upstream,omitempty"`
 	Ahead    int    `json:"ahead"`
 	Behind   int    `json:"behind"`
+	// Refs is a short digest of the repository's branch, remote and tag refs
+	// so callers can tell when a push, fetch, branch or tag changed what the
+	// commit graph shows.
+	Refs string `json:"refs,omitempty"`
 	// Staged are the index's changes from HEAD, Changes the work tree's
 	// from the index (and its untracked files), Conflicts the files in
 	// conflict.
@@ -177,7 +183,19 @@ func (r *Repo) Status(ctx context.Context) (Status, error) {
 			st.Head = strings.TrimSpace(sha)
 		}
 	}
+	st.Refs = r.refsHash(ctx)
 	return st, nil
+}
+
+// refsHash is a short digest of the branch, remote and tag refs shown in the
+// commit graph.
+func (r *Repo) refsHash(ctx context.Context) string {
+	out, err := r.read(ctx, "for-each-ref", "--format=%(objectname) %(symref) %(refname)", "refs/heads", "refs/remotes", "refs/tags")
+	if err != nil || out == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(out))
+	return hex.EncodeToString(sum[:8])
 }
 
 // parseStatus reads git status --porcelain=v2 -z --branch --no-renames.

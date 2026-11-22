@@ -287,6 +287,17 @@ func TestWatch(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no notification after a switch")
 	}
+	// Pushing updates refs/remotes/* without touching HEAD or FETCH_HEAD.
+	time.Sleep(100 * time.Millisecond)
+	for len(ch) > 0 {
+		<-ch
+	}
+	gitIn(t, clone, "push", "-q", "origin", "local")
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification after a push")
+	}
 	cancel()
 	for range ch { // closed when ctx is done
 	}

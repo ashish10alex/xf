@@ -160,9 +160,9 @@ function keepStashes(list) {
   stashIds = ids;
 }
 
-// logKey is what the log shows of the status: the commits (head) and which
-// of them are pushed (a push moves ahead and behind, not head).
-const logKey = (st) => st ? [st.head, st.upstream, st.ahead, st.behind].join(' ') : '';
+// logKey is what the graph shows of the status: HEAD, its branch,
+// upstream, ahead/behind, and the repository's branch/remote/tag refs.
+const logKey = (st) => st ? [st.head, st.branch, st.upstream, st.ahead, st.behind, st.refs].join(' ') : '';
 
 // loadLog reads the commits again, or the next page. A read that a newer
 // reload has overtaken is dropped, so an old answer never stays on screen.
@@ -576,7 +576,7 @@ export function toggle(r, want) {
   if (r.kind === 'section') {
     G.open[r.id] = open;
     keep();
-    if (open && r.id === 'commits' && !G.logLoaded) loadLog(false);
+    if (open && r.id === 'commits' && (!G.logLoaded || G.logHead !== logKey(G.st))) loadLog(false);
     if (r.id === 'blame' && hooks.blameRefresh) hooks.blameRefresh(false);
     return;
   }
@@ -1129,7 +1129,7 @@ export function key(k) {
       else if (r && (r.kind === 'blame' || r.kind === 'blamerange') && r.range && r.range.sha) copy(r.range.sha, 'copied ' + r.range.sha.slice(0, 7));
       else say('y copies the SHA of the commit under the cursor');
       return true;
-    case 'R': refresh(); if (G.open.blame && hooks.blameRefresh) hooks.blameRefresh(true); say('reading git\'s status again'); return true;
+    case 'R': G.logHead = ''; refresh(); if (G.open.blame && hooks.blameRefresh) hooks.blameRefresh(true); say('reading git\'s status again'); return true;
     case 'tab': case 'shift+tab': return switchRegion();
     case '/': G.filtering = true; return true;
     case 'esc':

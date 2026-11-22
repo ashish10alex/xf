@@ -383,9 +383,12 @@ func TestWatch(t *testing.T) {
 	for len(events) > 0 {
 		<-events
 	}
-	// Reading status and stashes must not re-trigger Watch (for example via
+	// Reading status, log and stashes must not re-trigger Watch (for example via
 	// kqueue KQ_NOTE_ATTRIB / fsnotify.Chmod on .git/index on macOS).
 	if _, err := r.Status(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Log(ctx, 0, 20); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Stashes(ctx); err != nil {
@@ -393,7 +396,75 @@ func TestWatch(t *testing.T) {
 	}
 	select {
 	case <-events:
-		t.Fatal("read-only Status/Stashes re-triggered Watch")
+		t.Fatal("read-only Status/Log/Stashes re-triggered Watch")
 	case <-time.After(250 * time.Millisecond):
+	}
+
+	// Committing and then pushing in a shell must wake Watch and change Status.Refs,
+	// including for nested branches pushed to a newly created refs/remotes subdir.
+	drain := func() {
+		time.Sleep(100 * time.Millisecond)
+		for len(events) > 0 {
+			<-events
+		}
+	}
+	if _, err := r.Commit(ctx, "to push", false); err != nil {
+		t.Fatal(err)
+	}
+	drain()
+	before, err := r.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, clone, "push", "-q")
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		t.Fatal("git push did not wake Watch")
+	}
+	after, err := r.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Refs == "" || after.Refs == "" || before.Refs == after.Refs {
+		t.Fatalf("Status.Refs did not change on push: before=%q after=%q", before.Refs, after.Refs)
+	}
+
+	// Pushing a new nested branch without -u keeps Upstream="" and Ahead=0,
+	// yet still wakes Watch and changes Status.Refs (and subsequent pushes on
+	// that nested branch also wake Watch).
+	gitIn(t, clone, "switch", "-q", "-c", "feat/nested")
+	write(t, clone, "sub/a.sqlx", "nested1\n")
+	gitIn(t, clone, "commit", "-q", "-am", "nested 1")
+	drain()
+	beforeNested, err := r.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, clone, "push", "-q", "origin", "feat/nested")
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first push of nested branch did not wake Watch")
+	}
+	afterNested, err := r.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeNested.Upstream != "" || afterNested.Upstream != "" || beforeNested.Ahead != 0 || afterNested.Ahead != 0 {
+		t.Fatalf("unexpected upstream/ahead for push without -u: before=%+v after=%+v", beforeNested, afterNested)
+	}
+	if beforeNested.Refs == afterNested.Refs {
+		t.Fatalf("Status.Refs did not change on push without -u: %q", afterNested.Refs)
+	}
+
+	write(t, clone, "sub/a.sqlx", "nested2\n")
+	gitIn(t, clone, "commit", "-q", "-am", "nested 2")
+	drain()
+	gitIn(t, clone, "push", "-q", "origin", "feat/nested")
+	select {
+	case <-events:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second push of nested branch did not wake Watch")
 	}
 }

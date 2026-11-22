@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -244,40 +245,104 @@ func (r Repo) Fetch(ctx context.Context) error {
 
 // watched are the files in the git directory whose change can change the
 // branch or how it compares with origin's: HEAD (a switch), FETCH_HEAD (a
-// fetch), ORIG_HEAD (a reset, merge or rebase) and COMMIT_EDITMSG (a
-// commit). The index is left out: reading the status rewrites it.
-var watched = []string{"HEAD", "FETCH_HEAD", "ORIG_HEAD", "COMMIT_EDITMSG"}
+// fetch), ORIG_HEAD (a reset, merge or rebase), COMMIT_EDITMSG (a commit),
+// packed-refs, config (upstream set on push -u) and reftable's list. The
+// index is left out: reading the status rewrites it.
+var watched = []string{"HEAD", "FETCH_HEAD", "ORIG_HEAD", "COMMIT_EDITMSG", "packed-refs", "config", "reftable/tables.list"}
 
-// Watch reports changes to the checkout's HEAD and the other watched
+// watchedRefTrees are the subdirectories of .git/refs whose changes (branch
+// moves and git push updating refs/remotes/*) change the branch or its
+// ahead/behind count.
+var watchedRefTrees = []string{"refs/heads", "refs/remotes"}
+
+const maxWatchedRefDirs = 256
+
+// Watch reports changes to the checkout's HEAD, refs and the other watched
 // files, debounced into one notification. The channel is closed when ctx
 // is done.
 func (r Repo) Watch(ctx context.Context, debounce time.Duration) (<-chan struct{}, error) {
 	if err := r.isRepo(ctx); err != nil {
 		return nil, err
 	}
-	files := map[string]bool{}
-	dirs := map[string]bool{}
-	for _, name := range watched {
+	resolve := func(name string) (string, error) {
 		p, err := r.git(ctx, "rev-parse", "--git-path", name)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		if p = filepath.FromSlash(p); !filepath.IsAbs(p) { // relative to Dir
 			p = filepath.Join(r.Dir, p)
 		}
-		p = filepath.Clean(p)
+		return filepath.Clean(p), nil
+	}
+	files := map[string]bool{}
+	dirs := map[string]bool{}
+	for _, name := range watched {
+		p, err := resolve(name)
+		if err != nil {
+			return nil, err
+		}
 		files[p] = true
 		dirs[filepath.Dir(p)] = true
+	}
+	if refsDir, err := resolve("refs"); err == nil {
+		dirs[refsDir] = true
+	}
+	refTrees := make([]string, 0, len(watchedRefTrees))
+	for _, name := range watchedRefTrees {
+		if p, err := resolve(name); err == nil {
+			refTrees = append(refTrees, p)
+		}
 	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
-	for d := range dirs {
-		if err := w.Add(d); err != nil {
-			_ = w.Close()
-			return nil, err
+	addedDirs := map[string]bool{}
+	addDir := func(d string) bool {
+		if addedDirs[d] {
+			return false
 		}
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			return false
+		}
+		if w.Add(d) == nil {
+			addedDirs[d] = true
+			return true
+		}
+		return false
+	}
+	refDirCount := 0
+	addRefTree := func(root string) {
+		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return nil
+			}
+			if refDirCount >= maxWatchedRefDirs {
+				return filepath.SkipAll
+			}
+			if addDir(filepath.Clean(p)) {
+				refDirCount++
+			}
+			return nil
+		})
+	}
+	for d := range dirs {
+		addDir(d)
+	}
+	for _, tree := range refTrees {
+		addRefTree(tree)
+	}
+	if len(addedDirs) == 0 {
+		_ = w.Close()
+		return nil, os.ErrNotExist
+	}
+	inRefTrees := func(p string) bool {
+		for _, tree := range refTrees {
+			if p == tree || strings.HasPrefix(p, tree+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
 	}
 	out := make(chan struct{}, 1)
 	go func() {
@@ -297,8 +362,18 @@ func (r Repo) Watch(ctx context.Context, debounce time.Duration) (<-chan struct{
 				if ev.Op == fsnotify.Chmod {
 					continue
 				}
+				name := filepath.Clean(ev.Name)
+				if inRefTrees(name) {
+					if ev.Has(fsnotify.Create) {
+						if fi, err := os.Stat(name); err == nil && fi.IsDir() {
+							addRefTree(name)
+						}
+					}
+					timer.Reset(debounce)
+					continue
+				}
 				// git writes HEAD.lock and renames it to HEAD.
-				if files[filepath.Clean(ev.Name)] || files[strings.TrimSuffix(filepath.Clean(ev.Name), ".lock")] {
+				if files[name] || files[strings.TrimSuffix(name, ".lock")] {
 					timer.Reset(debounce)
 				}
 			case _, ok := <-w.Errors:

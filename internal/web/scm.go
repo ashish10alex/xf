@@ -149,6 +149,7 @@ type scmView struct {
 	Upstream  string     `json:"upstream,omitempty"`
 	Ahead     int        `json:"ahead"`
 	Behind    int        `json:"behind"`
+	Refs      string     `json:"refs,omitempty"`
 	Op        string     `json:"op,omitempty"`
 	Staged    []scmFile  `json:"staged"`
 	Changes   []scmFile  `json:"changes"`
@@ -189,7 +190,7 @@ func (p *projectState) scmStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, empty)
 		return
 	}
-	v := scmView{Prefix: g.Prefix, Branch: st.Branch, Head: st.Head, Upstream: st.Upstream, Ahead: st.Ahead, Behind: st.Behind, Op: st.Op,
+	v := scmView{Prefix: g.Prefix, Branch: st.Branch, Head: st.Head, Upstream: st.Upstream, Ahead: st.Ahead, Behind: st.Behind, Refs: st.Refs, Op: st.Op,
 		Staged: filesOf(g, st.Staged), Changes: filesOf(g, st.Changes), Conflicts: filesOf(g, st.Conflicts), Stashes: []stashRow{}, Busy: busy}
 	if list, err := g.Stashes(ctx); err == nil {
 		now := p.deps.Now()
