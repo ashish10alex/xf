@@ -512,19 +512,28 @@ function showChip(e) {
 }
 
 // Sidebar is All and Changed, which pick the rows shown, then the
-// sections, which scroll to theirs.
-function Sidebar({ names, counts, cls }) {
+// sections grouped by Tool, Warehouse and General, which scroll to theirs.
+function Sidebar({ sections, counts, cls }) {
   const n = se.changedCount();
   const only = (o, label, count) => html`<button class=${'set-nav-item set-nav-only' + (SET.only === o ? ' on' : '')}
     onClick=${() => se.setOnly(o)}>${label}<span class="set-nav-n">${count}</span></button>`;
+  const groups = [];
+  for (const sec of sections) {
+    const g = sec.group || 'General';
+    let last = groups[groups.length - 1];
+    if (!last || last.name !== g) { last = { name: g, items: [] }; groups.push(last); }
+    last.items.push(sec);
+  }
   return html`<nav class=${cls} aria-label="Sections">
-    ${only('all', 'All', SET.data.keys.length)}
+    ${only('all', 'All', se.allCount())}
     ${only('changed', 'Changed', n)}
-    <span class="set-nav-head">Sections</span>
-    ${names.map((s) => html`<button
-      class=${'set-nav-item' + (SET.section === s ? ' sec' : '') + (!counts[s] ? ' none' : '')}
-      ref=${(e) => { if (e && SET.section === s) showChip(e); }}
-      onClick=${() => goTo(s)}>${s}<span class="set-nav-n">${counts[s] || ''}</span></button>`)}
+    ${groups.map((g) => html`
+      <span class="set-nav-head">${g.name}</span>
+      ${g.items.map((sec) => html`<button
+        class=${'set-nav-item' + (SET.section === sec.name ? ' sec' : '') + (!sec.collapsed && !counts[sec.name] ? ' none' : '')}
+        ref=${(e) => { if (e && SET.section === sec.name) showChip(e); }}
+        onClick=${() => goTo(sec.name)}>${sec.name}<span class="set-nav-n">${sec.collapsed ? 'global' : counts[sec.name] || ''}</span></button>`)}
+    `)}
   </nav>`;
 }
 
@@ -601,7 +610,14 @@ function JSONView() {
 
 // ---- the page ----
 
-function SettingsBody({ list, sections, hosts }) {
+// gitHostsFor are the Git hosting entries shown alongside list: all matching
+// hosts in All, and in Changed only when forgePollSeconds is among list.
+export function gitHostsFor(list, q) {
+  const hasForgeKey = list.some((k) => k.key === 'forgePollSeconds');
+  return SET.only === 'changed' && !hasForgeKey ? null : hostsMatching(q);
+}
+
+export function SettingsBody({ list, sections, hosts }) {
   const d = SET.data;
   const lvl = se.level();
   const q = SET.query.trim();
@@ -614,14 +630,45 @@ function SettingsBody({ list, sections, hosts }) {
       ${lvl && lvl.error && html`<div class="set-err set-block">can't edit this file here: ${lvl.error} · the JSON view can fix it</div>`}
       ${d.warnings.length > 0 && html`<div class="set-warn">${d.warnings.map((w) => html`<div>⚠ ${w}</div>`)}</div>`}
       <p class="dim set-file">${SET.tab === 'user' ? 'Your settings, for every project.' : 'This project\'s settings, which win over yours: commit the file to share them.'}</p>
-      ${sections.map((s) => {
+      ${sections.map((sec) => {
+        const s = sec.name;
+        if (sec.collapsed) {
+          return html`<section class="set-section">
+            <h2 id=${secId(s)}>${s}</h2>
+            <div class="set-collapsed">Global only · <button class="link" onClick=${() => {
+              se.setTab('user');
+              const idx = se.rows().findIndex((r) => r.section === s);
+              SET.cursor = Math.max(idx, 0);
+              SET.reveal = true;
+              SET.section = s;
+              spyUntil = Date.now() + 700;
+              redraw();
+              requestAnimationFrame(() => {
+                const el = document.getElementById(secId(s));
+                if (el) el.scrollIntoView({ block: 'start' });
+              });
+            }}>switch</button></div>
+          </section>`;
+        }
         const ks = list.filter((k) => k.section === s);
         const hs = s === se.GIT ? hosts : null;
         if (!ks.length && !hs) return null;
-        return html`<section class="set-section"><h2 id=${secId(s)}>${s}</h2>
-          ${hs && html`<${GitHosting} shown=${q ? hs : null} />`}
+        const renderRow = (k) => { n++; return html`<${Row} k=${k} i=${n} />`; };
+        let body;
+        if (hs) {
+          // Git hosting sits right before forgePollSeconds, which belongs
+          // with the hosts; when forgePollSeconds isn't shown, at the end.
+          const pollAt = ks.findIndex((k) => k.key === 'forgePollSeconds');
+          const before = pollAt < 0 ? ks : ks.slice(0, pollAt);
+          const after = pollAt < 0 ? [] : ks.slice(pollAt);
+          body = html`${before.map(renderRow)}<${GitHosting} shown=${q ? hs : null} />${after.map(renderRow)}`;
+        } else {
+          body = ks.map(renderRow);
+        }
+        return html`<section class="set-section">
+          <h2 id=${secId(s)}>${s}${sec.other && html`<span class="set-sec-note">not used by this project</span>`}</h2>
           ${s === se.VIM && html`<p class="dim set-file">Vim mode gives the editors (the source pane, Scratch and this page's JSON) vim's keys. The keys below are of the editor's own commands in vim's normal mode, as vim writes them, e.g. ]g or ${'<C-j>'}${vimModeOn() ? '' : ': with vim mode off they do nothing until it is on'}.</p>`}
-          ${ks.map((k) => { n++; return html`<${Row} k=${k} i=${n} />`; })}</section>`;
+          ${body}</section>`;
       })}
       ${!list.length && !hosts && html`<div class="dim pad">${!q ? (SET.only === 'changed' ? 'this file sets no setting · c shows them all' : 'no settings')
         : SET.only === 'changed' && se.matchesAll() ? html`no setting this file sets matches · <button class="link" onClick=${() => se.setOnly('all')}>search them all</button>`
@@ -639,14 +686,14 @@ export function SettingsPage() {
   const sections = se.sectionsShown();
   const counts = {};
   for (const k of list) counts[k.section] = (counts[k.section] || 0) + 1;
-  // The Git hosting hosts show with the section's keys, and on their own
-  // when a search finds them; showing the changed only, with the keys.
+  // The Git hosting hosts show in Git, and on their own when a search finds
+  // them; in Changed, only when forgePollSeconds is among the visible rows.
   const q = SET.query.trim().toLowerCase();
-  const hosts = SET.only === 'changed' && !counts[se.GIT] ? null : hostsMatching(q);
+  const hosts = gitHostsFor(list, q);
   const found = list.length + (q && hosts ? hosts.length : 0);
   if (q && hosts) counts[se.GIT] = (counts[se.GIT] || 0) + hosts.length;
   const settingsUI = view === 'settings' && SET.mode === 'ui';
-  useSpy(main, settingsUI && d ? sections : []);
+  useSpy(main, settingsUI && d ? sections.map((s) => s.name) : []);
   const scope = (t, label) => html`<button class=${'tab' + (SET.tab === t ? ' on' : '')} disabled=${t === 'project' && !project}
     onClick=${() => { se.setTab(t); redraw(); }}>${label}${se.hasDraft(t) ? html`<span class="set-dot" title="unsaved JSON draft">●</span>` : ''}</button>`;
   const mode = (m, label) => html`<button class=${'tab' + (SET.mode === m ? ' on' : '')} onClick=${() => se.setMode(m)}>${label}${m === 'json' && se.hasDraft(se.levelName()) ? html`<span class="set-dot" title="unsaved JSON draft">●</span>` : ''}</button>`;
@@ -698,9 +745,9 @@ export function SettingsPage() {
           }} />
         ${q ? html`<span class="dim">${found} found</span>` : html`<kbd>/</kbd>`}
       </div>
-      <${Sidebar} names=${sections} counts=${counts} cls="set-nav set-nav-chips" />`}
+      <${Sidebar} sections=${sections} counts=${counts} cls="set-nav set-nav-chips" />`}
       <div class=${'set-body' + (SET.mode === 'json' ? ' json' : '')}>
-        ${SET.mode === 'ui' && html`<${Sidebar} names=${sections} counts=${counts} cls="set-nav set-nav-side" />`}
+        ${SET.mode === 'ui' && html`<${Sidebar} sections=${sections} counts=${counts} cls="set-nav set-nav-side" />`}
         <div class="set-main" ref=${main}><${SettingsBody} list=${list} sections=${sections} hosts=${hosts} /></div>
       </div>
     `}

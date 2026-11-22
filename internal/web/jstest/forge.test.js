@@ -123,14 +123,34 @@ test('the pipeline row names the pipeline, not its status, and its key is a kbd'
   F.v = null;
 });
 
-// A search of the Settings for the section ("Git hosting") or what it
+// A search of the Settings for the section ("Git" / "Git hosting") or what it
 // holds ("token") showed no host: the list hid while searching.
 test('a search of the Settings finds the hosts by the section or by name', () => {
   F.hosts = { hosts: [{ host: 'github.com', kind: 'github' }, { host: 'gitlab.example.com', kind: 'gitlab' }] };
   const names = (q) => (hostsMatching(q) || []).map((h) => h.host);
+  assert.deepEqual(names('git'), ['github.com', 'gitlab.example.com']);
   assert.deepEqual(names('git hosting'), ['github.com', 'gitlab.example.com']);
   assert.deepEqual(names('token'), ['github.com', 'gitlab.example.com']);
   assert.deepEqual(names('example'), ['gitlab.example.com']);
   assert.equal(hostsMatching('autosave'), null);
   F.hosts = null;
+});
+
+test('openHosts scrolls to set-git-hosts (or falls back to set-sec-git)', async () => {
+  const { openHosts } = await import('../assets/forge.js');
+  const orig = document.getElementById;
+  let scrolled = '';
+  document.getElementById = (id) => (id === 'set-git-hosts' ? { scrollIntoView() { scrolled = id; } } : null);
+  try {
+    openHosts();
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(scrolled, 'set-git-hosts');
+    scrolled = '';
+    document.getElementById = (id) => (id === 'set-sec-git' ? { scrollIntoView() { scrolled = id; } } : null);
+    openHosts();
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(scrolled, 'set-sec-git');
+  } finally {
+    document.getElementById = orig;
+  }
 });

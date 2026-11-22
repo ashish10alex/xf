@@ -12,8 +12,7 @@
 import { S, get, getLines, post, redraw, hooks, fitFocus, pane2Default, say } from './state.js';
 import { setVimKeys, setVimMode, setWrap } from './editor.js';
 
-export const SECTIONS = ['Running', 'Tool', 'Editor & look', 'Scratch & source', 'Git hosting'];
-export const GIT = 'Git hosting'; // the hosts and their tokens (forge-view.js), then forgePollSeconds
+export const GIT = 'Git'; // defaultBranch, diffStyle, the hosts and their tokens (forge-view.js), then forgePollSeconds
 export const VIM = 'Vim'; // the vim keys of the editor, in the user's file
 export const INFO = 'info'; // the read-only section: the project's, or the tools'
 
@@ -230,11 +229,33 @@ export function setOnly(only) {
   redraw();
 }
 
-// sectionsShown are the sections of keys the page has, in order: the
-// tool's sections, then Vim.
-export function sectionsShown() {
+// allSections are the page's sections in server order; a fallback derives
+// them from keys when a fixture omits sections.
+function allSections() {
   if (!SET.data) return [];
-  return [...SECTIONS, VIM].filter((s) => SET.data.keys.some((k) => k.section === s));
+  if (Array.isArray(SET.data.sections) && SET.data.sections.length) return SET.data.sections;
+  const seen = new Set(), out = [];
+  for (const k of SET.data.keys || []) {
+    if (k.section && !seen.has(k.section)) { seen.add(k.section); out.push({ name: k.section, group: 'General' }); }
+  }
+  return out;
+}
+
+// isOtherWarehouse says sec belongs to a warehouse the open project doesn't
+// build in. Outside a project (warehouse "") nothing is filtered out.
+export function isOtherWarehouse(sec) {
+  return !!(SET.data && SET.data.warehouse && sec && sec.warehouse && sec.warehouse !== SET.data.warehouse);
+}
+
+// isCollapsed says every key in secName is Global-only on the Project tab,
+// while browsing all settings without a search, so the section collapses to
+// a single line rather than a wall of dimmed rows.
+function isCollapsed(secName, opts = {}) {
+  const only = opts.only !== undefined ? opts.only : SET.only;
+  const q = (opts.query !== undefined ? opts.query : SET.query).trim();
+  if (SET.tab !== 'project' || only !== 'all' || q || !SET.data) return false;
+  const ks = SET.data.keys.filter((k) => k.section === secName);
+  return ks.length > 0 && ks.every((k) => k.userOnly);
 }
 
 // matches says whether k is one the search finds: by title, key, doc,
@@ -243,13 +264,48 @@ function matches(k, q) {
   return !q || (k.title + ' ' + k.key + ' ' + k.doc + ' ' + k.hint + ' ' + k.section).toLowerCase().includes(q);
 }
 
+// keyVisible decides whether k shows in sec: Changed shows every set key
+// (even of another warehouse), search finds hidden warehouses and collapsed
+// sections too, and All hides unset keys of other warehouses and collapsed
+// Global-only sections.
+function keyVisible(k, sec, opts = {}) {
+  const only = opts.only !== undefined ? opts.only : SET.only;
+  const q = (opts.query !== undefined ? opts.query : SET.query).trim().toLowerCase();
+  if (only === 'changed') return fileValue(k) !== null && matches(k, q);
+  if (q) return matches(k, q);
+  if (isCollapsed(k.section, opts)) return false;
+  if (isOtherWarehouse(sec)) return fileValue(k) !== null || k.flag !== null;
+  return true;
+}
+
+// sectionsShown are the sections the sidebar and body show, in order, with
+// flags for sections belonging to another warehouse (other) or collapsed on
+// the Project tab (collapsed). Other-warehouse sections are omitted unless
+// at least one of their keys is visible (set, flagged, or matched by search).
+export function sectionsShown() {
+  if (!SET.data) return [];
+  const out = [];
+  for (const sec of allSections()) {
+    const ks = SET.data.keys.filter((k) => k.section === sec.name);
+    if (!ks.length) continue;
+    const other = isOtherWarehouse(sec);
+    const collapsed = isCollapsed(sec.name);
+    if (other && !ks.some((k) => keyVisible(k, sec))) continue;
+    out.push({ ...sec, other, collapsed });
+  }
+  return out;
+}
+
 // rows are the keys shown: by section, then as documented, those the
 // search matches (and, showing the changed only, the scope's file sets).
-export function rows() {
+export function rows(opts) {
   if (!SET.data) return [];
-  const q = SET.query.trim().toLowerCase();
-  const keys = SET.data.keys.filter((k) => matches(k, q) && (SET.only !== 'changed' || fileValue(k) !== null));
-  return [...SECTIONS, VIM].flatMap((s) => keys.filter((k) => k.section === s));
+  return allSections().flatMap((sec) => SET.data.keys.filter((k) => k.section === sec.name && keyVisible(k, sec, opts)));
+}
+
+// allCount is how many rows All shows with no search in the current scope.
+export function allCount() {
+  return rows({ only: 'all', query: '' }).length;
 }
 
 // matchesAll is how many keys the search finds among them all, whether

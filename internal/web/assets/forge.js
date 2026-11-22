@@ -78,9 +78,9 @@ export function pill() {
   const where = v.host + (v.path ? '/' + v.path : '');
   switch (v.state) {
     case 'connect':
-      return { text: '⚿ connect', tone: 'dim', title: 'no token for ' + v.host + ': add one in Settings › Git hosting', run: openHosts };
+      return { text: '⚿ connect', tone: 'dim', title: 'no token for ' + v.host + ': add one in Settings › Git', run: openHosts };
     case 'token':
-      return { text: '⚿ token', tone: 'warn', title: v.host + ' refused the token: change it in Settings › Git hosting', run: openHosts };
+      return { text: '⚿ token', tone: 'warn', title: v.host + ' refused the token: change it in Settings › Git', run: openHosts };
     case 'error':
       return { text: '⚠ ' + word(), tone: 'warn', title: v.error + '\nclick: Source Control', run: showSection };
   }
@@ -113,7 +113,7 @@ export function openHosts() {
   if (hooks.settingsShowAll) hooks.settingsShowAll();
   const started = Date.now();
   const go = () => {
-    const el = document.getElementById('set-sec-git-hosting');
+    const el = document.getElementById('set-git-hosts') || document.getElementById('set-sec-git');
     if (el) el.scrollIntoView({ block: 'start' });
     else if (Date.now() - started < 3000) setTimeout(go, 100);
   };
@@ -124,7 +124,7 @@ export function openHosts() {
 
 export function openMR() {
   const m = mr();
-  if (!on()) { say('no merge request here: the branch\'s remote isn\'t on a host xf knows (Settings › Git hosting)'); return; }
+  if (!on()) { say('no merge request here: the branch\'s remote isn\'t on a host xf knows (Settings › Git)'); return; }
   if (!m) { say('no ' + longWord() + ' for ' + (F.v.branch || 'this branch') + ': m creates one'); return; }
   openURL(m.url, mrName(m));
 }
@@ -142,7 +142,7 @@ export function copyLink() {
 }
 
 export function refresh() {
-  if (!on()) { say('no merge request here: the branch\'s remote isn\'t on a host xf knows (Settings › Git hosting)'); load(); return; }
+  if (!on()) { say('no merge request here: the branch\'s remote isn\'t on a host xf knows (Settings › Git)'); load(); return; }
   check(false);
   say('asking ' + hostName() + ' again');
 }
@@ -308,7 +308,7 @@ function commands() {
   const w = word();
   const out = [];
   const v = F.v;
-  if (v.state === 'connect' || v.state === 'token') out.push(['Git: connect ' + v.host + ' (Settings › Git hosting)', '', openHosts]);
+  if (v.state === 'connect' || v.state === 'token') out.push(['Git: connect ' + v.host + ' (Settings › Git)', '', openHosts]);
   if (!openOne() && !onBase()) out.push(['Git: create ' + w, '', () => create(false)]);
   if (mr()) {
     out.push(['Git: open ' + w, '', openMR]);
@@ -319,7 +319,7 @@ function commands() {
   return out;
 }
 
-// ---- Settings › Git hosting ----
+// ---- Settings › Git ----
 
 // hostWords are what the hosts list is about, which a search of the
 // Settings finds it by.

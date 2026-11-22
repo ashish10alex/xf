@@ -202,10 +202,10 @@ function fillHost(v, sha, shaRow, mrRow) {
       } else mrRow.append(el('span', 'dim', 'no ' + word + ': pushed straight to its branch, or not pushed yet'));
       break;
     case 'connect':
-      mrRow.append(el('span', 'dim', 'add a token for ' + (v.kind === 'github' ? 'GitHub' : 'GitLab') + ' in Settings › Git hosting to see its ' + word));
+      mrRow.append(el('span', 'dim', 'add a token for ' + (v.kind === 'github' ? 'GitHub' : 'GitLab') + ' in Settings › Git to see its ' + word));
       break;
     case 'token':
-      mrRow.append(el('span', 'dim', 'the host refused the token: renew it in Settings › Git hosting'));
+      mrRow.append(el('span', 'dim', 'the host refused the token: renew it in Settings › Git'));
       break;
     case 'off':
       mrRow.append(el('span', 'dim', 'no GitLab or GitHub remote xf knows'));

@@ -56,14 +56,16 @@ test('the Overview leaves the settings rows to the Settings', () => {
   assert.deepEqual(infoGroups(project).map((g) => g.title), ['project', 'binaries', 'google cloud', 'git', 'editor']);
 });
 
-const key = (k, user, project) => ({ key: k, title: k, section: 'Running', doc: '', hint: '', kind: 'text', value: '', from: 'default', default: '', user, project, flag: null, live: true });
+const key = (k, section, user, project) => ({ key: k, title: k, section, doc: '', hint: '', kind: 'text', value: '', from: 'default', default: '', user, project, flag: null, live: true });
 
 beforeEach(() => {
   Object.assign(S, { mode: 'project', caps: { info: true } });
   Object.assign(SET, {
     open: true, view: 'overview', only: 'all', tab: 'user', mode: 'ui', query: '', typing: false, leaveAsk: false, closing: false, cursor: 0, json: {},
-    data: { root: '/work', levels: [{ level: 'user', path: '/u.json' }, { level: 'project', path: '.xf/config.json' }], warnings: [], pending: [],
-      keys: [key('runMode', null, null), key('defaultBranch', 'develop', null), key('editor', null, 'zed')] },
+    data: { root: '/work', tool: 'dataform', warehouse: 'bigquery',
+      levels: [{ level: 'user', path: '/u.json' }, { level: 'project', path: '.xf/config.json' }], warnings: [], pending: [],
+      sections: [{ name: 'Dataform', group: 'Tool' }, { name: 'Git', group: 'General' }, { name: 'App', group: 'General' }],
+      keys: [key('runMode', 'Dataform', null, null), key('defaultBranch', 'Git', 'develop', null), key('editor', 'App', null, 'zed')] },
   });
 });
 

@@ -382,7 +382,7 @@ func (p *projectState) forgeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	a, ok := forge.Match(ctx, p.forgeCfg.Hosts, rm)
 	if !ok {
-		writeJSON(w, createView{Message: rm.Host + " isn't a host xf knows: add it in Settings › Git hosting"})
+		writeJSON(w, createView{Message: rm.Host + " isn't a host xf knows: add it in Settings › Git"})
 		return
 	}
 	title, _ := g.HeadMessage(ctx)
@@ -407,7 +407,7 @@ func mrSigil(k forge.Kind) string {
 	return "!"
 }
 
-// ---- hosts (Settings › Git hosting) ----
+// ---- hosts (Settings › Git) ----
 
 func (s *Server) forgeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/forge/hosts", s.forgeHosts)
@@ -416,7 +416,7 @@ func (s *Server) forgeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/forge/hosts/test", s.forgeTestHost)
 }
 
-// hostView is a host as Settings › Git hosting lists it: its token
+// hostView is a host as Settings › Git lists it: its token
 // masked, and where the token comes from ("file", an environment
 // variable's name, or "" for none).
 type hostView struct {

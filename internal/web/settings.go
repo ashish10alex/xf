@@ -36,13 +36,25 @@ type Settings struct {
 	File func(root, level string) (string, error)
 }
 
-// SettingsView is the page's settings: the files, and each key.
+// SettingSection is one section of the settings page, in display order,
+// under its sidebar Group ("Tool", "Warehouse", "General"). Warehouse is
+// set for warehouse-specific sections so the page can hide irrelevant
+// warehouses inside a project.
+type SettingSection struct {
+	Name      string `json:"name"`
+	Group     string `json:"group"`
+	Warehouse string `json:"warehouse,omitempty"`
+}
+
+// SettingsView is the page's settings: the files, the ordered sections,
+// and each key.
 type SettingsView struct {
 	Levels []SettingsLevel `json:"levels"`
 	// Warnings are the files' problems the loader warns of, such as
 	// unknown keys, each with its file and line.
-	Warnings []string     `json:"warnings"`
-	Keys     []SettingKey `json:"keys"`
+	Warnings []string         `json:"warnings"`
+	Sections []SettingSection `json:"sections,omitempty"`
+	Keys     []SettingKey     `json:"keys"`
 }
 
 // SettingsLevel is one of the files: "user" or "project".
@@ -84,12 +96,18 @@ type SettingKey struct {
 	From  string `json:"from"`
 }
 
-// settingsAnswer is what the page is told of the settings: the view, and
-// for an open project the changes waiting for it to reopen.
+// settingsAnswer is what the page is told of the settings: the view, the
+// open project's tool and warehouse, and the changes waiting for it to
+// reopen.
 type settingsAnswer struct {
 	SettingsView
 	// Root is the open project, "" for none (only the user's file).
 	Root string `json:"root"`
+	// Tool is the open project's tool ("dataform" or "dbt"), "" outside one.
+	Tool string `json:"tool,omitempty"`
+	// Warehouse is the open project's warehouse ("bigquery", "databricks",
+	// or "snowflake"), "" outside one.
+	Warehouse string `json:"warehouse,omitempty"`
 	// Pending are the keys whose value in use changed since the project
 	// opened but only applies when it reopens.
 	Pending []string `json:"pending"`
@@ -151,8 +169,9 @@ func (s *Server) settingsTarget(r *http.Request) (*projectState, string, string)
 }
 
 func (s *Server) settingsAnswer(p *projectState, root, tool string) settingsAnswer {
-	a := settingsAnswer{SettingsView: s.cfg.Settings.View(root, tool), Root: root, Pending: []string{}}
+	a := settingsAnswer{SettingsView: s.cfg.Settings.View(root, tool), Root: root, Tool: tool, Pending: []string{}}
 	if p != nil {
+		a.Warehouse = p.warehouseKind()
 		for _, k := range a.Keys {
 			if was, ok := p.openedWith[k.Key]; ok && was != k.Value {
 				a.Pending = append(a.Pending, k.Key)

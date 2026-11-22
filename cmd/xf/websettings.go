@@ -11,6 +11,7 @@ import (
 
 	"github.com/ashish10alex/xf/internal/config"
 	"github.com/ashish10alex/xf/internal/frontend"
+	"github.com/ashish10alex/xf/internal/project"
 	"github.com/ashish10alex/xf/internal/web"
 	"github.com/ashish10alex/xf/internal/webtheme"
 )
@@ -41,48 +42,64 @@ func webThemes(kind string) []string {
 	return out
 }
 
+// settingSections lists xf web's settings sections in display order, under
+// their sidebar groups. Warehouse marks warehouse-specific sections so the
+// page hides irrelevant warehouses inside a project.
+var settingSections = []web.SettingSection{
+	{Name: "Dataform", Group: "Tool"},
+	{Name: "dbt", Group: "Tool"},
+	{Name: "BigQuery", Group: "Warehouse", Warehouse: project.BigQuery},
+	{Name: "Databricks", Group: "Warehouse", Warehouse: project.Databricks},
+	{Name: "Snowflake", Group: "Warehouse", Warehouse: project.Snowflake},
+	{Name: "Git", Group: "General"},
+	{Name: "Editor", Group: "General"},
+	{Name: "Appearance", Group: "General"},
+	{Name: "App", Group: "General"},
+	{Name: "Vim", Group: "General"},
+}
+
 var settingMetas = map[string]settingMeta{
-	config.KeyRunMode:              {"Running", "choice", []string{"cli", "api"}, false},
-	config.KeyDefaultBranch:        {"Running", "text", nil, true},
-	config.KeyTablePrefix:          {"Running", "text", nil, false},
-	config.KeySchemaSuffix:         {"Running", "text", nil, false},
-	config.KeyDatabaseSuffix:       {"Running", "text", nil, false},
-	config.KeyDevCompilerOptions:   {"Running", "text", nil, false},
-	config.KeyProdCompilerOptions:  {"Running", "text", nil, false},
-	config.KeyLineageProjects:      {"Running", "text", nil, false},
-	config.KeyDeferToProd:          {"Running", "bool", nil, false},
-	config.KeyDataformLocation:     {"Running", "text", nil, false},
-	config.KeyDataformRepo:         {"Running", "text", nil, false},
-	config.KeyDataformBin:          {"Tool", "text", nil, false},
-	config.KeyDbtBin:               {"Tool", "text", nil, false},
-	config.KeyDbtTarget:            {"Tool", "text", nil, false},
-	config.KeyDbtProdTarget:        {"Running", "text", nil, false},
-	config.KeyDbtCompileWithHooks:  {"Tool", "bool", nil, false},
-	config.KeyDatabricksWarehouse:  {"Running", "text", nil, false},
-	config.KeyDatabricksProfile:    {"Running", "text", nil, false},
-	config.KeySnowflakeWarehouse:   {"Running", "text", nil, false},
-	config.KeySnowflakeConnection:  {"Running", "text", nil, false},
-	config.KeyUSDPerTiB:            {"Running", "number", nil, true},
-	config.KeyEditor:               {"Editor & look", "text", nil, true},
-	config.KeyTheme:                {"Editor & look", "choice", themes, true},
-	config.KeyWebTheme:             {"Editor & look", "choice", webThemes(""), true},
-	config.KeyWebThemeLight:        {"Editor & look", "choice", webThemes(webtheme.Light), true},
-	config.KeyWebThemeDark:         {"Editor & look", "choice", webThemes(webtheme.Dark), true},
-	config.KeyWebAutoExitSeconds:   {"Editor & look", "number", nil, true},
-	config.KeyWebOpenProjectIn:     {"Editor & look", "choice", []string{config.OpenSameTab, config.OpenNewTab}, true},
-	config.KeyWebBrowser:           {"Editor & look", "text", nil, true},
-	config.KeyWebBrowserProfile:    {"Editor & look", "text", nil, true},
-	config.KeyForgePollSeconds:     {"Git hosting", "number", nil, true},
-	config.KeyScratchWarnGB:        {"Scratch & source", "number", nil, true},
-	config.KeyScratchConfirmGB:     {"Scratch & source", "number", nil, true},
-	config.KeySourceAutosaveMs:     {"Scratch & source", "number", nil, true},
-	config.KeyDiffStyle:            {"Scratch & source", "choice", []string{config.DiffInline, config.DiffSideBySide}, true},
-	config.KeyPythonLanguageServer: {"Scratch & source", "choice", []string{config.PythonPyrefly, config.PythonOff}, true},
-	config.KeySqlfluffBin:          {"Scratch & source", "text", nil, true},
-	config.KeySqlfluffConfig:       {"Scratch & source", "text", nil, true},
-	config.KeyAutoHidePane2:        {"Scratch & source", "bool", nil, true},
-	config.KeyPane2Tab:             {"Scratch & source", "choice", []string{config.Pane2SQL, config.Pane2Columns}, true},
-	config.KeyWrapLines:            {"Scratch & source", "bool", nil, true},
+	config.KeyDataformBin:          {"Dataform", "text", nil, false},
+	config.KeyRunMode:              {"Dataform", "choice", []string{"cli", "api"}, false},
+	config.KeyDataformLocation:     {"Dataform", "text", nil, false},
+	config.KeyDataformRepo:         {"Dataform", "text", nil, false},
+	config.KeyTablePrefix:          {"Dataform", "text", nil, false},
+	config.KeySchemaSuffix:         {"Dataform", "text", nil, false},
+	config.KeyDatabaseSuffix:       {"Dataform", "text", nil, false},
+	config.KeyDevCompilerOptions:   {"Dataform", "text", nil, false},
+	config.KeyProdCompilerOptions:  {"Dataform", "text", nil, false},
+	config.KeyDbtBin:               {"dbt", "text", nil, false},
+	config.KeyDbtTarget:            {"dbt", "text", nil, false},
+	config.KeyDbtProdTarget:        {"dbt", "text", nil, false},
+	config.KeyDbtCompileWithHooks:  {"dbt", "bool", nil, false},
+	config.KeyLineageProjects:      {"BigQuery", "text", nil, false},
+	config.KeyDeferToProd:          {"BigQuery", "bool", nil, false},
+	config.KeyUSDPerTiB:            {"BigQuery", "number", nil, true},
+	config.KeyScratchWarnGB:        {"BigQuery", "number", nil, true},
+	config.KeyScratchConfirmGB:     {"BigQuery", "number", nil, true},
+	config.KeyDatabricksWarehouse:  {"Databricks", "text", nil, false},
+	config.KeyDatabricksProfile:    {"Databricks", "text", nil, false},
+	config.KeySnowflakeWarehouse:   {"Snowflake", "text", nil, false},
+	config.KeySnowflakeConnection:  {"Snowflake", "text", nil, false},
+	config.KeyDefaultBranch:        {"Git", "text", nil, true},
+	config.KeyDiffStyle:            {"Git", "choice", []string{config.DiffInline, config.DiffSideBySide}, true},
+	config.KeyForgePollSeconds:     {"Git", "number", nil, true},
+	config.KeySourceAutosaveMs:     {"Editor", "number", nil, true},
+	config.KeyPythonLanguageServer: {"Editor", "choice", []string{config.PythonPyrefly, config.PythonOff}, true},
+	config.KeySqlfluffBin:          {"Editor", "text", nil, true},
+	config.KeySqlfluffConfig:       {"Editor", "text", nil, true},
+	config.KeyAutoHidePane2:        {"Editor", "bool", nil, true},
+	config.KeyPane2Tab:             {"Editor", "choice", []string{config.Pane2SQL, config.Pane2Columns}, true},
+	config.KeyWrapLines:            {"Editor", "bool", nil, true},
+	config.KeyTheme:                {"Appearance", "choice", themes, true},
+	config.KeyWebTheme:             {"Appearance", "choice", webThemes(""), true},
+	config.KeyWebThemeLight:        {"Appearance", "choice", webThemes(webtheme.Light), true},
+	config.KeyWebThemeDark:         {"Appearance", "choice", webThemes(webtheme.Dark), true},
+	config.KeyEditor:               {"App", "text", nil, true},
+	config.KeyWebAutoExitSeconds:   {"App", "number", nil, true},
+	config.KeyWebOpenProjectIn:     {"App", "choice", []string{config.OpenSameTab, config.OpenNewTab}, true},
+	config.KeyWebBrowser:           {"App", "text", nil, true},
+	config.KeyWebBrowserProfile:    {"App", "text", nil, true},
 	config.KeyVimMode:              {"Vim", "bool", nil, true},
 	config.KeyVimNextHunk:          {"Vim", "text", nil, true},
 	config.KeyVimPrevHunk:          {"Vim", "text", nil, true},
@@ -106,8 +123,7 @@ var settingMetas = map[string]settingMeta{
 // out of the other's projects.
 var (
 	dataformOnly = []string{config.KeyDataformBin, config.KeyRunMode, config.KeyDataformLocation, config.KeyDataformRepo,
-		config.KeyTablePrefix, config.KeySchemaSuffix, config.KeyDatabaseSuffix, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions,
-		config.KeySqlfluffBin, config.KeySqlfluffConfig}
+		config.KeyTablePrefix, config.KeySchemaSuffix, config.KeyDatabaseSuffix, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions}
 	dbtOnly = []string{config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
 		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection}
 )
@@ -210,7 +226,7 @@ func vimKeys(l config.Settings) map[string]string {
 }
 
 func settingsView(sf *settingFlags, root, tool string) web.SettingsView {
-	v := web.SettingsView{Levels: []web.SettingsLevel{}, Warnings: []string{}, Keys: []web.SettingKey{}}
+	v := web.SettingsView{Levels: []web.SettingsLevel{}, Warnings: []string{}, Sections: settingSections, Keys: []web.SettingKey{}}
 	home, _ := os.UserHomeDir()
 	exists := func(path string) bool { _, err := os.Stat(path); return err == nil }
 

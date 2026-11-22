@@ -118,7 +118,7 @@ func TestSettingsApplyLiveAndSayWhatWaits(t *testing.T) {
 
 	var a settingsAnswer
 	getJSON(t, c, ts.URL+"/api/settings", &a)
-	if a.Root != "/work/proj" || len(a.Levels) != 2 || len(a.Pending) != 0 {
+	if a.Root != "/work/proj" || a.Tool != "dataform" || a.Warehouse != "bigquery" || len(a.Levels) != 2 || len(a.Pending) != 0 {
 		t.Fatalf("settings = %+v", a)
 	}
 
@@ -291,7 +291,7 @@ func TestSettingsOutsideAProject(t *testing.T) {
 	c.Jar = jar
 	var a settingsAnswer
 	getJSON(t, c, ts.URL+"/api/settings", &a)
-	if a.Root != "" || len(a.Levels) != 1 || a.Levels[0].Level != "user" {
+	if a.Root != "" || a.Tool != "" || a.Warehouse != "" || len(a.Levels) != 1 || a.Levels[0].Level != "user" {
 		t.Fatalf("outside a project: %+v", a)
 	}
 	postJSON(t, c, ts.URL+"/api/settings", map[string]any{"level": "user", "key": config.KeySourceAutosaveMs, "value": "1500"}, nil)

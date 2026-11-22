@@ -101,10 +101,68 @@ func TestWebSettings(t *testing.T) {
 	if v := settingsView(sf, root, "dataform"); v.Levels[1].Error == "" {
 		t.Error("a broken project file has no error")
 	}
-	// A dbt project lists dbt's keys, not Dataform's.
-	for _, k := range settingsView(sf, "", "dbt").Keys {
+	// A dbt project lists dbt's keys, not Dataform's, and keeps sqlfluff for Scratch.
+	dbtView := settingsView(sf, "", "dbt")
+	for _, k := range dbtView.Keys {
 		if k.Key == config.KeyRunMode {
 			t.Error("a dbt project lists runMode")
+		}
+	}
+	keyOf(t, dbtView, config.KeySqlfluffBin)
+	keyOf(t, dbtView, config.KeySqlfluffConfig)
+}
+
+func TestWebSettingsSections(t *testing.T) {
+	seen := map[string]bool{}
+	used := map[string]bool{}
+	for _, s := range settingSections {
+		if s.Name == "" || s.Group == "" {
+			t.Errorf("section missing name or group: %+v", s)
+		}
+		if seen[s.Name] {
+			t.Errorf("duplicate section %q", s.Name)
+		}
+		seen[s.Name] = true
+	}
+	for _, k := range config.Keys {
+		m, ok := settingMetas[k]
+		if !ok {
+			t.Errorf("config key %q missing from settingMetas", k)
+			continue
+		}
+		if !seen[m.section] {
+			t.Errorf("settingMetas[%q].section = %q, not in settingSections", k, m.section)
+		}
+		used[m.section] = true
+	}
+	for _, s := range settingSections {
+		if !used[s.Name] {
+			t.Errorf("section %q has no keys in settingMetas", s.Name)
+		}
+	}
+	want := map[string]string{
+		config.KeyDataformBin:         "Dataform",
+		config.KeyProdCompilerOptions: "Dataform",
+		config.KeyDbtBin:              "dbt",
+		config.KeyDbtProdTarget:       "dbt",
+		config.KeyUSDPerTiB:           "BigQuery",
+		config.KeyScratchWarnGB:       "BigQuery",
+		config.KeyDeferToProd:         "BigQuery",
+		config.KeyDatabricksWarehouse: "Databricks",
+		config.KeySnowflakeWarehouse:  "Snowflake",
+		config.KeyDefaultBranch:       "Git",
+		config.KeyDiffStyle:           "Git",
+		config.KeyForgePollSeconds:    "Git",
+		config.KeySourceAutosaveMs:    "Editor",
+		config.KeySqlfluffBin:         "Editor",
+		config.KeyWebTheme:            "Appearance",
+		config.KeyEditor:              "App",
+		config.KeyWebBrowser:          "App",
+		config.KeyVimMode:             "Vim",
+	}
+	for k, sec := range want {
+		if got := settingMetas[k].section; got != sec {
+			t.Errorf("settingMetas[%q].section = %q, want %q", k, got, sec)
 		}
 	}
 }
