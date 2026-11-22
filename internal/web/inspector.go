@@ -137,6 +137,8 @@ func (p *projectState) inspectorViewOf(model project.ActionID, depth int) (inspe
 	}
 	v.Key, v.Name = frontend.PresetKey(a), a.Target.Name
 	if st, ok := p.sess.Inspector[v.Key]; ok {
+		st.Rows = maps.Clone(st.Rows)
+		st.Added = slices.Clone(st.Added)
 		v.State = &st
 		if depth <= 0 {
 			depth = st.Depth
@@ -192,8 +194,26 @@ func (p *projectState) inspectorViewOf(model project.ActionID, depth int) (inspe
 		in.From = p.dialectLocked().tableID(in.Read)
 		v.Nodes = append(v.Nodes, in)
 	}
-	maps.Copy(v.Runs, p.insp.byModel[v.Key])
+	v.Runs = cloneInspectorRunsLocked(p.insp.byModel[v.Key])
 	return v, starts
+}
+
+// cloneInspectorRunsLocked snapshots each run by value so JSON encoding
+// after unlocking p.mu cannot race with runInspected updating its fields.
+func cloneInspectorRunsLocked(runs map[string]*inspectorRun) map[string]*inspectorRun {
+	out := make(map[string]*inspectorRun, len(runs))
+	for k, r := range runs {
+		if r == nil {
+			continue
+		}
+		cp := *r
+		if r.Job != nil {
+			job := *r.Job
+			cp.Job = &job
+		}
+		out[k] = &cp
+	}
+	return out
 }
 
 // inspectorReadsLocked is where each node but the model is read from
@@ -442,7 +462,7 @@ func (p *projectState) inspectorRun(w http.ResponseWriter, r *http.Request) {
 		model, key := req.Key, row.Key
 		start = append(start, func() { p.runInspected(ctx, def, model, key, run) })
 	}
-	v := maps.Clone(runs)
+	v := cloneInspectorRunsLocked(runs)
 	p.mu.Unlock()
 	for _, f := range start {
 		go f()
