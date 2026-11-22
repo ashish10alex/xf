@@ -14,12 +14,16 @@
 import * as cm from './vendor/codemirror.mjs';
 import { get, post, openLink } from './state.js';
 
-// The field is {data, doc, since, asked}: data git's answer, for doc, the
-// text it was asked about; since the edits made after that; asked, while
-// an answer is on its way, the text sent and the edits made since.
+// The field is {data, doc, since, asked, inline}: data git's answer, for
+// doc, the text it was asked about; since the edits made after that;
+// asked, while an answer is on its way, the text sent and the edits made
+// since; inline, whether the inline annotation after the cursor's line
+// shows (the blame data may also be kept for Source Control's summary
+// while inline blame is off).
 export const setBlame = cm.StateEffect.define();
 export const askBlame = cm.StateEffect.define();
-const none = { data: null, doc: null, since: null, asked: null };
+export const setBlameInline = cm.StateEffect.define();
+const none = { data: null, doc: null, since: null, asked: null, inline: true };
 const blameField = cm.StateField.define({
   create: () => none,
   update(v, tr) {
@@ -28,7 +32,8 @@ const blameField = cm.StateField.define({
     }
     for (const e of tr.effects) {
       if (e.is(askBlame)) v = { ...v, asked: { doc: tr.state.doc, since: cm.ChangeSet.empty(tr.state.doc.length) } };
-      if (e.is(setBlame)) v = e.value && v.asked ? { data: e.value, doc: v.asked.doc, since: v.asked.since, asked: null } : none;
+      if (e.is(setBlame)) v = e.value && v.asked ? { data: e.value, doc: v.asked.doc, since: v.asked.since, asked: null, inline: v.inline } : { ...none, inline: v.inline };
+      if (e.is(setBlameInline)) v = { ...v, inline: !!e.value };
     }
     return v;
   },
@@ -212,8 +217,10 @@ function fillHost(v, sha, shaRow, mrRow) {
 }
 
 // The annotation goes after the main cursor's line, while nothing is
-// selected across lines.
+// selected across lines and inline blame is on.
 function decorationsOf(state) {
+  const b = state.field(blameField, false);
+  if (!b || !b.inline) return cm.Decoration.none;
   const sel = state.selection.main;
   const line = state.doc.lineAt(sel.head);
   if (!sel.empty && state.doc.lineAt(sel.anchor).number !== line.number) return cm.Decoration.none;
@@ -224,34 +231,130 @@ function decorationsOf(state) {
 
 const blameDecorations = cm.StateField.define({
   create: (state) => decorationsOf(state),
-  update: (deco, tr) => (tr.docChanged || tr.selection || tr.effects.some((e) => e.is(setBlame)) ? decorationsOf(tr.state) : deco),
+  update: (deco, tr) => (tr.docChanged || tr.selection || tr.effects.some((e) => e.is(setBlame) || e.is(setBlameInline)) ? decorationsOf(tr.state) : deco),
   provide: (f) => cm.EditorView.decorations.from(f),
 });
 
-// inlineBlame is the source editor's extension.
-export const inlineBlame = () => [blameField, blameDecorations];
+// inlineBlame is the source editor's extension; show defaults to true.
+export const inlineBlame = (show = true) => [blameField.init(() => ({ ...none, inline: !!show })), blameDecorations];
+
+// summarizeBlame groups a file's lines by who last changed each line,
+// merging contiguous lines by the same author into 1-based ranges.
+// Uncommitted lines come first, then people by their most recent change.
+export function summarizeBlame(state) {
+  const b = state.field(blameField, false);
+  if (!b || !b.data) return null;
+  const byId = new Map();
+  let totalLines = 0;
+  let prevId = '', prevLine = 0, curRange = null;
+  for (let n = 1; n <= state.doc.lines; n++) {
+    const c = blameAt(state, state.doc.line(n));
+    if (!c) { prevId = ''; curRange = null; continue; }
+    totalLines++;
+    const fresh = !!c.fresh;
+    const id = fresh ? 'fresh' : (c.mail ? 'm:' + c.mail.toLowerCase() : 'a:' + (c.author || '').toLowerCase());
+    let person = byId.get(id);
+    if (!person) {
+      person = {
+        id,
+        author: fresh ? 'Uncommitted' : (c.author || c.mail || 'Unknown'),
+        mail: fresh ? '' : (c.mail || ''),
+        you: fresh ? true : !!c.you,
+        fresh,
+        lines: 0,
+        time: 0,
+        summary: fresh ? 'Uncommitted changes' : '',
+        sha: '',
+        ranges: [],
+      };
+      byId.set(id, person);
+    }
+    person.lines++;
+    if (!fresh && c.time >= person.time) {
+      person.time = c.time;
+      person.summary = c.summary || '';
+      person.sha = c.sha || '';
+      if (c.author) person.author = c.author;
+    }
+    if (id === prevId && n === prevLine + 1 && curRange) {
+      curRange.end = n;
+      curRange.lines++;
+      if (!fresh && c.time >= curRange.time) {
+        curRange.time = c.time;
+        curRange.summary = c.summary || '';
+        curRange.sha = c.sha || '';
+      }
+    } else {
+      curRange = {
+        start: n,
+        end: n,
+        lines: 1,
+        time: fresh ? 0 : c.time,
+        summary: fresh ? 'Uncommitted changes' : (c.summary || ''),
+        sha: fresh ? '' : (c.sha || ''),
+      };
+      person.ranges.push(curRange);
+    }
+    prevId = id;
+    prevLine = n;
+  }
+  const people = [...byId.values()].sort((a, b) => (
+    (a.fresh !== b.fresh ? (a.fresh ? -1 : 1) : 0)
+    || b.time - a.time
+    || b.lines - a.lines
+    || a.ranges[0].start - b.ranges[0].start
+  ));
+  return { totalLines, people };
+}
+
+export const summaryOf = (view) => summarizeBlame(view.state);
 
 // ---- asking git ----
 
 let seq = 0;
-let blamed = ''; // the file the blame shown is of
+let blamed = '';   // the file the blame shown is of
+let inFlight = ''; // the file whose blame request is currently running
 
 // refreshBlame asks for file's blame as view has it, when on and the file
 // is in git (base, the file's index version, is '' for a file git doesn't
 // track and null outside git); else it clears what is shown.
-export function refreshBlame(view, file, base, on) {
-  const n = ++seq;
+export function refreshBlame(view, file, base, on, onUpdate, opts = {}) {
+  const emit = (info) => { if (onUpdate) onUpdate(info); };
   if (!on || !file || base == null || base === '') {
+    seq++;
     blamed = '';
+    inFlight = '';
     if (view.state.field(blameField).data) view.dispatch({ effects: setBlame.of(null) });
+    emit({ file: file || '', state: !file ? 'none' : base == null ? 'notgit' : base === '' ? 'untracked' : 'off', summary: null });
     return;
   }
+  if (!opts.force && file === blamed) {
+    if (view.state.field(blameField).data) {
+      emit({ file, state: 'ok', summary: summarizeBlame(view.state) });
+      return;
+    }
+    if (inFlight === file) return;
+  }
+  const n = ++seq;
   // Another file's blame goes at once; the same file's stays until the
   // answer, so a reload doesn't flicker.
-  view.dispatch({ effects: file === blamed ? askBlame.of(null) : [setBlame.of(null), askBlame.of(null)] });
+  const same = file === blamed;
+  view.dispatch({ effects: same ? askBlame.of(null) : [setBlame.of(null), askBlame.of(null)] });
   blamed = file;
+  inFlight = file;
+  emit({ file, state: 'loading', summary: same ? summarizeBlame(view.state) : null });
   post('/api/source/blame', { file, text: view.state.doc.toString() }).then(
-    (b) => { if (n === seq) view.dispatch({ effects: setBlame.of(b) }); },
-    () => { if (n === seq) view.dispatch({ effects: setBlame.of(null) }); },
+    (b) => {
+      if (n !== seq) return;
+      inFlight = '';
+      view.dispatch({ effects: setBlame.of(b) });
+      emit({ file, state: 'ok', summary: summarizeBlame(view.state) });
+    },
+    (e) => {
+      if (n !== seq) return;
+      inFlight = '';
+      view.dispatch({ effects: setBlame.of(null) });
+      emit({ file, state: 'error', error: (e && e.message) || 'could not read blame', summary: null });
+    },
   );
 }

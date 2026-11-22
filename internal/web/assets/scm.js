@@ -25,9 +25,12 @@ export const G = {
   busy: '',        // the git command running, as the header says it
   failed: '',      // the last command's error, red in the header
   cursor: '',      // the row the keys act on, by key
-  open: { mr: true, conflicts: true, staged: true, changes: true, stashes: false, commits: true },
+  open: { mr: true, conflicts: true, staged: true, changes: true, stashes: false, blame: true, commits: true },
   filter: '',
   filtering: false,
+  blame: { file: '', state: 'none', error: '', summary: null },
+  blameLens: '',
+  blameActive: null,
   commits: [], more: false, logLoaded: false, logHead: '',
   commitFiles: {}, // sha → {files, parent}
   stashFiles: {},  // index → files
@@ -57,8 +60,9 @@ function restore() {
   if (loadedFor === root()) return;
   loadedFor = root();
   Object.assign(G, { loaded: false, error: '', st: null, busy: '', failed: '', cursor: '', filter: '', filtering: false,
+    blame: { file: '', state: 'none', error: '', summary: null }, blameLens: '', blameActive: null,
     commits: [], more: false, logLoaded: false, logHead: '', commitFiles: {}, stashFiles: {}, prompt: null, amend: false, output: null, diff: null });
-  G.open = { mr: true, conflicts: true, staged: true, changes: true, stashes: false, commits: true };
+  G.open = { mr: true, conflicts: true, staged: true, changes: true, stashes: false, blame: true, commits: true };
   draft = '';
   try {
     const v = JSON.parse(localStorage.getItem(storeKey()) || '{}');
@@ -70,12 +74,12 @@ function restore() {
 
 // openChanges opens the Changes section: it opens whenever Source
 // Control shows, so closing it lasts only while the view stays.
-export function openChanges() { restore(); G.open.changes = true; }
+export function openChanges() { restore(); G.open.changes = true; if (G.open.blame && hooks.blameRefresh) hooks.blameRefresh(false); }
 
 function keep() {
   try {
     const open = {};
-    for (const k of ['mr', 'conflicts', 'staged', 'stashes', 'commits']) open[k] = !!G.open[k];
+    for (const k of ['mr', 'conflicts', 'staged', 'stashes', 'blame', 'commits']) open[k] = !!G.open[k];
     localStorage.setItem(storeKey(), JSON.stringify({ open, draft }));
   } catch { /* no storage */ }
 }
@@ -209,6 +213,84 @@ export function commitSubject(s) {
   return { merge: false, text: s };
 }
 
+// formatRange formats a 1-based line range as L42 or L1–29.
+export function formatRange(start, end) {
+  return start === end ? 'L' + start : 'L' + start + '–' + end;
+}
+
+// shortAge is how long ago secs (Unix seconds) was, in compact form.
+export function shortAge(secs, now = Date.now()) {
+  if (!secs) return '';
+  const s = Math.max(0, Math.round(now / 1000 - secs));
+  const units = [[365 * 86400, 'y'], [30 * 86400, 'mo'], [7 * 86400, 'w'], [86400, 'd'], [3600, 'h'], [60, 'm']];
+  for (const [n, u] of units) {
+    const k = Math.floor(s / n);
+    if (k >= 1) return k + u;
+  }
+  return 'now';
+}
+
+// blameShortName is a compact author label for the file-order range feed.
+export function blameShortName(p) {
+  if (p.fresh) return 'Uncomm.';
+  if (p.you) return 'You';
+  return String(p.author || '').trim().split(/\s+/)[0] || p.author || '';
+}
+
+const blamePalette = ['var(--purple)', 'var(--blue)', 'var(--pink)', 'var(--red)', 'var(--focus)', 'var(--amber)'];
+
+function blameColorMap(people) {
+  const map = new Map();
+  let i = 0;
+  for (const p of people) {
+    if (p.fresh) map.set(p.id, 'var(--amber)');
+    else if (p.you) map.set(p.id, 'var(--green)');
+    else map.set(p.id, blamePalette[i++ % blamePalette.length]);
+  }
+  return map;
+}
+
+// blameSegments returns every contiguous blame range in file order
+// (start ascending) with its author and theme color, for the minimap.
+export function blameSegments() {
+  const file = SRC.shown && SRC.file ? SRC.file : '';
+  const bs = file && G.blame.file === file ? G.blame : null;
+  const sum = bs && bs.state === 'ok' ? bs.summary : null;
+  if (!sum || !sum.people || !sum.people.length) return { totalLines: 0, segments: [] };
+  const colors = blameColorMap(sum.people);
+  const segments = [];
+  for (const p of sum.people) {
+    const color = colors.get(p.id);
+    for (const rg of p.ranges) {
+      segments.push({ key: 'bl:r:' + rg.start, kind: 'blamerange', file, person: p, range: rg, color });
+    }
+  }
+  segments.sort((a, b) => a.range.start - b.range.start);
+  return { totalLines: sum.totalLines, segments };
+}
+
+function matchesBlameSeg(seg) {
+  if (!G.filter) return true;
+  const words = G.filter.toLowerCase().split(/\s+/).filter(Boolean);
+  const p = seg.person, rg = seg.range;
+  const hay = [p.fresh ? 'uncommitted' : '', p.you ? 'you' : '', p.author, p.mail, formatRange(rg.start, rg.end), rg.summary].join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+function matchesBlame(p) {
+  if (!G.filter) return true;
+  const words = G.filter.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = [
+    p.fresh ? 'uncommitted' : '',
+    p.you ? 'you' : '',
+    p.author,
+    p.mail,
+    p.summary,
+    ...p.ranges.map((rg) => formatRange(rg.start, rg.end) + ' ' + rg.summary),
+  ].join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
 // ---- the rows ----
 
 // A row is {key, kind, ...}: a section's header ('section'), a changed
@@ -260,6 +342,55 @@ export function rows() {
         const fs = G.stashFiles[s.index];
         if (!fs) out.push({ key: k + ':…', kind: 'note', text: 'listing…' });
         else for (const f of fs.filter(matches)) out.push(fileRow(k + ':' + f.path, 'sfile', f, { stash: s.index }));
+      }
+    }
+  }
+  const blameFile = SRC.shown && SRC.file ? SRC.file : '';
+  if (blameFile) {
+    const bs = G.blame.file === blameFile ? G.blame : null;
+    const sum = bs && bs.state === 'ok' ? bs.summary : null;
+    const people = sum ? sum.people : null;
+    const totalLines = sum ? sum.totalLines : 0;
+    out.push({ key: 's:blame', kind: 'section', id: 'blame', label: 'Blame', sub: base(blameFile), file: blameFile, meta: totalLines ? totalLines + 'L' : '', count: -1, open: !!G.open.blame });
+    if (G.open.blame) {
+      const baseText = SRC.view && SRC.view.file === blameFile ? SRC.view.base : undefined;
+      if (!bs || bs.state === 'loading' || bs.state === 'off' || bs.state === 'none') {
+        if (baseText === '') out.push({ key: 'bl:note', kind: 'note', text: 'untracked file' });
+        else if (baseText === null) out.push({ key: 'bl:note', kind: 'note', text: 'not in git' });
+        else out.push({ key: 'bl:…', kind: 'note', text: 'reading blame…' });
+      } else if (bs.state === 'untracked') {
+        out.push({ key: 'bl:note', kind: 'note', text: 'untracked file' });
+      } else if (bs.state === 'notgit') {
+        out.push({ key: 'bl:note', kind: 'note', text: 'not in git' });
+      } else if (bs.state === 'error') {
+        out.push({ key: 'bl:note', kind: 'note', text: bs.error || 'could not read blame' });
+      } else if (people && !people.length) {
+        out.push({ key: 'bl:note', kind: 'note', text: 'empty file' });
+      } else if (people) {
+        const colors = blameColorMap(people);
+        const lens = people.some((p) => p.id === G.blameLens) ? G.blameLens : '';
+        const shownPeople = people.filter(matchesBlame);
+        for (const p of shownPeople) {
+          const pct = totalLines ? Math.round((p.lines / totalLines) * 100) : 0;
+          out.push({
+            key: 'bl:' + p.id,
+            kind: 'blame',
+            file: blameFile,
+            person: p,
+            range: p.ranges[0],
+            color: colors.get(p.id),
+            pct,
+            active: lens === p.id,
+            dimmed: !!lens && lens !== p.id,
+            solo: people.length === 1 && p.ranges.length === 1,
+          });
+        }
+        const { segments } = blameSegments();
+        for (const seg of segments) {
+          if (lens && seg.person.id !== lens) continue;
+          if (!matchesBlameSeg(seg)) continue;
+          out.push({ ...seg, lensed: !!lens });
+        }
       }
     }
   }
@@ -318,11 +449,17 @@ function move(n) {
   G.cursor = rs[i].key;
 }
 
-// toggle opens or closes a section, a stash or a commit, listing a
-// stash's or a commit's files the first time.
+// toggle opens or closes a section, a stash, a commit or a multi-range
+// blame author, listing a stash's or a commit's files the first time.
 export function toggle(r, want) {
   const open = want === undefined ? !r.open : want;
-  if (r.kind === 'section') { G.open[r.id] = open; keep(); if (open && r.id === 'commits' && !G.logLoaded) loadLog(false); return; }
+  if (r.kind === 'section') {
+    G.open[r.id] = open;
+    keep();
+    if (open && r.id === 'commits' && !G.logLoaded) loadLog(false);
+    if (r.id === 'blame' && hooks.blameRefresh) hooks.blameRefresh(false);
+    return;
+  }
   G.open[r.key] = open;
   if (!open) return;
   if (r.kind === 'commit' && !G.commitFiles[r.sha]) {
@@ -360,9 +497,40 @@ function switchRegion() {
 export function focusSCM() {
   restore();
   if (!G.loaded) refresh();
+  if (G.open.blame && hooks.blameRefresh) hooks.blameRefresh(false);
   if (!G.cursor) G.cursor = firstRow();
   S.zoomed = false;
   setFocus('tree');
+}
+
+// toggleBlameLens filters the blame minimap and range feed to author id,
+// or clears the filter when id is already active.
+export function toggleBlameLens(id) {
+  G.blameLens = G.blameLens === id ? '' : id;
+  redraw();
+}
+
+export function clearBlameLens() {
+  if (!G.blameLens) return;
+  G.blameLens = '';
+  redraw();
+}
+
+// openBlameRange jumps the source editor to the start of r's line range,
+// focuses it, and turns inline git blame on.
+export function openBlameRange(r) {
+  if (!r || !r.range || !r.file) return;
+  G.cursor = r.key || ('bl:r:' + r.range.start);
+  G.blameActive = { file: r.file, start: r.range.start, end: r.range.end };
+  if (G.diff) {
+    G.diff = null;
+    redraw();
+  }
+  if (hooks.enableBlame) hooks.enableBlame();
+  const action = S.view && S.view.file === r.file ? S.sel : '';
+  if (window.matchMedia && window.matchMedia('(max-width: 760px)').matches) T.shown = false;
+  if (hooks.goToLine) hooks.goToLine(r.file, action, r.range.start - 1, 0);
+  redraw();
 }
 
 // ---- git commands ----
@@ -413,6 +581,7 @@ function stageToggle(r) {
     return;
   }
   if (r.kind === 'stash') { applyStash(r, false); return; }
+  if (r.kind === 'blame') { if (r.solo) openBlameRange(r); else toggleBlameLens(r.person.id); return; }
   if (r.kind !== 'file') return;
   const next = nextKey(r);
   if (r.section === 'staged') act('/api/scm/unstage', { paths: [r.path] });
@@ -782,15 +951,33 @@ export function key(k) {
     case 'enter':
       if (!r) return true;
       if (r.kind === 'section' || r.kind === 'stash' || r.kind === 'commit') toggle(r);
+      else if (r.kind === 'blame') { if (r.solo) openBlameRange(r); else toggleBlameLens(r.person.id); }
+      else if (r.kind === 'blamerange') openBlameRange(r);
       else if (r.kind === 'more') loadLog(true);
       else openDiff(r);
       return true;
     case 'l': case 'right':
-      if (r && (r.kind === 'section' || r.kind === 'stash' || r.kind === 'commit')) { if (r.open) move(1); else toggle(r, true); } else if (r) openDiff(r);
+      if (r && (r.kind === 'section' || r.kind === 'stash' || r.kind === 'commit')) { if (r.open) move(1); else toggle(r, true); }
+      else if (r && r.kind === 'blame') {
+        if (r.solo) openBlameRange(r);
+        else {
+          G.blameLens = r.person.id;
+          const first = rows().find((x) => x.kind === 'blamerange');
+          if (first) G.cursor = first.key;
+        }
+      } else if (r && r.kind === 'blamerange') openBlameRange(r);
+      else if (r) openDiff(r);
       return true;
     case 'h': case 'left': {
       if (!r) return true;
       if ((r.kind === 'section' || r.kind === 'stash' || r.kind === 'commit') && r.open) { toggle(r, false); return true; }
+      if (r.kind === 'blame' && G.blameLens === r.person.id) { G.blameLens = ''; return true; }
+      if (r.kind === 'blamerange') {
+        const rs = rows();
+        const owner = rs.find((x) => x.key === 'bl:' + r.person.id) || rs.find((x) => x.key === 's:blame');
+        if (owner) G.cursor = owner.key;
+        return true;
+      }
       const rs = rows();
       const i = rs.findIndex((x) => x.key === r.key);
       const parent = rs.slice(0, i).reverse().find((x) => (r.kind === 'sfile' ? x.kind === 'stash' : r.kind === 'cfile' ? x.kind === 'commit' : x.kind === 'section'));
@@ -819,13 +1006,15 @@ export function key(k) {
       return true;
     case 'y':
       if (r && (r.kind === 'commit' || r.kind === 'cfile')) copy(r.sha, 'copied ' + r.sha.slice(0, 7));
+      else if (r && (r.kind === 'blame' || r.kind === 'blamerange') && r.range && r.range.sha) copy(r.range.sha, 'copied ' + r.range.sha.slice(0, 7));
       else say('y copies the SHA of the commit under the cursor');
       return true;
-    case 'R': refresh(); say('reading git\'s status again'); return true;
+    case 'R': refresh(); if (G.open.blame && hooks.blameRefresh) hooks.blameRefresh(true); say('reading git\'s status again'); return true;
     case 'tab': case 'shift+tab': return switchRegion();
     case '/': G.filtering = true; return true;
     case 'esc':
       if (G.filter) { G.filter = ''; return true; }
+      if (G.blameLens) { G.blameLens = ''; return true; }
       if (G.diff) { endDiff(); return true; }
       return false;
   }
@@ -834,7 +1023,7 @@ export function key(k) {
 
 export function setFilter(q) {
   G.filter = q;
-  const first = rows().find((r) => r.kind === 'file' || r.kind === 'sfile' || r.kind === 'cfile');
+  const first = rows().find((r) => r.kind === 'file' || r.kind === 'sfile' || r.kind === 'cfile' || r.kind === 'blame' || r.kind === 'blamerange');
   if (first) G.cursor = first.key;
   redraw();
 }
@@ -847,8 +1036,10 @@ export function endFilter(accept) {
 
 export function clickRow(r) {
   G.cursor = r.key;
+  if (fg.isRow(r)) { setFocus('tree'); fg.act(r); redraw(); return; }
+  if (r.kind === 'blamerange' || (r.kind === 'blame' && r.solo)) { openBlameRange(r); return; }
   setFocus('tree');
-  if (fg.isRow(r)) { fg.act(r); redraw(); return; }
+  if (r.kind === 'blame') { toggleBlameLens(r.person.id); return; }
   if (r.kind === 'section' || r.kind === 'stash' || r.kind === 'commit') toggle(r);
   else if (r.kind === 'more') loadLog(true);
   else if (r.kind !== 'note') openDiff(r);
@@ -922,6 +1113,23 @@ hooks.scmEvent = (ev) => {
 };
 hooks.stageText = stageText;
 hooks.scmCount = count;
+hooks.blameSummaryWanted = () => { restore(); return !!(hooks.scmShown ? hooks.scmShown() : shown()) && !!G.open.blame; };
+hooks.blameUpdated = (info) => {
+  const file = (info && info.file) || '';
+  if (file !== G.blame.file) {
+    G.blameLens = '';
+    G.blameActive = null;
+  }
+  const summary = (info && info.summary) || null;
+  if (G.blameLens && (!summary || !summary.people.some((p) => p.id === G.blameLens))) G.blameLens = '';
+  G.blame = {
+    file,
+    state: (info && info.state) || 'none',
+    error: (info && info.error) || '',
+    summary,
+  };
+  redraw();
+};
 const filesChanged = hooks.filesChanged;
 hooks.filesChanged = () => { if (filesChanged) filesChanged(); refresh(); };
 

@@ -4,7 +4,7 @@
 // below a sash: git's part keeps the top of the pane as it was.
 
 import { h } from './vendor/preact.mjs';
-import { useLayoutEffect, useRef } from './vendor/hooks.mjs';
+import { useLayoutEffect, useRef, useState } from './vendor/hooks.mjs';
 import htm from './vendor/htm.mjs';
 import * as cm from './vendor/codemirror.mjs';
 import { S, redraw, setFocus, hooks } from './state.js';
@@ -75,8 +75,10 @@ function SectionRow({ r, cur, focused }) {
       ref=${(el) => { if (el && cur) nearest(el); }}>
     <span class="tree-caret">${r.open ? '▾' : '▸'}</span>
     <span class="scm-label">${r.label}</span>
+    ${r.sub && html`<span class="scm-section-sub" title=${r.file || r.sub}>${r.sub}</span>`}
     <span class="spacer"></span>
     <span class="scm-buttons">${buttons}</span>
+    ${r.meta && html`<span class="scm-section-meta">${r.meta}</span>`}
     ${r.count >= 0 && html`<span class="scm-count">${r.count}</span>`}
   </div>`;
 }
@@ -113,6 +115,102 @@ function CommitRow({ r, cur, focused }) {
   </div>`;
 }
 
+function blameWho(p) {
+  if (p.fresh) return 'Uncommitted';
+  return p.you ? 'You' : p.author;
+}
+
+function rangeWords(rg) {
+  const span = rg.start === rg.end ? 'line ' + rg.start : 'lines ' + rg.start + '–' + rg.end;
+  return span + ' (' + rg.lines + ' line' + (rg.lines === 1 ? '' : 's') + ')';
+}
+
+function BlameAuthorRow({ r, cur, focused }) {
+  const p = r.person;
+  const cls = 'scm-row scm-blame-author' + (p.fresh ? ' blame-fresh' : '') + (r.active ? ' lens-on' : '') + (r.dimmed ? ' lens-dim' : '') + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '');
+  const who = p.fresh ? 'Uncommitted changes' : (p.you ? p.author + ' (you)' : p.author) + (p.mail ? ' <' + p.mail + '>' : '');
+  const age = p.fresh ? '' : sc.shortAge(p.time);
+  const tip = [
+    who,
+    p.lines + ' line' + (p.lines === 1 ? '' : 's') + ' (' + r.pct + '%) in ' + p.ranges.length + ' range' + (p.ranges.length === 1 ? '' : 's'),
+    age,
+    r.solo ? 'click to jump and enable inline blame' : (r.active ? 'click to show all contributors' : 'click to filter ranges to ' + blameWho(p)),
+  ].filter(Boolean).join(' · ');
+  return html`<div class=${cls} title=${tip} style=${'--bl-c:' + r.color}
+      onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.clickRow(r); }}
+      ref=${(el) => { if (el && cur) nearest(el); }}>
+    <span class="scm-blame-fill" style=${'width:' + Math.max(r.pct, 3) + '%'}></span>
+    <span class="scm-blame-swatch"></span>
+    <span class="scm-name">${blameWho(p)}</span>
+    <span class="scm-blame-x" title=${p.ranges.length + ' range' + (p.ranges.length === 1 ? '' : 's')}>${p.ranges.length}×</span>
+    <span class="scm-blame-pct">${r.pct}%</span>
+  </div>`;
+}
+
+function BlameRangeRow({ r, cur, focused, hovered, active, onHover }) {
+  const p = r.person, rg = r.range;
+  const cls = 'scm-row scm-blame-item' + (p.fresh ? ' blame-fresh' : '') + (active ? ' active' : '') + (hovered ? ' hovered' : '') + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '');
+  const who = p.fresh ? 'Uncommitted changes' : (p.you ? p.author + ' (you)' : p.author);
+  const age = p.fresh ? rg.lines + 'L' : sc.shortAge(rg.time);
+  const tip = [who, rangeWords(rg), !p.fresh && rg.summary, 'click to jump and enable inline blame'].filter(Boolean).join(' · ');
+  const mid = r.lensed ? (!p.fresh && rg.summary ? rg.summary : 'uncommitted') : sc.blameShortName(p);
+  return html`<div class=${cls} title=${tip} style=${'--bl-c:' + r.color}
+      onMouseEnter=${() => onHover(rg.start)}
+      onMouseLeave=${() => onHover(0)}
+      onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.clickRow(r); }}
+      ref=${(el) => { if (el && cur) nearest(el); }}>
+    <span class="scm-blame-tick"></span>
+    <span class="scm-blame-range">${sc.formatRange(rg.start, rg.end)}</span>
+    <span class="scm-blame-msg">${mid}</span>
+    ${age && html`<span class="scm-blame-age">${age}</span>`}
+  </div>`;
+}
+
+// BlameMapPanel renders Option C's vertical file minimap rail beside the
+// scrollable file-order (or author-filtered) range feed.
+function BlameMapPanel({ rangeRows, focused }) {
+  const [hover, setHover] = useState(0);
+  const { totalLines, segments } = sc.blameSegments();
+  if (!segments.length) return null;
+  const lens = G.blameLens;
+  const active = G.blameActive;
+  const isAct = (seg) => !!(active && active.file === seg.file && active.start === seg.range.start && active.end === seg.range.end);
+  const minWeight = Math.max(1, Math.ceil(totalLines / 30));
+  return html`<div class="scm-blame-split">
+    <div class="scm-blame-rail" title=${'file map · L1–' + totalLines}>
+      ${segments.map((seg) => {
+        const rg = seg.range;
+        const dim = !!lens && lens !== seg.person.id;
+        const lit = hover === rg.start || isAct(seg) || G.cursor === seg.key;
+        const tip = [sc.formatRange(rg.start, rg.end), blameWho(seg.person) + ' (' + rg.lines + 'L)', !seg.person.fresh && rg.summary].filter(Boolean).join(' · ');
+        return html`<button class=${'scm-blame-band' + (dim ? ' dim' : '') + (lit ? ' lit' : '')}
+            key=${'m:' + rg.start}
+            title=${tip}
+            style=${`flex-grow:${Math.max(rg.lines, minWeight)};--bl-c:${seg.color}`}
+            onMouseEnter=${() => setHover(rg.start)}
+            onMouseLeave=${() => setHover(0)}
+            onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.openBlameRange(seg); }}></button>`;
+      })}
+    </div>
+    <div class="scm-blame-right">
+      <div class="scm-blame-feed-head">
+        <span>${lens ? 'filtered ranges' : 'top → bottom'}</span>
+        ${lens && html`<button class="scm-blame-all" onMouseDown=${act(sc.clearBlameLens)}>all</button>`}
+      </div>
+      <div class="scm-blame-feed">
+        ${rangeRows.map((r) => html`<${BlameRangeRow}
+            key=${r.key}
+            r=${r}
+            cur=${r.key === G.cursor}
+            focused=${focused}
+            hovered=${hover === r.range.start}
+            active=${isAct(r)}
+            onHover=${setHover} />`)}
+      </div>
+    </div>
+  </div>`;
+}
+
 function Row({ r, cur, focused }) {
   if (r.key === 's:mr') return html`<${DockHead} r=${r} cur=${cur} focused=${focused} />`;
   if (r.key.startsWith('f:')) return html`<${ForgeRow} r=${r} cur=${cur} focused=${focused} onClick=${sc.clickRow} refEl=${(el) => { if (el && cur) nearest(el); }} />`;
@@ -121,6 +219,7 @@ function Row({ r, cur, focused }) {
     case 'file': case 'sfile': case 'cfile': return html`<${FileRow} r=${r} cur=${cur} focused=${focused} />`;
     case 'stash': return html`<${StashRow} r=${r} cur=${cur} focused=${focused} />`;
     case 'commit': return html`<${CommitRow} r=${r} cur=${cur} focused=${focused} />`;
+    case 'blame': return html`<${BlameAuthorRow} r=${r} cur=${cur} focused=${focused} />`;
     case 'more': return html`<div class=${'scm-row more' + (cur ? ' cur' : '') + (cur && focused ? ' focused' : '')} style="padding-left:3.5ch"
         onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); sc.clickRow(r); }} ref=${(el) => { if (el && cur) nearest(el); }}>more…</div>`;
     case 'note': return html`<div class="scm-row note dim" style="padding-left:3.5ch">${r.text}</div>`;
@@ -128,9 +227,9 @@ function Row({ r, cur, focused }) {
   return null;
 }
 
-// nearest scrolls el into view within the list only.
+// nearest scrolls el into view within its nearest scrollable list.
 function nearest(el) {
-  const box = el.closest('.scm-list');
+  const box = el.closest('.scm-blame-feed') || el.closest('.scm-list');
   if (!box) return;
   const e = el.getBoundingClientRect(), b = box.getBoundingClientRect();
   if (e.top < b.top) box.scrollTop -= b.top - e.top;
@@ -451,7 +550,21 @@ export function ScmPane({ header, style }) {
   else {
     const rows = sc.rows();
     const row = (r) => html`<${Row} key=${r.key} r=${r} cur=${r.key === G.cursor} focused=${focused} />`;
-    body = rows.filter((r) => !sc.inDock(r)).map(row);
+    const gitRows = rows.filter((r) => !sc.inDock(r));
+    body = [];
+    for (let i = 0; i < gitRows.length; ) {
+      if (gitRows[i].kind === 'blame') {
+        const group = [];
+        while (i < gitRows.length && gitRows[i].kind === 'blame') group.push(row(gitRows[i++]));
+        body.push(html`<div class="scm-blame-authors" key="bl:authors">${group}</div>`);
+      } else if (gitRows[i].kind === 'blamerange') {
+        const group = [];
+        while (i < gitRows.length && gitRows[i].kind === 'blamerange') group.push(gitRows[i++]);
+        body.push(html`<${BlameMapPanel} key="bl:map" rangeRows=${group} focused=${focused} />`);
+      } else {
+        body.push(row(gitRows[i++]));
+      }
+    }
     const head = rows.find((r) => r.key === 's:mr');
     if (head) {
       dock = head.open

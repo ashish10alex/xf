@@ -64,31 +64,68 @@ hooks.sourceCommands = () => {
 // ---- inline blame (blame.js) ----
 
 // Inline blame is on or off for this browser, off at first. Its module
-// comes once it is on, into blameSlot.
+// comes once inline blame is on or Source Control's blame summary is
+// open, into blameSlot.
 const blameKey = 'xf-web:blame';
 let blameOn = false;
 try { blameOn = localStorage.getItem(blameKey) === '1'; } catch { /* no storage */ }
 const blameSlot = new cm.Compartment();
 let blameMod = null;
+let blameImport = null;
+let blameEditTimer = 0;
+
+const blameWanted = () => blameOn || !!(hooks.blameSummaryWanted && hooks.blameSummaryWanted());
+const notifyBlame = (info) => { if (hooks.blameUpdated) hooks.blameUpdated(info); };
 
 // blameShown asks for the blame of v, the file view shows, or clears it
-// when off.
-function blameShown(view, v) {
-  if (!blameOn && !blameMod) return;
-  const ask = (m) => m.refreshBlame(view, v ? v.file : '', v ? v.base : null, blameOn);
+// when neither inline blame nor the blame summary wants it.
+function blameShown(view, v, force = true) {
+  const want = blameWanted();
+  const file = v ? v.file : '';
+  const base = v ? v.base : null;
+  if (!want || !file || base == null || base === '') {
+    if (blameMod) {
+      view.dispatch({ effects: blameMod.setBlameInline.of(blameOn) });
+      blameMod.refreshBlame(view, file, base, false, notifyBlame);
+    } else {
+      notifyBlame({ file, state: !file ? 'none' : base == null ? 'notgit' : base === '' ? 'untracked' : 'off', summary: null });
+    }
+    return;
+  }
+  const ask = (m) => {
+    view.dispatch({ effects: m.setBlameInline.of(blameOn) });
+    m.refreshBlame(view, file, base, true, notifyBlame, { force });
+  };
   if (blameMod) { ask(blameMod); return; }
-  import('./blame.js').then((m) => {
-    if (!blameMod) { blameMod = m; view.dispatch({ effects: blameSlot.reconfigure(m.inlineBlame()) }); }
-    if (SRC.view === v) ask(m);
-  }, (e) => say(e.message));
+  notifyBlame({ file, state: 'loading', summary: null });
+  if (!blameImport) blameImport = import('./blame.js');
+  blameImport.then((m) => {
+    if (!blameMod) { blameMod = m; view.dispatch({ effects: blameSlot.reconfigure(m.inlineBlame(blameOn)) }); }
+    if (SRC.view === v && blameWanted()) ask(m);
+  }, (e) => {
+    blameImport = null;
+    notifyBlame({ file, state: 'error', error: e.message, summary: null });
+    say(e.message);
+  });
 }
 
 function toggleBlame() {
   blameOn = !blameOn;
   try { localStorage.setItem(blameKey, blameOn ? '1' : '0'); } catch { /* no storage */ }
-  if (made) blameShown(made.view, SRC.view);
+  if (made) blameShown(made.view, SRC.view, false);
   say(blameOn ? 'inline git blame on' : 'inline git blame off');
 }
+
+function enableBlame() {
+  const was = blameOn;
+  blameOn = true;
+  try { localStorage.setItem(blameKey, '1'); } catch { /* no storage */ }
+  if (made) blameShown(made.view, SRC.view, false);
+  if (!was) say('inline git blame on');
+}
+
+hooks.enableBlame = enableBlame;
+hooks.blameRefresh = (force = false) => { if (made) blameShown(made.view, SRC.view, force); };
 
 // sourceEditorDOM is the editor's element, made on first use.
 export function sourceEditorDOM() {
@@ -156,7 +193,18 @@ function mountSourceEditor(parent) {
     onFocus: () => { SRC.editing = true; setFocus('source'); redraw(); },
     onBlur: () => { SRC.editing = false; onLeave(); redraw(); },
     onUpdate: (u) => {
-      if (u.docChanged) onEdit(u);
+      if (u.docChanged) {
+        onEdit(u);
+        if (blameMod && hooks.blameSummaryWanted && hooks.blameSummaryWanted() && SRC.view) {
+          clearTimeout(blameEditTimer);
+          blameEditTimer = setTimeout(() => {
+            if (blameMod && SRC.view && hooks.blameSummaryWanted && hooks.blameSummaryWanted()) {
+              const summary = blameMod.summaryOf(ed.view);
+              if (summary) notifyBlame({ file: SRC.view.file, state: 'ok', summary });
+            }
+          }, 150);
+        }
+      }
       if (hooks.sourceUpdate) hooks.sourceUpdate(u);
       // The declarations table (externals.js) follows the cursor's line.
       if (u.selectionSet && SRC.view && hooks.sourceCursor) {
@@ -167,11 +215,11 @@ function mountSourceEditor(parent) {
     say,
   });
   hooks.sourceShown = (v) => {
-    ed.setLanguage(languageFor(v.lang, dbt()));
-    blameShown(ed.view, v);
+    if (v) ed.setLanguage(languageFor(v.lang, dbt()));
+    blameShown(ed.view, v, true);
   };
   // The file is as it was, but a commit may have changed its blame.
-  hooks.sourceRechecked = () => blameShown(ed.view, SRC.view);
+  hooks.sourceRechecked = () => blameShown(ed.view, SRC.view, true);
   // Autosave waits for the end of insert mode; without vim, for a pause
   // in typing (source.js). Vim switched on afresh is a new adapter.
   const followMode = () => { const adapter = cm.getCM(ed.view); if (adapter) adapter.on('vim-mode-change', (e) => onMode(e.mode)); };

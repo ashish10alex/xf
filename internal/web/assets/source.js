@@ -396,6 +396,7 @@ async function load(file, keepCursor) {
   if (!file) {
     SRC.view = null;
     if (ed) { ed.set(''); ed.setReadOnly(true); setBase(ed.view, null); }
+    if (hooks.sourceShown) hooks.sourceShown(null);
     if (hooks.pythonShown) hooks.pythonShown(null);
     redraw();
     return;
@@ -412,6 +413,7 @@ async function load(file, keepCursor) {
     SRC.view = null;
     SRC.error = e.message;
     if (ed) { ed.set(''); ed.setReadOnly(true); setBase(ed.view, null); }
+    if (hooks.sourceShown) hooks.sourceShown(null);
     if (hooks.pythonShown) hooks.pythonShown(null);
   }
   SRC.loading = false;

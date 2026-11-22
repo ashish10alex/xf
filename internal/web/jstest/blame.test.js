@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EditorState } from '../assets/vendor/codemirror.mjs';
-import { inlineBlame, askBlame, setBlame, blameAt, blameText, ago } from '../assets/blame.js';
+import { inlineBlame, askBlame, setBlame, setBlameInline, blameAt, blameText, summarizeBlame, ago } from '../assets/blame.js';
 
 const answer = {
   lines: ['a1', 'a1', '', 'b2'],
@@ -61,4 +61,49 @@ test('the annotation says who, when and what', () => {
   assert.equal(ago(0, 61 * 1000), '1 minute ago');
   assert.equal(ago(0, 400 * 86400 * 1000), '1 year ago');
   assert.equal(ago(0, 65 * 86400 * 1000), '2 months ago');
+});
+
+test('summarizeBlame groups contiguous lines by person, uncommitted first then most recent', () => {
+  const data = {
+    lines: ['a1', 'a1', 'a2', 'b1', 'b1', '', 'a2', 'a2', 'c1'],
+    commits: {
+      a1: { author: 'Alice', mail: 'Alice@Co', time: 1000, summary: 'initial' },
+      a2: { author: 'Alice Chen', mail: 'alice@co', time: 3000, summary: 'fix filter' },
+      b1: { author: 'Bob', mail: 'bob@co', time: 2000, summary: 'add join' },
+      c1: { author: 'Me', mail: 'me@co', time: 4000, summary: 'footer' },
+    },
+    you: 'me@co',
+  };
+  let s = EditorState.create({ doc: '1\n2\n3\n4\n5\n6\n7\n8\n9\n', extensions: inlineBlame(false) });
+  assert.equal(summarizeBlame(s), null);
+  s = s.update({ effects: askBlame.of(null) }).state;
+  s = s.update({ effects: setBlame.of(data) }).state;
+
+  const sum = summarizeBlame(s);
+  assert.equal(sum.totalLines, 9);
+  assert.deepEqual(sum.people.map((p) => p.author), ['Uncommitted', 'Me', 'Alice Chen', 'Bob']);
+
+  const [fresh, me, alice, bob] = sum.people;
+  assert.equal(fresh.fresh, true);
+  assert.deepEqual(fresh.ranges.map((r) => [r.start, r.end]), [[6, 6]]);
+  assert.equal(me.you, true);
+  assert.deepEqual(me.ranges.map((r) => [r.start, r.end]), [[9, 9]]);
+  assert.equal(alice.lines, 5);
+  assert.equal(alice.summary, 'fix filter');
+  assert.deepEqual(alice.ranges.map((r) => [r.start, r.end, r.summary]), [
+    [1, 3, 'fix filter'],
+    [7, 8, 'fix filter'],
+  ]);
+  assert.deepEqual(bob.ranges.map((r) => [r.start, r.end]), [[4, 5]]);
+
+  // An edit shifts downstream ranges and marks the edited line uncommitted live.
+  s = s.update({ changes: { from: 0, insert: 'top\n' } }).state;
+  const after = summarizeBlame(s);
+  assert.equal(after.totalLines, 10);
+  assert.deepEqual(after.people[0].ranges.map((r) => [r.start, r.end]), [[1, 1], [7, 7]]);
+  assert.deepEqual(after.people.find((p) => p.author === 'Bob').ranges.map((r) => [r.start, r.end]), [[5, 6]]);
+
+  // Toggling inline visibility keeps the blame data for the summary.
+  s = s.update({ effects: setBlameInline.of(true) }).state;
+  assert.equal(summarizeBlame(s).totalLines, 10);
 });
