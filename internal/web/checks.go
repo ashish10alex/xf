@@ -267,7 +267,8 @@ func (p *projectState) impact(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	p.fetchBase(ctx, req.Refresh, req.Token)
 	rep, err := d.ColumnImpact(ctx, engine.ImpactRequest{DefaultBranch: d.DefaultBranch, Head: changesHead(req.API), Refresh: req.Refresh,
-		DevCompilerOptions: d.DevCompilerOptions, ProdCompilerOptions: d.ProdCompilerOptions, DbtProdTarget: d.DbtProdTarget, LineageProjects: d.LineageProjects, Unset: d.Unset},
+		DevCompilerOptions: d.DevCompilerOptions, ProdCompilerOptions: d.ProdCompilerOptions, DbtProdTarget: d.DbtProdTarget, LineageProjects: d.LineageProjects,
+		QueryHistoryProjects: d.QueryHistoryProjects, QueryHistoryDays: d.QueryHistoryDays, QueryHistoryMaxGB: d.QueryHistoryMaxGB, Unset: d.Unset},
 		progress(p, req.Token, func(pr impact.Progress) (string, *costView) { return progressText(pr.Phase, pr.Done, pr.Total), nil }))
 	if err != nil {
 		writeError(w, err)

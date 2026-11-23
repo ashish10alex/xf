@@ -409,6 +409,12 @@ func defaultSetting(key string, l config.Loaded, root string) (value, from strin
 		return "(none)", "default: column impact compares with the default targets"
 	case config.KeyLineageProjects:
 		return "(none)", "default: Dataplex lineage is searched only in each table's own project"
+	case config.KeyQueryHistoryProjects:
+		return "(off)", "default: BigQuery INFORMATION_SCHEMA.JOBS is not scanned so checks stay free"
+	case config.KeyQueryHistoryDays:
+		return "14", "default: 14 days lookback for external SELECT readers"
+	case config.KeyQueryHistoryMaxGB:
+		return "10", "default: 10 GiB scan cap per BigQuery query-history query (0 for unlimited)"
 	case config.KeyDataformLocation:
 		if loc := settingsValue(root, "defaultLocation"); loc != "" {
 			return loc, dataform.SettingsFile + " (defaultLocation)"

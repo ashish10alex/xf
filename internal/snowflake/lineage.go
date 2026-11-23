@@ -2,8 +2,10 @@ package snowflake
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,8 +26,9 @@ import (
 
 const (
 	// lineageDays is how far back ACCESS_HISTORY is read.
-	lineageDays     = 30
-	maxLineageCalls = 4
+	lineageDays             = 30
+	maxLineageCalls         = 4
+	maxExtConsumersPerTable = 100
 )
 
 type tableLineage struct {
@@ -37,6 +40,15 @@ type tableLineage struct {
 	// tableReaders are all downstream tables/views from ACCESS_HISTORY and
 	// OBJECT_DEPENDENCIES.
 	tableReaders []string
+	// extByCol maps lowercased source column name -> SELECT-only external
+	// consumer links confirmed by ACCESS_HISTORY.DIRECT_OBJECTS_ACCESSED.columns.
+	extByCol map[string][]lineage.ColumnLink
+	// extUntracked holds SELECT-only external consumers for which ACCESS_HISTORY
+	// recorded a table access without column detail (TableOnly).
+	extUntracked []lineage.ColumnLink
+	// extTable holds every SELECT-only external consumer of this table (for
+	// deleted or renamed tables).
+	extTable []lineage.ColumnLink
 	// partialErr is set when one of ACCESS_HISTORY or OBJECT_DEPENDENCIES
 	// failed while the other succeeded, so callers surface both the known
 	// readers and the warning that lineage is incomplete.
@@ -58,11 +70,53 @@ type Readers struct {
 	// byUpper maps UPPER(actionID) -> canonical ActionID in graph so
 	// Snowflake's uppercase ACCOUNT_USAGE names line up with dbt's casing.
 	byUpper map[string]string
+	extDays int
 	sem     chan struct{}
 	used    atomic.Int64
 
-	mu    sync.Mutex
-	calls map[string]*lineageCall
+	mu       sync.Mutex
+	calls    map[string]*lineageCall
+	warnings []string
+	warnSeen map[string]bool
+}
+
+// WithExternalReaders enables querying SELECT-only external/BI consumers from
+// Snowflake ACCESS_HISTORY (enriched with QUERY_HISTORY tags/roles) over the
+// last days (clamped to [1, lineage.MaxJobHistoryDays]).
+func (r *Readers) WithExternalReaders(days int) *Readers {
+	if days <= 0 {
+		days = lineage.DefaultJobHistoryDays
+	}
+	if days > lineage.MaxJobHistoryDays {
+		days = lineage.MaxJobHistoryDays
+	}
+	r.extDays = days
+	return r
+}
+
+// Warnings returns report-level warnings from optional external-consumer
+// enrichment (e.g. QUERY_HISTORY denied or row cap hit) without turning clean
+// columns into unknown severity.
+func (r *Readers) Warnings() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.warnings)
+}
+
+func (r *Readers) addWarning(msg string) {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.warnSeen == nil {
+		r.warnSeen = map[string]bool{}
+	}
+	if !r.warnSeen[msg] {
+		r.warnSeen[msg] = true
+		r.warnings = append(r.warnings, msg)
+	}
 }
 
 // Used reports whether Readers ran any lineage query on the virtual warehouse.
@@ -159,7 +213,7 @@ func (r *Readers) Preload(ctx context.Context, tables []string) {
 		if batchErr != nil {
 			lc.err = batchErr
 		} else if lin := results[key]; lin != nil {
-			if lin.partialErr != nil && len(lin.tableReaders) == 0 {
+			if lin.partialErr != nil && len(lin.tableReaders) == 0 && len(lin.extTable) == 0 {
 				lc.err = lin.partialErr
 			} else {
 				lc.lin = lin
@@ -182,6 +236,7 @@ func emptyLineage() *tableLineage {
 	return &tableLineage{
 		byCol:         map[string][]ColumnRef{},
 		trackedTables: map[string]bool{},
+		extByCol:      map[string][]lineage.ColumnLink{},
 	}
 }
 
@@ -210,7 +265,7 @@ func (r *Readers) load(ctx context.Context, table string) (*tableLineage, error)
 	})
 	if lc.err == nil {
 		if lin := results[key]; lin != nil {
-			if lin.partialErr != nil && len(lin.tableReaders) == 0 {
+			if lin.partialErr != nil && len(lin.tableReaders) == 0 && len(lin.extTable) == 0 {
 				lc.err = lin.partialErr
 			} else {
 				lc.lin = lin
@@ -402,6 +457,14 @@ WHERE %s`, strings.Join(depPredicates, "\n   OR "))
 		}
 	}
 
+	// 3. Optional batched SELECT-only external/BI consumers from ACCESS_HISTORY
+	// (ARRAY_SIZE(OBJECTS_MODIFIED) = 0), enriched with QUERY_HISTORY for BI
+	// QUERY_TAG / ROLE_NAME / QUERY_TEXT. Failures here stay report-level
+	// warnings so table-to-table lineage is never degraded.
+	if r.extDays > 0 && accessErr == nil {
+		r.fetchExternalConsumers(ctx, inExpr, bySource)
+	}
+
 	// Surface errors so column impact never silently hides missing readers
 	// when either ACCESS_HISTORY or OBJECT_DEPENDENCIES is unavailable.
 	if accessErr != nil && depErr != nil {
@@ -439,7 +502,8 @@ func (r *Readers) ColumnLinks(ctx context.Context, table, column string) ([]line
 		return out, lin.partialErr
 	}
 	refs := lin.byCol[strings.ToLower(column)]
-	out := make([]lineage.ColumnLink, 0, len(refs))
+	extCol := lin.extByCol[strings.ToLower(column)]
+	out := make([]lineage.ColumnLink, 0, len(refs)+len(extCol)+len(lin.extUntracked))
 	for _, ref := range refs {
 		out = append(out, lineage.ColumnLink{
 			Table:          ref.Table,
@@ -448,6 +512,8 @@ func (r *Readers) ColumnLinks(ctx context.Context, table, column string) ([]line
 			Assertion:      r.isAssertion(ref.Table),
 		})
 	}
+	out = append(out, extCol...)
+	out = append(out, lin.extUntracked...)
 	return out, lin.partialErr
 }
 
@@ -475,11 +541,397 @@ func (r *Readers) TableReaders(ctx context.Context, table string) ([]lineage.Col
 	if err != nil {
 		return nil, err
 	}
-	out := make([]lineage.ColumnLink, len(lin.tableReaders))
-	for i, t := range lin.tableReaders {
-		out[i] = lineage.ColumnLink{Table: t, DependencyType: lineage.TableOnly, Assertion: r.isAssertion(t)}
+	out := make([]lineage.ColumnLink, 0, len(lin.tableReaders)+len(lin.extTable))
+	for _, t := range lin.tableReaders {
+		out = append(out, lineage.ColumnLink{Table: t, DependencyType: lineage.TableOnly, Assertion: r.isAssertion(t)})
 	}
+	out = append(out, lin.extTable...)
 	return out, lin.partialErr
+}
+
+func isSnowflakeAuthOrMissingViewErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "002003") ||
+		strings.Contains(low, "does not exist") ||
+		strings.Contains(low, "not authorized") ||
+		strings.Contains(low, "insufficient privileges")
+}
+
+// fetchExternalConsumers queries SELECT-only reads (OBJECTS_MODIFIED empty)
+// from ACCESS_HISTORY (covering both DIRECT_OBJECTS_ACCESSED and
+// BASE_OBJECTS_ACCESSED so reads through secure views are caught), pre-filtering
+// to matching QUERY_IDs in a CTE before joining QUERY_HISTORY for BI tags/roles
+// and aggregating one row per consumer with ARRAY_AGG of accessed columns.
+func (r *Readers) fetchExternalConsumers(ctx context.Context, inExpr string, bySource map[string]*tableLineage) {
+	enrichedSQL := fmt.Sprintf(`/* xf:query-history */
+WITH accessed AS (
+  SELECT
+    h.QUERY_ID,
+    h.QUERY_START_TIME,
+    COALESCE(h.USER_NAME, '') AS access_user,
+    UPPER(d.value:objectName::STRING) AS source_table,
+    COALESCE(dc.value:columnName::STRING, '') AS source_col
+  FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY h,
+    LATERAL FLATTEN(input => h.DIRECT_OBJECTS_ACCESSED) d,
+    LATERAL FLATTEN(input => d.value:columns, outer => TRUE) dc
+  WHERE h.QUERY_START_TIME >= DATEADD('day', -%d, CURRENT_TIMESTAMP())
+    AND ARRAY_SIZE(h.OBJECTS_MODIFIED) = 0
+    AND UPPER(d.value:objectName::STRING) IN (%s)
+  UNION ALL
+  SELECT
+    h.QUERY_ID,
+    h.QUERY_START_TIME,
+    COALESCE(h.USER_NAME, '') AS access_user,
+    UPPER(b.value:objectName::STRING) AS source_table,
+    COALESCE(bc.value:columnName::STRING, '') AS source_col
+  FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY h,
+    LATERAL FLATTEN(input => h.BASE_OBJECTS_ACCESSED) b,
+    LATERAL FLATTEN(input => b.value:columns, outer => TRUE) bc
+  WHERE h.QUERY_START_TIME >= DATEADD('day', -%d, CURRENT_TIMESTAMP())
+    AND ARRAY_SIZE(h.OBJECTS_MODIFIED) = 0
+    AND UPPER(b.value:objectName::STRING) IN (%s)
+),
+qids AS (
+  SELECT DISTINCT QUERY_ID FROM accessed
+),
+qh AS (
+  SELECT q.QUERY_ID, q.ROLE_NAME, q.QUERY_TAG, q.QUERY_TEXT
+  FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+  JOIN qids ON qids.QUERY_ID = q.QUERY_ID
+  WHERE q.START_TIME >= DATEADD('day', -%d, CURRENT_TIMESTAMP())
+),
+filtered AS (
+  SELECT
+    a.source_table,
+    a.access_user AS user_name,
+    COALESCE(qh.ROLE_NAME, '') AS role_name,
+    COALESCE(qh.QUERY_TAG, '') AS query_tag,
+    a.QUERY_ID,
+    a.QUERY_START_TIME,
+    a.source_col,
+    qh.QUERY_TEXT
+  FROM accessed a
+  LEFT JOIN qh ON qh.QUERY_ID = a.QUERY_ID
+  WHERE COALESCE(qh.QUERY_TAG, '') NOT LIKE 'xf:%%'
+    AND COALESCE(qh.QUERY_TEXT, '') NOT ILIKE '%%"app": "dbt"%%'
+    AND COALESCE(qh.QUERY_TEXT, '') NOT ILIKE '%%"app":"dbt"%%'
+    AND COALESCE(qh.QUERY_TEXT, '') NOT ILIKE '%%/* xf:%%'
+),
+per_col AS (
+  SELECT
+    source_table,
+    user_name,
+    role_name,
+    query_tag,
+    source_col,
+    COUNT(DISTINCT QUERY_ID) AS col_queries,
+    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS col_last_seen
+  FROM filtered
+  WHERE source_col <> ''
+  GROUP BY 1, 2, 3, 4, 5
+),
+cols_agg AS (
+  SELECT
+    source_table,
+    user_name,
+    role_name,
+    query_tag,
+    TO_JSON(ARRAY_AGG(OBJECT_CONSTRUCT('col', source_col, 'n', col_queries, 'last', col_last_seen))) AS cols_json
+  FROM per_col
+  GROUP BY 1, 2, 3, 4
+),
+per_consumer AS (
+  SELECT
+    source_table,
+    user_name,
+    role_name,
+    query_tag,
+    COUNT(DISTINCT QUERY_ID) AS query_count,
+    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
+    BOOLOR_AGG(source_col = '') AS has_untracked,
+    ANY_VALUE(QUERY_TEXT) AS sample_query
+  FROM filtered
+  GROUP BY 1, 2, 3, 4
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY source_table ORDER BY query_count DESC) <= %d
+)
+SELECT
+  c.source_table,
+  c.user_name,
+  c.role_name,
+  c.query_tag,
+  c.query_count,
+  c.last_seen,
+  COALESCE(ca.cols_json, '[]') AS cols_json,
+  c.has_untracked,
+  c.sample_query
+FROM per_consumer c
+LEFT JOIN cols_agg ca
+  ON ca.source_table = c.source_table
+ AND ca.user_name = c.user_name
+ AND ca.role_name = c.role_name
+ AND ca.query_tag = c.query_tag`, r.extDays, inExpr, r.extDays, inExpr, r.extDays, maxExtConsumersPerTable+1)
+
+	r.used.Add(1)
+	st, err := r.c.execute(ctx, enrichedSQL)
+	if err != nil {
+		if ctx.Err() != nil || !isSnowflakeAuthOrMissingViewErr(err) {
+			r.addWarning(fmt.Sprintf("Snowflake external SELECT readers unavailable: %v", mapStatementError(err)))
+			return
+		}
+		// Only fall back to ACCESS_HISTORY alone when QUERY_HISTORY isn't authorized or doesn't exist.
+		fallbackSQL := fmt.Sprintf(`/* xf:query-history */
+WITH accessed AS (
+  SELECT
+    h.QUERY_ID,
+    h.QUERY_START_TIME,
+    COALESCE(h.USER_NAME, '') AS access_user,
+    UPPER(d.value:objectName::STRING) AS source_table,
+    COALESCE(dc.value:columnName::STRING, '') AS source_col
+  FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY h,
+    LATERAL FLATTEN(input => h.DIRECT_OBJECTS_ACCESSED) d,
+    LATERAL FLATTEN(input => d.value:columns, outer => TRUE) dc
+  WHERE h.QUERY_START_TIME >= DATEADD('day', -%d, CURRENT_TIMESTAMP())
+    AND ARRAY_SIZE(h.OBJECTS_MODIFIED) = 0
+    AND UPPER(d.value:objectName::STRING) IN (%s)
+  UNION ALL
+  SELECT
+    h.QUERY_ID,
+    h.QUERY_START_TIME,
+    COALESCE(h.USER_NAME, '') AS access_user,
+    UPPER(b.value:objectName::STRING) AS source_table,
+    COALESCE(bc.value:columnName::STRING, '') AS source_col
+  FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY h,
+    LATERAL FLATTEN(input => h.BASE_OBJECTS_ACCESSED) b,
+    LATERAL FLATTEN(input => b.value:columns, outer => TRUE) bc
+  WHERE h.QUERY_START_TIME >= DATEADD('day', -%d, CURRENT_TIMESTAMP())
+    AND ARRAY_SIZE(h.OBJECTS_MODIFIED) = 0
+    AND UPPER(b.value:objectName::STRING) IN (%s)
+),
+per_col AS (
+  SELECT
+    source_table,
+    access_user AS user_name,
+    source_col,
+    COUNT(DISTINCT QUERY_ID) AS col_queries,
+    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS col_last_seen
+  FROM accessed
+  WHERE source_col <> ''
+  GROUP BY 1, 2, 3
+),
+cols_agg AS (
+  SELECT
+    source_table,
+    user_name,
+    TO_JSON(ARRAY_AGG(OBJECT_CONSTRUCT('col', source_col, 'n', col_queries, 'last', col_last_seen))) AS cols_json
+  FROM per_col
+  GROUP BY 1, 2
+),
+per_consumer AS (
+  SELECT
+    source_table,
+    access_user AS user_name,
+    COUNT(DISTINCT QUERY_ID) AS query_count,
+    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
+    BOOLOR_AGG(source_col = '') AS has_untracked
+  FROM accessed
+  GROUP BY 1, 2
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY source_table ORDER BY query_count DESC) <= %d
+)
+SELECT
+  c.source_table,
+  c.user_name,
+  '' AS role_name,
+  '' AS query_tag,
+  c.query_count,
+  c.last_seen,
+  COALESCE(ca.cols_json, '[]') AS cols_json,
+  c.has_untracked,
+  '' AS sample_query
+FROM per_consumer c
+LEFT JOIN cols_agg ca
+  ON ca.source_table = c.source_table
+ AND ca.user_name = c.user_name`, r.extDays, inExpr, r.extDays, inExpr, maxExtConsumersPerTable+1)
+		r.used.Add(1)
+		var fbErr error
+		st, fbErr = r.c.execute(ctx, fallbackSQL)
+		if fbErr != nil {
+			r.addWarning(fmt.Sprintf("Snowflake external SELECT readers unavailable: %v", mapStatementError(fbErr)))
+			return
+		}
+		r.addWarning(fmt.Sprintf("Snowflake QUERY_HISTORY unavailable for BI tag enrichment (%v); using ACCESS_HISTORY user names only", mapStatementError(err)))
+	}
+
+	idx := st.colIndex()
+	rawCount := map[string]int{}
+	type colStat struct {
+		queries  int
+		lastSeen string
+	}
+	type consumerAgg struct {
+		consumer  lineage.Consumer
+		cols      map[string]colStat
+		untracked bool
+	}
+	byTable := map[string]map[string]*consumerAgg{}
+	tableOrder := map[string][]string{}
+
+	for _, row := range st.Data {
+		srcKey := strings.ToUpper(strings.TrimSpace(cellStr(row, idx, "source_table")))
+		if bySource[srcKey] == nil {
+			continue
+		}
+		rawCount[srcKey]++
+		if rawCount[srcKey] > maxExtConsumersPerTable {
+			r.addWarning(fmt.Sprintf("Snowflake external reader lookup for %s hit the %d-consumer cap; some low-frequency readers may not be shown", r.canonical(srcKey), maxExtConsumersPerTable))
+			continue
+		}
+		userName := strings.TrimSpace(cellStr(row, idx, "user_name"))
+		roleName := strings.TrimSpace(cellStr(row, idx, "role_name"))
+		queryTag := strings.TrimSpace(cellStr(row, idx, "query_tag"))
+		sampleQuery := cellStr(row, idx, "sample_query")
+		lastSeen := strings.TrimSpace(cellStr(row, idx, "last_seen"))
+		colsJSON := strings.TrimSpace(cellStr(row, idx, "cols_json"))
+		hasUntracked := strings.EqualFold(strings.TrimSpace(cellStr(row, idx, "has_untracked")), "true")
+		cnt := 1
+		if n := strings.TrimSpace(cellStr(row, idx, "query_count")); n != "" {
+			if parsed, perr := strconv.Atoi(n); perr == nil && parsed > 0 {
+				cnt = parsed
+			}
+		}
+
+		if strings.HasPrefix(strings.ToLower(queryTag), "xf:") ||
+			lineage.IsOwnXFQuery("", sampleQuery, nil) ||
+			lineage.IsTransformToolQuery(sampleQuery, queryTag, nil) {
+			continue
+		}
+
+		cons := lineage.ParseConsumer(lineage.QuerySignal{
+			User:     userName,
+			Role:     roleName,
+			Query:    sampleQuery,
+			QueryTag: queryTag,
+		})
+		cons.Queries = cnt
+		cons.Days = r.extDays
+		cons.LastSeen = lastSeen
+		id := cons.ID()
+
+		if byTable[srcKey] == nil {
+			byTable[srcKey] = map[string]*consumerAgg{}
+		}
+		agg := byTable[srcKey][id]
+		if agg == nil {
+			agg = &consumerAgg{consumer: cons, cols: map[string]colStat{}}
+			byTable[srcKey][id] = agg
+			tableOrder[srcKey] = append(tableOrder[srcKey], id)
+		} else {
+			agg.consumer.Queries += cnt
+			if lastSeen > agg.consumer.LastSeen {
+				agg.consumer.LastSeen = lastSeen
+			}
+		}
+		colStats := decodeSnowflakeColsJSON(colsJSON, cnt, lastSeen)
+		for _, cs := range colStats {
+			cur := agg.cols[cs.name]
+			cur.queries += cs.queries
+			if cs.lastSeen > cur.lastSeen {
+				cur.lastSeen = cs.lastSeen
+			}
+			agg.cols[cs.name] = cur
+		}
+		if hasUntracked || len(colStats) == 0 {
+			agg.untracked = true
+		}
+	}
+
+	for srcKey, lin := range bySource {
+		for _, id := range tableOrder[srcKey] {
+			agg := byTable[srcKey][id]
+			c := agg.consumer
+			lin.extTable = append(lin.extTable, lineage.ColumnLink{
+				Table:          c.ID(),
+				DependencyType: lineage.TableOnly,
+				Consumer:       &c,
+			})
+			for col, cs := range agg.cols {
+				cCopy := c
+				if cs.queries > 0 {
+					cCopy.Queries = cs.queries
+				}
+				if cs.lastSeen != "" {
+					cCopy.LastSeen = cs.lastSeen
+				}
+				lin.extByCol[col] = append(lin.extByCol[col], lineage.ColumnLink{
+					Table:          cCopy.ID(),
+					DependencyType: lineage.Other,
+					Consumer:       &cCopy,
+				})
+			}
+			if agg.untracked && len(agg.cols) == 0 {
+				cCopy := c
+				lin.extUntracked = append(lin.extUntracked, lineage.ColumnLink{
+					Table:          cCopy.ID(),
+					DependencyType: lineage.TableOnly,
+					Consumer:       &cCopy,
+				})
+			}
+		}
+	}
+}
+
+type decodedColStat struct {
+	name     string
+	queries  int
+	lastSeen string
+}
+
+// decodeSnowflakeColsJSON parses either the per-column stat object array
+// [{"col":"X","n":5,"last":"..."}] or a plain string array ["X","Y"].
+func decodeSnowflakeColsJSON(raw string, fallbackCount int, fallbackLast string) []decodedColStat {
+	if raw == "" || raw == "null" || raw == "[]" {
+		return nil
+	}
+	var objs []struct {
+		Col  string `json:"col"`
+		N    int    `json:"n"`
+		Last string `json:"last"`
+	}
+	if err := json.Unmarshal([]byte(raw), &objs); err == nil {
+		out := make([]decodedColStat, 0, len(objs))
+		for _, o := range objs {
+			name := strings.ToLower(strings.TrimSpace(o.Col))
+			if name == "" {
+				continue
+			}
+			n := o.N
+			if n <= 0 {
+				n = fallbackCount
+			}
+			last := strings.TrimSpace(o.Last)
+			if last == "" {
+				last = fallbackLast
+			}
+			out = append(out, decodedColStat{name: name, queries: n, lastSeen: last})
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(raw), &names); err != nil {
+		return nil
+	}
+	out := make([]decodedColStat, 0, len(names))
+	for _, col := range names {
+		name := strings.ToLower(strings.TrimSpace(col))
+		if name != "" {
+			out = append(out, decodedColStat{name: name, queries: fallbackCount, lastSeen: fallbackLast})
+		}
+	}
+	return out
 }
 
 // splitFull splits database.schema.table, respecting double-quoted identifiers

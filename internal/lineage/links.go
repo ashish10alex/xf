@@ -37,6 +37,9 @@ type ColumnLink struct {
 	// Assertion is set when the other end is an assertion, e.g. a built-in
 	// uniqueKey or nonNull check.
 	Assertion bool `json:"assertion,omitempty"`
+	// Consumer is set when this reader is an external SELECT-only consumer
+	// (BI tool, reverse ETL, scheduled query or analyst) from query history.
+	Consumer *Consumer `json:"consumer,omitempty"`
 }
 
 // EntityReference is one end of a Data Lineage API link.

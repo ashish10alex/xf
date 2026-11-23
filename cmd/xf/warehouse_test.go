@@ -102,11 +102,11 @@ func TestDatabricksImpactDeps(t *testing.T) {
 	pw := &projectWarehouse{dbx: databricks.New(databricks.Config{Host: srv.URL, Token: token, HTTP: srv.Client()})}
 	pw.once.Do(func() {})
 	ctx := context.Background()
-	if _, _, err := pw.databricksImpact(ctx, nil, nil); !errors.Is(err, warehouse.ErrNoWarehouse) {
+	if _, _, err := pw.databricksImpact(ctx, nil, nil, 0); !errors.Is(err, warehouse.ErrNoWarehouse) {
 		t.Fatalf("no warehouse: %v", err)
 	}
 	pw.dbx.SetWarehouse("wh1")
-	deps, used, err := pw.databricksImpact(ctx, nil, nil)
+	deps, used, err := pw.databricksImpact(ctx, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestSnowflakeImpactCostPreflight(t *testing.T) {
 				"resultSetMetaData": map[string]any{"rowType": []map[string]any{{"name": "READER"}}},
 				"data":              [][]string{},
 			})
-		case strings.HasPrefix(sql, "SELECT * FROM ("):
+		case strings.Contains(sql, "SELECT * FROM ("):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"resultSetMetaData": map[string]any{"rowType": []map[string]any{{"name": "ORDER_ID", "type": "fixed", "precision": 38, "scale": 0, "nullable": false}}},
 				"data":              [][]string{},
@@ -232,7 +232,7 @@ func TestSnowflakeImpactCostPreflight(t *testing.T) {
 	ctx := context.Background()
 
 	// Impact and cost fail before a virtual warehouse is chosen.
-	if _, _, err := pw.snowflakeImpact(ctx, nil, nil); !errors.Is(err, warehouse.ErrNoWarehouse) {
+	if _, _, err := pw.snowflakeImpact(ctx, nil, nil, 0); !errors.Is(err, warehouse.ErrNoWarehouse) {
 		t.Fatalf("impact no warehouse: %v", err)
 	}
 	id := project.ActionID("shop.marts.fct_orders")
@@ -254,7 +254,7 @@ func TestSnowflakeImpactCostPreflight(t *testing.T) {
 	}
 
 	// Impact reports WarehouseUse even when only lineage queries ran (no model checked).
-	deps, used, err := pw.snowflakeImpact(ctx, g, nil)
+	deps, used, err := pw.snowflakeImpact(ctx, g, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -59,7 +59,8 @@ func runCheck(args []string) int {
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
 		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
-		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions, config.KeyLineageProjects, config.KeyUSDPerTiB)
+		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions, config.KeyLineageProjects,
+		config.KeyQueryHistoryProjects, config.KeyQueryHistoryDays, config.KeyQueryHistoryMaxGB, config.KeyUSDPerTiB)
 	pushed := fs.Bool("pushed", false, "check the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOn := fs.String("fail-on", "", "exit 1 when a column change of this `severity` or worse is found: critical, warning or unknown")
 	failOnUnchecked := fs.Bool("fail-on-unchecked", false, "exit 1 when any changed model failed to check (dry run or schema error; ignores operations/scripts and tables not yet built)")
@@ -108,6 +109,15 @@ or --comment couldn't comment (the checks run first).
 	}
 	if err == nil {
 		err = sf.checkFlag(config.KeyLineageProjects)
+	}
+	if err == nil {
+		err = sf.checkFlag(config.KeyQueryHistoryProjects)
+	}
+	if err == nil {
+		err = sf.checkFlag(config.KeyQueryHistoryDays)
+	}
+	if err == nil {
+		err = sf.checkFlag(config.KeyQueryHistoryMaxGB)
 	}
 	if err == nil {
 		cf.opts.FailOn, cf.opts.Gate, err = parseFailOn(*failOn)
@@ -248,7 +258,9 @@ func checkBranch(pf projectFlags, sf *settingFlags, cf checkFlags) (int, error) 
 	pr0 := newProgressPrinter(os.Stderr)
 	pr0.say("Working out the changed actions against " + base)
 	ireq := engine.ImpactRequest{DefaultBranch: base, Head: head, Refresh: true,
-		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, LineageProjects: settings.LineageProjects, Unset: unsetProdOptions(settings)}
+		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, LineageProjects: settings.LineageProjects,
+		QueryHistoryProjects: settings.QueryHistoryProjects, QueryHistoryDays: settings.QueryHistoryDays, QueryHistoryMaxGB: settings.QueryHistoryMaxGB,
+		Unset: unsetProdOptions(settings)}
 	creq := engine.CostRequest{DefaultBranch: base, Head: head, Refresh: true,
 		ProdCompilerOptions: settings.ProdCompilerOptions, Unset: unsetProdOptions(settings)}
 	if name == backend.DBT {

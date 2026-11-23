@@ -25,7 +25,11 @@ import (
 // StartQuery creates a query job and returns at once, without waiting for
 // it to finish. Follow it with QueryJob.
 func (c *Client) StartQuery(ctx context.Context, o warehouse.QueryOptions) (warehouse.JobRef, error) {
-	ref := warehouse.JobRef{Project: o.Project, Location: o.Location, ID: "xf_scratch_" + randomID()}
+	prefix := o.JobPrefix
+	if prefix == "" {
+		prefix = "xf_scratch_"
+	}
+	ref := warehouse.JobRef{Project: o.Project, Location: o.Location, ID: prefix + randomID()}
 	type jobRef struct {
 		ProjectID string `json:"projectId"`
 		Location  string `json:"location,omitempty"`
@@ -36,15 +40,19 @@ func (c *Client) StartQuery(ctx context.Context, o warehouse.QueryOptions) (ware
 		Configuration struct {
 			Labels map[string]string `json:"labels,omitempty"`
 			Query  struct {
-				Query           string           `json:"query"`
-				UseLegacySQL    bool             `json:"useLegacySql"`
-				ParameterMode   string           `json:"parameterMode,omitempty"`
-				QueryParameters []queryParameter `json:"queryParameters,omitempty"`
+				Query              string           `json:"query"`
+				UseLegacySQL       bool             `json:"useLegacySql"`
+				ParameterMode      string           `json:"parameterMode,omitempty"`
+				QueryParameters    []queryParameter `json:"queryParameters,omitempty"`
+				MaximumBytesBilled string           `json:"maximumBytesBilled,omitempty"`
 			} `json:"query"`
 		} `json:"configuration"`
 	}{JobReference: jobRef{ProjectID: o.Project, Location: o.Location, JobID: ref.ID}}
 	req.Configuration.Labels = o.Labels
 	req.Configuration.Query.Query = o.SQL
+	if o.MaximumBytesBilled > 0 {
+		req.Configuration.Query.MaximumBytesBilled = strconv.FormatInt(o.MaximumBytesBilled, 10)
+	}
 	if len(o.Params) > 0 {
 		req.Configuration.Query.ParameterMode = "NAMED"
 		for _, name := range sortedKeys(o.Params) {

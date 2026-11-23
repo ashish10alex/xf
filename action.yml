@@ -39,6 +39,15 @@ inputs:
   quiet-under:
     description: A run that grows by less than this size isn't worth a comment on cost alone.
     default: "1GiB"
+  query-history-projects:
+    description: BigQuery billing projects to scan INFORMATION_SCHEMA.JOBS for SELECT-only external/BI readers (auto, org, or comma-separated project IDs). Off by default so BigQuery stays free.
+    default: ""
+  query-history-days:
+    description: Lookback window in days (1..90) for SELECT-only external/BI readers; 0 disables external readers on Snowflake and Databricks too. Default 14.
+    default: ""
+  query-history-max-gb:
+    description: BigQuery maximumBytesBilled cap in GiB per INFORMATION_SCHEMA.JOBS scan (0 for unlimited, e.g. on slot reservations). Default 10.
+    default: ""
   default-branch:
     description: The branch to compare with. By default the pull request's base branch.
     default: ""
@@ -137,6 +146,9 @@ runs:
         FAIL_ON_UNFILTERED: ${{ inputs.fail-on-unfiltered }}
         FAIL_ON_UNESTIMATED: ${{ inputs.fail-on-unestimated }}
         QUIET_UNDER: ${{ inputs.quiet-under }}
+        QUERY_HISTORY_PROJECTS: ${{ inputs.query-history-projects }}
+        QUERY_HISTORY_DAYS: ${{ inputs.query-history-days }}
+        QUERY_HISTORY_MAX_GB: ${{ inputs.query-history-max-gb }}
         BASE: ${{ inputs.default-branch || github.base_ref }}
         ARGS: ${{ inputs.args }}
       run: |
@@ -157,6 +169,9 @@ runs:
         [ -n "$FAIL_OVER_DELTA" ] && flags+=(--fail-over-delta "$FAIL_OVER_DELTA")
         is_true "$FAIL_ON_UNFILTERED" && flags+=(--fail-on-unfiltered)
         is_true "$FAIL_ON_UNESTIMATED" && flags+=(--fail-on-unestimated)
+        [ -n "$QUERY_HISTORY_PROJECTS" ] && flags+=(--query-history-projects "$QUERY_HISTORY_PROJECTS")
+        [ -n "$QUERY_HISTORY_DAYS" ] && flags+=(--query-history-days "$QUERY_HISTORY_DAYS")
+        [ -n "$QUERY_HISTORY_MAX_GB" ] && flags+=(--query-history-max-gb "$QUERY_HISTORY_MAX_GB")
         # ARGS is split on spaces, as a command line would be.
         xf check "${flags[@]}" $ARGS
         code=$?

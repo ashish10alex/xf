@@ -128,6 +128,10 @@ type QueryOptions struct {
 	Labels map[string]string
 	// Params are named STRING query parameters, @name in the SQL.
 	Params map[string]string
+	// JobPrefix overrides the BigQuery job ID prefix ("xf_scratch_" when empty).
+	JobPrefix string
+	// MaximumBytesBilled caps BigQuery on-demand billing for this job (0 = no cap).
+	MaximumBytesBilled int64
 }
 
 // JobRef names a job.

@@ -40,7 +40,8 @@ func runImpact(args []string) int {
 	pf := addProjectFlags(fs)
 	sf := addSettingFlags(fs, config.KeyDataformBin, config.KeyDbtBin, config.KeyDbtTarget, config.KeyDbtProdTarget, config.KeyDbtCompileWithHooks,
 		config.KeyDatabricksWarehouse, config.KeyDatabricksProfile, config.KeySnowflakeWarehouse, config.KeySnowflakeConnection,
-		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions, config.KeyLineageProjects)
+		config.KeyDefaultBranch, config.KeyDevCompilerOptions, config.KeyProdCompilerOptions, config.KeyLineageProjects,
+		config.KeyQueryHistoryProjects, config.KeyQueryHistoryDays, config.KeyQueryHistoryMaxGB)
 	pushed := fs.Bool("pushed", false, "compare the branch pushed to origin (what an API run compiles) instead of the working tree; Dataform only")
 	failOn := fs.String("fail-on", "", "exit 1 when a change of this `severity` or worse is found: critical, warning or unknown")
 	failOnUnchecked := fs.Bool("fail-on-unchecked", false, "exit 1 when any changed model failed to check (dry run or schema error; ignores operations/scripts and tables not yet built)")
@@ -75,6 +76,15 @@ when the check could not be made.`)
 	var gate bool
 	if err == nil {
 		err = sf.checkFlag(config.KeyLineageProjects)
+	}
+	if err == nil {
+		err = sf.checkFlag(config.KeyQueryHistoryProjects)
+	}
+	if err == nil {
+		err = sf.checkFlag(config.KeyQueryHistoryDays)
+	}
+	if err == nil {
+		err = sf.checkFlag(config.KeyQueryHistoryMaxGB)
 	}
 	if err == nil {
 		threshold, gate, err = parseFailOn(*failOn)
@@ -129,7 +139,9 @@ func checkImpact(pf projectFlags, sf *settingFlags, pushed, gate bool, threshold
 	defer client.Close()
 
 	req := engine.ImpactRequest{DefaultBranch: cmp.Or(settings.DefaultBranch, config.DefaultBranch), Head: changes.HeadWorktree, Refresh: true,
-		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, LineageProjects: settings.LineageProjects, Unset: unsetProdOptions(settings)}
+		DevCompilerOptions: settings.DevCompilerOptions, ProdCompilerOptions: settings.ProdCompilerOptions, LineageProjects: settings.LineageProjects,
+		QueryHistoryProjects: settings.QueryHistoryProjects, QueryHistoryDays: settings.QueryHistoryDays, QueryHistoryMaxGB: settings.QueryHistoryMaxGB,
+		Unset: unsetProdOptions(settings)}
 	if name == backend.DBT {
 		req.DevCompilerOptions, req.ProdCompilerOptions = "", ""
 		req.DbtProdTarget, req.Unset = settings.DbtProdTarget, unsetDbtProdTarget(settings, os.Getenv)
@@ -276,6 +288,7 @@ func (p *progressPrinter) done() {
 // compiles the merge-base, as it did for the Changed Actions.
 func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun func(ctx context.Context, project, location, sql string) (*warehouse.Check, error), bin, root string, plain *changes.Source, opts *optionSources) engine.ImpactFunc {
 	lc := lazyLineage()
+	jobCache := lineage.NewJobHistoryCache()
 	if opts == nil {
 		opts = newOptionSources(bin, root, nil)
 	}
@@ -304,10 +317,12 @@ func impactChecker(bq func(context.Context) (warehouse.Warehouse, error), dryRun
 			prodTarget = impact.ProdTargetFunc(prodRuns)
 		}
 		tables := lineage.NewTables(lazyTables(bq))
+		readers := lineage.NewSource(client, tables, g, toAction).WithProjects(config.ParseLineageProjects(req.LineageProjects)...)
+		configureJobHistory(readers, bq, req, jobCache)
 		return impact.Run(ctx, res, g, impact.Deps{
 			Schema:     tables.Schema,
 			DryRun:     dryRun,
-			Readers:    lineage.NewSource(client, tables, g, toAction).WithProjects(config.ParseLineageProjects(req.LineageProjects)...),
+			Readers:    readers,
 			ToProd:     toAction,
 			ProdTarget: prodTarget,
 			// The merge-base as Changed Actions compiled it, to tell the
@@ -400,6 +415,69 @@ func lazyLineage() func(ctx context.Context) (*lineage.Client, error) {
 		}
 		return client, nil
 	}
+}
+
+// lazyQueryExec wraps a lazy warehouse.Warehouse constructor as a
+// lineage.QueryExecutor so BigQuery isn't opened until a breaking table
+// actually runs query-history discovery.
+type lazyQueryExec struct {
+	open func(context.Context) (warehouse.Warehouse, error)
+}
+
+func (l lazyQueryExec) StartQuery(ctx context.Context, o warehouse.QueryOptions) (warehouse.JobRef, error) {
+	w, err := l.open(ctx)
+	if err != nil {
+		return warehouse.JobRef{}, err
+	}
+	return w.StartQuery(ctx, o)
+}
+
+func (l lazyQueryExec) QueryJob(ctx context.Context, ref warehouse.JobRef) (*warehouse.QueryStatus, error) {
+	w, err := l.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return w.QueryJob(ctx, ref)
+}
+
+func (l lazyQueryExec) Rows(ctx context.Context, ref warehouse.JobRef, token string, size int) (*warehouse.Page, error) {
+	w, err := l.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return w.Rows(ctx, ref, token, size)
+}
+
+func (l lazyQueryExec) CancelQuery(ctx context.Context, ref warehouse.JobRef) error {
+	w, err := l.open(ctx)
+	if err != nil {
+		return err
+	}
+	return w.CancelQuery(ctx, ref)
+}
+
+func (l lazyQueryExec) DefaultProject() string {
+	w, err := l.open(context.Background())
+	if err != nil {
+		return ""
+	}
+	return w.DefaultProject()
+}
+
+func configureJobHistory(src *lineage.Source, bq func(context.Context) (warehouse.Warehouse, error), req engine.ImpactRequest, cache *lineage.JobHistoryCache) {
+	projects := config.ParseLineageProjects(req.QueryHistoryProjects)
+	if len(projects) == 0 || bq == nil {
+		return
+	}
+	days, enabled := config.ParseQueryHistoryDays(req.QueryHistoryDays)
+	if !enabled {
+		return
+	}
+	src.WithJobHistory(lazyQueryExec{open: bq}, lineage.JobHistoryConfig{
+		Projects:       projects,
+		Days:           days,
+		MaxBytesBilled: config.ParseQueryHistoryMaxBytes(req.QueryHistoryMaxGB),
+	}, cache)
 }
 
 // errNoEngine is what an impact check reports before the engine is made.

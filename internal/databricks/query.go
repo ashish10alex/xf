@@ -75,8 +75,12 @@ func (c *Client) StartQuery(ctx context.Context, o warehouse.QueryOptions) (ware
 		return warehouse.JobRef{}, ErrNoWarehouse
 	}
 	catalog := cmp.Or(o.Project, c.catalog)
+	stmt := o.SQL
+	if (o.Labels["xf-scratch"] == "true" || strings.HasPrefix(o.JobPrefix, "xf_")) && !strings.Contains(stmt, "/* xf:") {
+		stmt = "/* xf:scratch */\n" + stmt
+	}
 	req := map[string]any{
-		"warehouse_id": id, "statement": o.SQL,
+		"warehouse_id": id, "statement": stmt,
 		"wait_timeout": "0s", "on_wait_timeout": "CONTINUE",
 		"disposition": "EXTERNAL_LINKS", "format": "JSON_ARRAY",
 	}

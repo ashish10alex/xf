@@ -136,6 +136,11 @@ type Deps struct {
 	// LineageProjects is a comma-separated list of extra GCP projects
 	// searched in Dataplex Data Lineage alongside each table's project.
 	LineageProjects string
+	// QueryHistoryProjects, QueryHistoryDays and QueryHistoryMaxGB configure
+	// SELECT-only external/BI consumer discovery from warehouse query history.
+	QueryHistoryProjects string
+	QueryHistoryDays     string
+	QueryHistoryMaxGB    string
 	// Unset is the setting that picks the tables I compares with and C dry
 	// runs against, "prodCompilerOptions" or "dbtProdTarget", when nothing
 	// sets it, not even to "": their reports then say they used the

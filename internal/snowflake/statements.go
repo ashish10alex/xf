@@ -143,6 +143,7 @@ func (c *Client) executeWith(ctx context.Context, sql, wh, db, schema string) (*
 		"parameters": map[string]string{
 			"DATE_OUTPUT_FORMAT":      "YYYY-MM-DD",
 			"TIMESTAMP_OUTPUT_FORMAT": "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
+			"QUERY_TAG":               "xf:internal",
 		},
 	}
 	if wh != "" {
@@ -287,7 +288,7 @@ func (c *Client) Check(ctx context.Context, db, _, query string) (*warehouse.Che
 	if wh == "" {
 		return nil, ErrNoWarehouse
 	}
-	wrapped := "SELECT * FROM (\n" + query + "\n) LIMIT 0"
+	wrapped := "/* xf:check */ SELECT * FROM (\n" + query + "\n) LIMIT 0"
 	st, err := c.executeWith(ctx, wrapped, wh, cmp.Or(db, c.database), c.schema)
 	var se *StatementError
 	if errors.As(err, &se) {

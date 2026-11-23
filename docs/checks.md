@@ -63,6 +63,20 @@ Without it, a table you've already built from the branch in your default project
 Readers come from prod runs in the last 30 days, about two hours behind.
 Looking them up needs the Data Lineage API enabled and `roles/datalineage.viewer`.
 
+### External and BI `SELECT`-only readers
+
+Table-to-table lineage (Dataplex on BigQuery, `OBJECTS_MODIFIED` on Snowflake, and table links in Databricks Unity Catalog) only records jobs that write to another table.
+To also catch `SELECT`-only consumers—Looker, Tableau, Looker Studio, Power BI, Metabase, Sigma, Hex, Omni, Lightdash, Hightouch, Census, scheduled queries and analysts—xf can read warehouse query history (ADR 0045):
+
+- **BigQuery (opt-in, so BigQuery stays free by default):** set `queryHistoryProjects` (`--query-history-projects`) to `auto` (each table's project plus `lineageProjects`), `org` (`JOBS_BY_ORGANIZATION`), or comma-separated GCP billing project IDs (e.g. `acme-bi,acme-prod`).
+  Requires `roles/bigquery.resourceViewer` on those billing projects (probed with a free dry run by `xf check --preflight`).
+  Control the lookback and scan safety cap with `queryHistoryDays` (`--query-history-days`, default `14`, range `1`–`90`) and `queryHistoryMaxGB` (`--query-history-max-gb`, default `10` GiB; set `0` for unlimited on slot capacity reservations, since `INFORMATION_SCHEMA.JOBS_BY_PROJECT` is a clustered metadata table whose dry-run upper bound can be much larger than actual billed bytes).
+- **Snowflake & Databricks:** enabled by default over `queryHistoryDays` (set `queryHistoryDays` to `0` to turn them off). Snowflake reads `SELECT`-only `ACCESS_HISTORY` rows (including reads through secure views via `BASE_OBJECTS_ACCESSED`) enriched with `QUERY_HISTORY`. Databricks reads its REST Query History API (`/api/2.0/sql/history/queries`) without waking a SQL warehouse; non-admin principals and CI service principals only see their own queries plus SQL warehouses where they have `CAN MONITOR` or `CAN MANAGE`, so grant `CAN MONITOR` on BI SQL warehouses to the CI principal to see BI readers.
+
+Confirmed external column reads and any external read of a deleted table are marked 🚨 (`critical`); `SELECT *` (or ambiguous multi-table `JOIN`) external reads on a dropped column are marked ⚠️ (`warning`) so an ad-hoc `SELECT * LIMIT 10` doesn't trip `--fail-on critical`.
+Query-history permission or scan-cap issues appear as report-level warnings without downgrading clean columns to ❔ (`unknown`).
+Note that BigQuery does not populate `referenced_tables` on cache-hit jobs, and Tableau Query Tagging records opaque `workbook-luid` IDs rather than human-readable dashboard names.
+
 So xf asks.
 The first `I` or `C` in a project where nothing sets `prodCompilerOptions` opens a prompt for them.
 In xf web it is a form: **Prod project** (`--default-database`), **Prod dataset** (`--default-schema`) and, under *more flags*, any other flags of `dataform compile`, as written.
@@ -227,6 +241,9 @@ A pull request from a fork gets no credentials, so the action skips it, says so 
 | `fail-over`, `fail-over-delta` | cost gates, off by default: fail when total scan (`fail-over`) or net scan growth over the merge-base (`fail-over-delta`) exceeds a size such as `100GB` |
 | `fail-on-unfiltered`, `fail-on-unestimated` | `true` to fail on a missing partition filter or an action that couldn't be estimated. Off by default |
 | `quiet-under` | how much a run must grow for cost alone to be worth a comment, `1GiB` by default |
+| `query-history-projects` | BigQuery billing projects to scan `INFORMATION_SCHEMA.JOBS` for `SELECT`-only external/BI readers (`auto`, `org`, or comma-separated project IDs). Off by default |
+| `query-history-days` | lookback days (`1`–`90`, default `14`; `0` disables external readers on Snowflake and Databricks too) |
+| `query-history-max-gb` | BigQuery `maximumBytesBilled` cap in GiB per query-history scan (default `10`; `0` for unlimited on slot reservations) |
 | `default-branch` | the branch to compare with, by default the pull request's base |
 | `npm-ci` | `auto` (the default: when there is a `package.json`), `true` or `false` |
 | `install-dataform` | `auto` (the default: when `dataform` isn't on PATH), `true` or `false` |

@@ -63,6 +63,20 @@ const (
 	// to search in Dataplex Data Lineage alongside each table's own project,
 	// catching cross-project BigQuery readers (e.g. BI or analytics projects).
 	KeyLineageProjects = "lineageProjects"
+	// KeyQueryHistoryProjects enables scanning BigQuery INFORMATION_SCHEMA.JOBS
+	// for SELECT-only external/BI consumers alongside Dataplex: "auto" (each
+	// table's project + lineageProjects), "org" (JOBS_BY_ORGANIZATION), or a
+	// comma-separated list of GCP billing project IDs. Empty disables it so
+	// BigQuery checks stay 100% free by default.
+	KeyQueryHistoryProjects = "queryHistoryProjects"
+	// KeyQueryHistoryDays is the lookback window in days for external
+	// SELECT-only query-history consumers (1..90, default 14; 0 disables them
+	// on Snowflake and Databricks as well).
+	KeyQueryHistoryDays = "queryHistoryDays"
+	// KeyQueryHistoryMaxGB caps BigQuery maximumBytesBilled in GiB for each
+	// INFORMATION_SCHEMA.JOBS scan (default 10; 0 disables the cap, e.g. on
+	// slot capacity reservations).
+	KeyQueryHistoryMaxGB = "queryHistoryMaxGB"
 	// KeyTablePrefix, KeySchemaSuffix and KeyDatabaseSuffix are what a
 	// Dataform project's compiles and runs add to every name it builds:
 	// --table-prefix, --schema-suffix and --database-suffix, which
@@ -269,6 +283,9 @@ var Titles = map[string]string{
 	KeyDevCompilerOptions:   "Dev compiler options",
 	KeyProdCompilerOptions:  "Prod compiler options",
 	KeyLineageProjects:      "Extra Dataplex lineage projects",
+	KeyQueryHistoryProjects: "BigQuery query history projects",
+	KeyQueryHistoryDays:     "Query history lookback (days)",
+	KeyQueryHistoryMaxGB:    "BigQuery query history scan cap (GiB)",
 	KeyTablePrefix:          "Table prefix",
 	KeySchemaSuffix:         "Schema suffix",
 	KeyDatabaseSuffix:       "Database suffix",
@@ -335,6 +352,9 @@ var Defaults = func() map[string]string {
 		KeyDevCompilerOptions:   NoDefault,
 		KeyProdCompilerOptions:  NoDefault + " (the default targets)",
 		KeyLineageProjects:      NoDefault + " (the table's own project)",
+		KeyQueryHistoryProjects: NoDefault + " (off; BigQuery stays free)",
+		KeyQueryHistoryDays:     "14",
+		KeyQueryHistoryMaxGB:    "10 (0 for unlimited)",
 		KeyTablePrefix:          "namePrefix of the workflow settings",
 		KeySchemaSuffix:         "datasetSuffix of the workflow settings",
 		KeyDatabaseSuffix:       "projectSuffix of the workflow settings",
@@ -370,7 +390,7 @@ var Defaults = func() map[string]string {
 }()
 
 // Keys lists every key in the order they are documented.
-var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyLineageProjects, KeyDeferToProd, KeyUSDPerTiB, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
+var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyLineageProjects, KeyQueryHistoryProjects, KeyQueryHistoryDays, KeyQueryHistoryMaxGB, KeyDeferToProd, KeyUSDPerTiB, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
@@ -380,35 +400,38 @@ var userKeys = []string{KeyTheme, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSecon
 // Flags maps each key to the flag that sets it; the vim keys, the
 // themes of xf web's auto and diffStyle have none.
 var Flags = map[string]string{
-	KeyDataformBin:         "dataform-bin",
-	KeyDbtBin:              "dbt-bin",
-	KeyDbtTarget:           "dbt-target",
-	KeyDbtProdTarget:       "dbt-prod-target",
-	KeyDbtCompileWithHooks: "dbt-compile-with-hooks",
-	KeyDatabricksWarehouse: "databricks-warehouse",
-	KeyDatabricksProfile:   "databricks-profile",
-	KeySnowflakeWarehouse:  "snowflake-warehouse",
-	KeySnowflakeConnection: "snowflake-connection",
-	KeyRunMode:             "run-mode",
-	KeyDataformLocation:    "dataform-location",
-	KeyDataformRepo:        "dataform-repo",
-	KeyDefaultBranch:       "default-branch",
-	KeyDevCompilerOptions:  "dev-compiler-options",
-	KeyProdCompilerOptions: "prod-compiler-options",
-	KeyLineageProjects:     "lineage-projects",
-	KeyTablePrefix:         "table-prefix",
-	KeySchemaSuffix:        "schema-suffix",
-	KeyDatabaseSuffix:      "database-suffix",
-	KeyEditor:              "editor",
-	KeyTheme:               "theme",
-	KeyWebTheme:            "web-theme",
-	KeyScratchWarnGB:       "scratch-warn-gb",
-	KeyScratchConfirmGB:    "scratch-confirm-gb",
-	KeyUSDPerTiB:           "usd-per-tib",
-	KeySourceAutosaveMs:    "source-autosave-ms",
-	KeyWebAutoExitSeconds:  "web-auto-exit-seconds",
-	KeyWebBrowser:          "web-browser",
-	KeyWebBrowserProfile:   "web-browser-profile",
+	KeyDataformBin:          "dataform-bin",
+	KeyDbtBin:               "dbt-bin",
+	KeyDbtTarget:            "dbt-target",
+	KeyDbtProdTarget:        "dbt-prod-target",
+	KeyDbtCompileWithHooks:  "dbt-compile-with-hooks",
+	KeyDatabricksWarehouse:  "databricks-warehouse",
+	KeyDatabricksProfile:    "databricks-profile",
+	KeySnowflakeWarehouse:   "snowflake-warehouse",
+	KeySnowflakeConnection:  "snowflake-connection",
+	KeyRunMode:              "run-mode",
+	KeyDataformLocation:     "dataform-location",
+	KeyDataformRepo:         "dataform-repo",
+	KeyDefaultBranch:        "default-branch",
+	KeyDevCompilerOptions:   "dev-compiler-options",
+	KeyProdCompilerOptions:  "prod-compiler-options",
+	KeyLineageProjects:      "lineage-projects",
+	KeyQueryHistoryProjects: "query-history-projects",
+	KeyQueryHistoryDays:     "query-history-days",
+	KeyQueryHistoryMaxGB:    "query-history-max-gb",
+	KeyTablePrefix:          "table-prefix",
+	KeySchemaSuffix:         "schema-suffix",
+	KeyDatabaseSuffix:       "database-suffix",
+	KeyEditor:               "editor",
+	KeyTheme:                "theme",
+	KeyWebTheme:             "web-theme",
+	KeyScratchWarnGB:        "scratch-warn-gb",
+	KeyScratchConfirmGB:     "scratch-confirm-gb",
+	KeyUSDPerTiB:            "usd-per-tib",
+	KeySourceAutosaveMs:     "source-autosave-ms",
+	KeyWebAutoExitSeconds:   "web-auto-exit-seconds",
+	KeyWebBrowser:           "web-browser",
+	KeyWebBrowserProfile:    "web-browser-profile",
 }
 
 // OpenSameTab and OpenNewTab are webOpenProjectIn's values.
@@ -474,6 +497,11 @@ type Settings struct {
 	// LineageProjects is a comma-separated list of additional GCP projects
 	// searched in Dataplex Data Lineage alongside each table's project
 	LineageProjects string
+	// QueryHistoryProjects, QueryHistoryDays and QueryHistoryMaxGB configure
+	// SELECT-only external/BI consumer discovery from warehouse query history.
+	QueryHistoryProjects string
+	QueryHistoryDays     string
+	QueryHistoryMaxGB    string
 	// TablePrefix, SchemaSuffix and DatabaseSuffix are what Dataform adds
 	// to the names it builds
 	TablePrefix, SchemaSuffix, DatabaseSuffix string
@@ -538,6 +566,53 @@ func ParseLineageProjects(s string) []string {
 	return out
 }
 
+// DefaultQueryHistoryDays and DefaultQueryHistoryMaxGB are the defaults for
+// external SELECT-only query-history discovery.
+const (
+	DefaultQueryHistoryDays  = 14
+	MaxQueryHistoryDays      = 90
+	DefaultQueryHistoryMaxGB = 10
+)
+
+// ParseQueryHistoryDays parses queryHistoryDays: "" returns (14, true),
+// "0" returns (0, false), and "1".."90" returns (n, true).
+func ParseQueryHistoryDays(s string) (days int, enabled bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return DefaultQueryHistoryDays, true
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	if n > MaxQueryHistoryDays {
+		n = MaxQueryHistoryDays
+	}
+	return n, true
+}
+
+// ParseQueryHistoryMaxBytes parses queryHistoryMaxGB (GiB) into bytes:
+// "" or an invalid/negative value returns 10 GiB (fail-closed), "0" returns 0
+// (no cap), and any tiny positive value rounds up to at least 1 byte.
+func ParseQueryHistoryMaxBytes(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return DefaultQueryHistoryMaxGB << 30
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+		return DefaultQueryHistoryMaxGB << 30
+	}
+	if f == 0 {
+		return 0
+	}
+	b := int64(f * float64(1<<30))
+	if b < 1 {
+		return 1
+	}
+	return b
+}
+
 func (s *Settings) field(key string) *string {
 	switch key {
 	case KeyDataformBin:
@@ -572,6 +647,12 @@ func (s *Settings) field(key string) *string {
 		return &s.ProdCompilerOptions
 	case KeyLineageProjects:
 		return &s.LineageProjects
+	case KeyQueryHistoryProjects:
+		return &s.QueryHistoryProjects
+	case KeyQueryHistoryDays:
+		return &s.QueryHistoryDays
+	case KeyQueryHistoryMaxGB:
+		return &s.QueryHistoryMaxGB
 	case KeyTablePrefix:
 		return &s.TablePrefix
 	case KeySchemaSuffix:
@@ -968,6 +1049,30 @@ func valueOf(key string, raw json.RawMessage, base, home string) (string, error)
 		if sec, err := strconv.Atoi(v); err != nil || sec < MinForgePollSeconds {
 			return "", fmt.Errorf("%s must be a whole number of seconds, %d or more, not %s", key, MinForgePollSeconds, raw)
 		}
+	} else if key == KeyQueryHistoryDays {
+		var n json.Number
+		if err := json.Unmarshal(raw, &n); err != nil {
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return "", fmt.Errorf("%s must be a whole number of days (0 to %d), not %s", key, MaxQueryHistoryDays, raw)
+			}
+		} else {
+			v = n.String()
+		}
+		if d, err := strconv.Atoi(v); err != nil || d < 0 || d > MaxQueryHistoryDays {
+			return "", fmt.Errorf("%s must be a whole number of days (0 to %d), not %s", key, MaxQueryHistoryDays, raw)
+		}
+	} else if key == KeyQueryHistoryMaxGB {
+		var n json.Number
+		if err := json.Unmarshal(raw, &n); err != nil {
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return "", fmt.Errorf("%s must be a number of GiB (0 or more), not %s", key, raw)
+			}
+		} else {
+			v = n.String()
+		}
+		if f, err := strconv.ParseFloat(v, 64); err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+			return "", fmt.Errorf("%s must be a number of GiB (0 or more), not %s", key, raw)
+		}
 	} else if err := json.Unmarshal(raw, &v); err != nil {
 		return "", fmt.Errorf("%s must be a string, not %s", key, raw)
 	}
@@ -994,6 +1099,8 @@ func valueOf(key string, raw json.RawMessage, base, home string) (string, error)
 		return "", fmt.Errorf("%s must be letters, digits, _ and -, not %q", key, v)
 	case key == KeyLineageProjects && !lineageProjectsOK(v):
 		return "", fmt.Errorf("%s must be comma-separated GCP project IDs (letters, digits, -, :, .), not %q", key, v)
+	case key == KeyQueryHistoryProjects && !queryHistoryProjectsOK(v):
+		return "", fmt.Errorf("%s must be \"auto\", \"org\", or comma-separated GCP project IDs (letters, digits, -, :, .), not %q", key, v)
 	case key == KeyWebBrowser && v == "":
 		return "", fmt.Errorf("%s must be \"%s\", \"%s\" or a Chromium browser's path or name, not \"\"", key, BrowserDefault, BrowserApp)
 	case key == KeyWebBrowser && v != BrowserDefault && v != BrowserApp:
@@ -1028,6 +1135,25 @@ func lineageProjectsOK(v string) bool {
 	for _, part := range strings.Split(v, ",") {
 		p := strings.TrimSpace(part)
 		if p == "" || !gcpProjectRE.MatchString(p) {
+			return false
+		}
+	}
+	return true
+}
+
+func queryHistoryProjectsOK(v string) bool {
+	if strings.TrimSpace(v) == "" {
+		return true
+	}
+	for _, part := range strings.Split(v, ",") {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			return false
+		}
+		if strings.EqualFold(p, "auto") || strings.EqualFold(p, "org") {
+			continue
+		}
+		if !gcpProjectRE.MatchString(p) {
 			return false
 		}
 	}

@@ -72,6 +72,7 @@ Give each question 2 to 4 options with your recommendation first, drawn from the
   | `unknown` | its readers couldn't be looked up (`readersError`) | report it as unchecked: it is not safe |
   | `low` | nothing still reads it, or the base branch made the change (`change.onBase`) | nothing |
 
-- `readers[]`: who reads the column, from Dataplex lineage. `filePath` is the reader's file when it is in this project; a reader without one is outside the project, so name its `table` to the user. `probablyUpdated` means the branch changed the reader and it no longer names the column; `stillNamed` means it changed it and still does.
+- `readers[]`: who reads the column, from Dataplex/Unity Catalog/Snowflake lineage and (when configured) external `SELECT`-only query history. `filePath` is the reader's file when it is in this project; a reader without one is outside the project, so name its `table` (or `consumer.tool` / `consumer.asset` / `consumer.user` when `consumer` is present) to the user. `probablyUpdated` means the branch changed the reader and it no longer names the column; `stillNamed` means it changed it and still does.
+- `warnings`: report-level notes from optional query-history lookups (e.g. missing `roles/bigquery.resourceViewer`, scan cap or row cap). On Databricks, non-admin principals need `CAN MONITOR` or `CAN MANAGE` on BI SQL warehouses to see other users' queries.
 - `unchecked`: changed tables the check couldn't compare, each with its `reason`.
 - `unset`: the comparison was with default targets (step 1). It is spelled `unsetSetting` in `xf cost`.

@@ -157,6 +157,9 @@ type Reader struct {
 	// it: CheckedClear or CheckedReads; "" when it wasn't dry run or there
 	// was no telling.
 	Checked string `json:"checked,omitempty"`
+	// Consumer is set when this reader is an external SELECT-only consumer
+	// (BI tool, reverse ETL, scheduled query or analyst) from query history.
+	Consumer *lineage.Consumer `json:"consumer,omitempty"`
 }
 
 // Column is a dropped or retyped column and who reads it.
@@ -285,7 +288,11 @@ type Report struct {
 	// models were checked on (ADR 0042); nil for BigQuery, or when no model
 	// needed it.
 	Warehouse *WarehouseUse `json:"warehouse,omitempty"`
-	CheckedAt time.Time     `json:"checkedAt"`
+	// Warnings are report-level notes from optional lineage sources (such as
+	// BigQuery INFORMATION_SCHEMA.JOBS access or scan caps) that shouldn't
+	// downgrade individual columns to SeverityUnknown.
+	Warnings  []string  `json:"warnings,omitempty"`
+	CheckedAt time.Time `json:"checkedAt"`
 	// Signature is what was checked (see Signature).
 	Signature string `json:"signature"`
 	// Stale is set when the branch has changed since: what it changes, or
@@ -400,6 +407,14 @@ func TablePath(id string) string {
 // column, the table path (see TablePath) for a deleted table; also are
 // other names it may name it by, and it still names it when it names any.
 func AnnotateReader(link lineage.ColumnLink, name string, ctx ReaderContext, also ...string) Reader {
+	if link.Consumer != nil {
+		return Reader{
+			Table:          link.Consumer.ID(),
+			Column:         link.Column,
+			DependencyType: link.DependencyType,
+			Consumer:       link.Consumer,
+		}
+	}
 	table := link.Table
 	if ctx.ToProd != nil {
 		table = ctx.ToProd(table)
@@ -434,6 +449,10 @@ func ImpactReaders(links []lineage.ColumnLink, table, name string, ctx ReaderCon
 	var readers []Reader
 	for _, l := range links {
 		r := AnnotateReader(l, name, ctx, also...)
+		if l.Consumer != nil {
+			readers = append(readers, r)
+			continue
+		}
 		assertion := l.Assertion || ctx.IsAssertion != nil && ctx.IsAssertion(r.Table)
 		// An incremental table reads itself, under its old name too when
 		// renamed.
@@ -482,19 +501,46 @@ func readerRank(r Reader) int {
 // RankReaders keeps one entry per reader table and column: readers outside
 // the project first, then those probably updated, then those deleted.
 func RankReaders(readers []Reader) []Reader {
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	var out []Reader
 	for _, r := range readers {
 		key := r.Table + "#" + r.Column
-		if !seen[key] {
-			seen[key] = true
+		i, ok := seen[key]
+		if !ok {
+			seen[key] = len(out)
+			if r.Consumer != nil {
+				c := *r.Consumer
+				r.Consumer = &c
+			}
 			out = append(out, r)
+			continue
+		}
+		// Keep first-seen entry; for external consumers only upgrade a
+		// TableOnly link to a confirmed column link without double-counting.
+		if r.Consumer != nil && out[i].Consumer != nil && linkOrder[r.DependencyType] < linkOrder[out[i].DependencyType] {
+			out[i].DependencyType = r.DependencyType
 		}
 	}
 	slices.SortStableFunc(out, func(a, b Reader) int {
+		aCons, bCons := 0, 0
+		if a.Consumer != nil {
+			aCons = 1
+		}
+		if b.Consumer != nil {
+			bCons = 1
+		}
+		aQueries, bQueries := 0, 0
+		if a.Consumer != nil {
+			aQueries = a.Consumer.Queries
+		}
+		if b.Consumer != nil {
+			bQueries = b.Consumer.Queries
+		}
 		return cmp.Or(
 			cmp.Compare(readerRank(a), readerRank(b)),
 			cmp.Compare(linkOrder[a.DependencyType], linkOrder[b.DependencyType]),
+			cmp.Compare(aCons, bCons),
+			cmp.Compare(bQueries, aQueries),
 			localeCompare(a.Table, b.Table),
 			localeCompare(a.Column, b.Column))
 	})
@@ -607,13 +653,29 @@ const (
 // deletedChange marks a deleted table where a ColumnChange is expected.
 var deletedChange = ColumnChange{Kind: "deleted"}
 
+// hasConfirmedDropReader reports whether readers contains any open reader that
+// definitely breaks on a column drop — either any non-consumer table/view
+// reader, or an external consumer with confirmed column-level usage (not a
+// SELECT * TableOnly heuristic).
+func hasConfirmedDropReader(readers []Reader) bool {
+	for _, r := range readers {
+		if IsSettled(r) {
+			continue
+		}
+		if r.Consumer == nil || r.DependencyType != lineage.TableOnly {
+			return true
+		}
+	}
+	return false
+}
+
 // ImpactSeverity is low for a change the base branch already made, which
 // this branch can do nothing about, unless its uniqueKey alone names the
 // dropped column (keyedHere); else critical for a drop that breaks
 // the table's own incremental run (BreaksRun); else unknown when the readers couldn't
 // be looked up, low when nothing still reads it (no readers, or only ones
 // this branch probably updated), else critical for a drop or deletion and a
-// warning for a retype.
+// warning for a retype (or a drop read only by SELECT * external consumers).
 func ImpactSeverity(change ColumnChange, readers []Reader, readersError string) Severity {
 	switch {
 	case change.OnBase && !change.keyedHere():
@@ -622,13 +684,19 @@ func ImpactSeverity(change ColumnChange, readers []Reader, readersError string) 
 		return SeverityCritical
 	case change.Kind == TypeChanged && change.Widening:
 		return SeverityLow
-	case OpenReaders(readers) > 0 && change.Kind != TypeChanged:
+	case OpenReaders(readers) > 0 && change.Kind == deletedChange.Kind:
+		return SeverityCritical
+	case OpenReaders(readers) > 0 && change.Kind != TypeChanged && hasConfirmedDropReader(readers):
 		return SeverityCritical
 	case readersError != "":
 		return SeverityUnknown
 	case OpenReaders(readers) == 0:
 		return SeverityLow
 	case change.Kind == TypeChanged:
+		return SeverityWarning
+	case change.Kind == Dropped && OpenReaders(readers) > 0:
+		// Only SELECT * (TableOnly) external consumers: review before merging
+		// without tripping a hard critical gate on ad-hoc SELECT * LIMIT 10.
 		return SeverityWarning
 	}
 	return SeverityCritical
@@ -686,6 +754,9 @@ func cell(text string) string {
 // ReaderNote is what this branch does about a reader, or that it is
 // outside the project.
 func ReaderNote(r Reader) string {
+	if r.Consumer != nil {
+		return r.Consumer.Note()
+	}
 	note := ""
 	switch {
 	case r.DeletedOnBranch:
@@ -727,6 +798,15 @@ func ReaderName(reader, table string) string {
 		return reader
 	}
 	return ShortTable(reader)
+}
+
+// ReaderDisplay is a plain-text display name for r: the external consumer's
+// label when r is a SELECT-only consumer, else ShortTable(r.Table).
+func ReaderDisplay(r Reader) string {
+	if r.Consumer != nil {
+		return r.Consumer.Label()
+	}
+	return ShortTable(r.Table)
 }
 
 // BaseName is the base branch as a report names it, e.g. origin/main.

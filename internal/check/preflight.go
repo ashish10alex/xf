@@ -142,6 +142,14 @@ type Probes struct {
 	// there; Lineage searches Data Lineage in projects/<project>/locations/<location>.
 	DryRun  func(ctx context.Context, project, location string) error
 	Lineage func(ctx context.Context, project, location string) error
+	// QueryHistoryProjects lists BigQuery projects to probe INFORMATION_SCHEMA.JOBS
+	// access via a free dry run when configured ("auto", "org", or project IDs).
+	QueryHistoryProjects []string
+	// QueryHistoryExtra lists extra lineageProjects that "auto" also scans.
+	QueryHistoryExtra []string
+	// QueryHistoryProbe dry-runs a 0-row SELECT against INFORMATION_SCHEMA.JOBS
+	// in billingProject/viewProject/location (orgView=true for JOBS_BY_ORGANIZATION).
+	QueryHistoryProbe func(ctx context.Context, billingProject, viewProject, location string, orgView bool) error
 	// Databricks, set for a dbt project that builds in Databricks (ADR
 	// 0042), probes its workspace and SQL warehouse in place of Google and
 	// BigQuery, starting nothing: its line says which warehouse the checks
@@ -369,9 +377,54 @@ func access(ctx context.Context, p Probes, out *Preflight, add func(Line)) {
 	if err := p.Lineage(ctx, lineageIn, location); err != nil {
 		add(Line{Name: "Data Lineage", Status: Warn, Detail: lineageIn + " (" + location + asYou + "): " + oneLine(errText(err)),
 			Fix: "grant roles/datalineage.viewer on " + lineageIn + ", with the Data Lineage API enabled; until then column impact marks readers ❔"})
+	} else {
+		add(Line{Name: "Data Lineage", Status: Pass, Detail: lineageIn + " (" + location + asYou + ")"})
+	}
+	queryHistoryPreflight(ctx, p, lineageIn, location, asYou, add)
+}
+
+func queryHistoryPreflight(ctx context.Context, p Probes, lineageIn, location, asYou string, add func(Line)) {
+	if len(p.QueryHistoryProjects) == 0 || p.QueryHistoryProbe == nil || location == "" {
 		return
 	}
-	add(Line{Name: "Data Lineage", Status: Pass, Detail: lineageIn + " (" + location + asYou + ")"})
+	type target struct {
+		billing, view, label string
+		orgView              bool
+	}
+	var targets []target
+	seen := map[string]bool{}
+	for _, entry := range p.QueryHistoryProjects {
+		if strings.EqualFold(entry, "org") {
+			targets = []target{{billing: lineageIn, label: "organization (" + location + ")", orgView: true}}
+			break
+		}
+		if strings.EqualFold(entry, "auto") {
+			for _, ep := range append([]string{lineageIn}, p.QueryHistoryExtra...) {
+				if ep != "" && !seen[ep] {
+					seen[ep] = true
+					targets = append(targets, target{billing: ep, view: ep, label: ep + " (" + location + ")"})
+				}
+			}
+			continue
+		}
+		if !seen[entry] {
+			seen[entry] = true
+			targets = append(targets, target{billing: entry, view: entry, label: entry + " (" + location + ")"})
+		}
+	}
+	for _, t := range targets {
+		err := p.QueryHistoryProbe(ctx, t.billing, t.view, p.Location, t.orgView)
+		if err == nil {
+			add(Line{Name: "Query History", Status: Pass, Detail: t.label + asYou})
+			continue
+		}
+		role := "roles/bigquery.resourceViewer on " + t.view
+		if t.orgView {
+			role = "roles/bigquery.resourceViewer at the organization level"
+		}
+		add(Line{Name: "Query History", Status: Warn, Detail: t.label + asYou + ": " + oneLine(errText(err)),
+			Fix: "grant " + role + "; until then external SELECT readers are skipped"})
+	}
 }
 
 // errText is a BigQuery error's message, without the "(HTTP 403)".

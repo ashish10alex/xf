@@ -284,7 +284,7 @@ func readerNames(readers []impact.Reader) []string {
 		if impact.IsSettled(rd) {
 			continue
 		}
-		name := impact.ShortTable(rd.Table)
+		name := impact.ReaderDisplay(rd)
 		if rd.FilePath != "" {
 			name += " (" + rd.FilePath + ")"
 		}

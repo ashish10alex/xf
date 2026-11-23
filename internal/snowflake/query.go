@@ -69,6 +69,7 @@ func (c *Client) StartQuery(ctx context.Context, o warehouse.QueryOptions) (ware
 			"MULTI_STATEMENT_COUNT":   "0",
 			"DATE_OUTPUT_FORMAT":      "YYYY-MM-DD",
 			"TIMESTAMP_OUTPUT_FORMAT": "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
+			"QUERY_TAG":               "xf:scratch",
 		},
 	}
 	if db != "" {

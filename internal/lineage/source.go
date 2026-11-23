@@ -147,6 +147,7 @@ type Source struct {
 	graph         *project.Graph
 	toProd        func(string) string
 	extraProjects []string
+	jobHistory    *jobHistorySource
 	sem           chan struct{}
 	// tracked is whether Dataplex tracks a table's column lineage; readers
 	// are a table's table-level readers cached per (parent, table) so a failing
@@ -181,7 +182,35 @@ func (s *Source) WithProjects(projects ...string) *Source {
 		}
 	}
 	s.extraProjects = out
+	if s.jobHistory != nil {
+		s.jobHistory.extra = out
+	}
 	return s
+}
+
+// WithJobHistory enables scanning BigQuery INFORMATION_SCHEMA.JOBS for
+// SELECT-only external/BI consumers alongside Dataplex table lineage.
+func (s *Source) WithJobHistory(exec QueryExecutor, cfg JobHistoryConfig, cache *JobHistoryCache) *Source {
+	s.jobHistory = newJobHistorySource(exec, s.tables, s.extraProjects, cfg, cache)
+	return s
+}
+
+// Preload starts batched BigQuery query-history lookups for tables so they
+// execute concurrently with Dataplex column-lineage searches.
+func (s *Source) Preload(ctx context.Context, tables []string) {
+	if s.jobHistory != nil {
+		s.jobHistory.preload(ctx, tables)
+	}
+}
+
+// Warnings returns report-level warnings from optional query-history lookups
+// (such as missing roles/bigquery.resourceViewer or scan cap hits) without
+// downgrading individual columns to unknown severity.
+func (s *Source) Warnings() []string {
+	if s.jobHistory == nil {
+		return nil
+	}
+	return s.jobHistory.Warnings()
 }
 
 // kind is the kind of the project's action table is a run of.
@@ -373,19 +402,25 @@ func (s *Source) ColumnLinks(ctx context.Context, table, column string) ([]Colum
 	// it up from the cache.
 	go func() { _, _ = s.readerLinks(ctx, parents, table) }()
 	links, searchErr := s.searchAcross(ctx, parents, SearchRequest{Source: &EntityReference{FullyQualifiedName: FQN(table), Field: Field(column)}})
-	if searchErr != nil && len(links) == 0 {
+	var found []ColumnLink
+	if len(links) > 0 {
+		found = ColumnLinksFromAPI(links)
+		var wg sync.WaitGroup
+		for i := range found {
+			wg.Go(func() {
+				// Dataplex returns lowercase names
+				found[i].Column = s.tables.Casing(ctx, found[i].Table, found[i].Column)
+				found[i].Assertion = s.isAssertion(found[i].Table)
+			})
+		}
+		wg.Wait()
+	}
+	if s.jobHistory != nil {
+		found = append(found, s.jobHistory.columnLinks(ctx, table, column)...)
+	}
+	if searchErr != nil && len(found) == 0 {
 		return nil, searchErr
 	}
-	found := ColumnLinksFromAPI(links)
-	var wg sync.WaitGroup
-	for i := range found {
-		wg.Go(func() {
-			// Dataplex returns lowercase names
-			found[i].Column = s.tables.Casing(ctx, found[i].Table, found[i].Column)
-			found[i].Assertion = s.isAssertion(found[i].Table)
-		})
-	}
-	wg.Wait()
 	return found, searchErr
 }
 
@@ -428,13 +463,16 @@ func (s *Source) TableReaders(ctx context.Context, table string) ([]ColumnLink, 
 		return nil, err
 	}
 	links, searchErr := s.readerLinks(ctx, parents, table)
-	if searchErr != nil && len(links) == 0 {
-		return nil, searchErr
-	}
 	readers := TablesFromAPI(links)
 	out := make([]ColumnLink, len(readers))
 	for i, r := range readers {
 		out[i] = s.tableLink(r)
+	}
+	if s.jobHistory != nil {
+		out = append(out, s.jobHistory.tableLinks(ctx, table)...)
+	}
+	if searchErr != nil && len(out) == 0 {
+		return nil, searchErr
 	}
 	return out, searchErr
 }

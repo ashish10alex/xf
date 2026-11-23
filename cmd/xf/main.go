@@ -302,6 +302,9 @@ func projectDeps(root, name string, b backend.Backend, settings config.Loaded, c
 		deps.DeferWriter = nil // dbt defers itself: no proxy views
 		deps.DbtProdTarget = settings.DbtProdTarget
 		deps.LineageProjects = settings.LineageProjects
+		deps.QueryHistoryProjects = settings.QueryHistoryProjects
+		deps.QueryHistoryDays = settings.QueryHistoryDays
+		deps.QueryHistoryMaxGB = settings.QueryHistoryMaxGB
 		deps.Unset = unsetDbtProdTarget(settings, os.Getenv)
 	}
 	return deps
@@ -365,6 +368,9 @@ func addDataformDeps(deps *frontend.Deps, root, bin string, settings config.Load
 	deps.DevCompilerOptions = settings.DevCompilerOptions
 	deps.ProdCompilerOptions = settings.ProdCompilerOptions
 	deps.LineageProjects = settings.LineageProjects
+	deps.QueryHistoryProjects = settings.QueryHistoryProjects
+	deps.QueryHistoryDays = settings.QueryHistoryDays
+	deps.QueryHistoryMaxGB = settings.QueryHistoryMaxGB
 	deps.Unset = unsetProdOptions(settings)
 	// Asked for only where the answer would be read back: not with
 	// --config, which reads another file than the one it is saved to.

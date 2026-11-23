@@ -96,12 +96,17 @@ type historyQuery struct {
 	Status        string `json:"status"`
 	Text          string `json:"query_text"`
 	StatementType string `json:"statement_type"`
-	Warehouse     string `json:"warehouse_id"`
-	Endpoint      string `json:"endpoint_id"`
-	Start         int64  `json:"query_start_time_ms"`
-	Duration      int64  `json:"duration"`
-	RowsProduced  int64  `json:"rows_produced"`
-	Metrics       *struct {
+	UserName      string `json:"user_name"`
+	ExecutedAs    string `json:"executed_as_user_name"`
+	ChannelUsed   *struct {
+		Name string `json:"name"`
+	} `json:"channel_used"`
+	Warehouse    string `json:"warehouse_id"`
+	Endpoint     string `json:"endpoint_id"`
+	Start        int64  `json:"query_start_time_ms"`
+	Duration     int64  `json:"duration"`
+	RowsProduced int64  `json:"rows_produced"`
+	Metrics      *struct {
 		ReadBytes    int64 `json:"read_bytes"`
 		RowsRead     int64 `json:"rows_read_count"`
 		RowsProduced int64 `json:"rows_produced_count"`

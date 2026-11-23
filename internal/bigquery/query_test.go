@@ -165,3 +165,42 @@ func TestQueryJobFailed(t *testing.T) {
 		t.Errorf("status = %+v, want the message with its position", st)
 	}
 }
+
+func TestStartQueryPrefixAndMaxBytesBilled(t *testing.T) {
+	var gotJobID, gotMaxBytes string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			JobReference  struct{ JobID string }
+			Configuration struct {
+				Query struct {
+					MaximumBytesBilled string `json:"maximumBytesBilled"`
+				}
+			}
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		gotJobID = req.JobReference.JobID
+		gotMaxBytes = req.Configuration.Query.MaximumBytesBilled
+		_, _ = w.Write([]byte(`{"jobReference":{"location":"EU"}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClientWithHTTP(srv.Client(), srv.URL, "")
+	ref, err := c.StartQuery(context.Background(), warehouse.QueryOptions{
+		Project:            "p",
+		Location:           "EU",
+		SQL:                "SELECT 1",
+		JobPrefix:          "xf_impact_",
+		MaximumBytesBilled: 10 << 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(ref.ID, "xf_impact_") || gotJobID != ref.ID {
+		t.Errorf("JobID = %q (ref %q), want xf_impact_ prefix", gotJobID, ref.ID)
+	}
+	if gotMaxBytes != "10737418240" {
+		t.Errorf("maximumBytesBilled = %q, want 10737418240", gotMaxBytes)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ashish10alex/xf/internal/lineage"
 	"github.com/ashish10alex/xf/internal/project"
@@ -195,14 +196,19 @@ func (c *Client) DownstreamColumns(ctx context.Context, table, column string) ([
 // is column impact's impact.Readers on Databricks. Lookups are kept for the
 // life of the Readers, one impact check.
 type Readers struct {
-	c      *Client
-	graph  *project.Graph
-	toProd func(string) string
-	sem    chan struct{}
+	c       *Client
+	graph   *project.Graph
+	toProd  func(string) string
+	extDays int
+	now     func() time.Time
+	sem     chan struct{}
 
-	mu      sync.Mutex
-	tables  map[string]*tableCall
-	tracked map[string]*trackedCall
+	mu       sync.Mutex
+	tables   map[string]*tableCall
+	tracked  map[string]*trackedCall
+	ext      *extCall
+	warnings []string
+	warnSeen map[string]bool
 }
 
 // NewReaders reads lineage with c, and spots the project's assertions in
@@ -290,6 +296,7 @@ func (r *Readers) ColumnLinks(ctx context.Context, table, column string) ([]line
 		seen[ref] = true
 		out = append(out, lineage.ColumnLink{Table: ref.Table, Column: ref.Column, DependencyType: lineage.Other, Assertion: r.isAssertion(ref.Table)})
 	}
+	out = append(out, r.extColumnLinks(ctx, table, column)...)
 	return out, nil
 }
 
@@ -406,9 +413,10 @@ func (r *Readers) TableReaders(ctx context.Context, table string) ([]lineage.Col
 	if err != nil {
 		return nil, err
 	}
-	out := make([]lineage.ColumnLink, len(readers))
-	for i, t := range readers {
-		out[i] = lineage.ColumnLink{Table: t, DependencyType: lineage.TableOnly, Assertion: r.isAssertion(t)}
+	out := make([]lineage.ColumnLink, 0, len(readers))
+	for _, t := range readers {
+		out = append(out, lineage.ColumnLink{Table: t, DependencyType: lineage.TableOnly, Assertion: r.isAssertion(t)})
 	}
+	out = append(out, r.extTableLinks(ctx, table)...)
 	return out, nil
 }

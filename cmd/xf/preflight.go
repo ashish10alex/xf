@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,11 @@ import (
 
 // preflightTimeout bounds the probes: they take seconds when all is well.
 const preflightTimeout = 45 * time.Second
+
+var (
+	validPreflightProjectRE = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	validPreflightRegionRE  = regexp.MustCompile(`^[a-z0-9-]+$`)
+)
 
 // inCI says xf runs in a CI job, where the probes run as CI's identity.
 func inCI(getenv func(string) string) bool {
@@ -73,6 +79,31 @@ func preflightProbes(name, root, base string, settings config.Loaded, comment bo
 		_, err = c.SearchLinks(ctx, lineage.SearchRequest{Parent: "projects/" + project + "/locations/" + location,
 			Target: &lineage.EntityReference{FullyQualifiedName: lineage.FQN(project + ".xf_preflight.xf_preflight")}})
 		return err
+	}
+	if qhProjects := config.ParseLineageProjects(settings.QueryHistoryProjects); len(qhProjects) > 0 {
+		if _, enabled := config.ParseQueryHistoryDays(settings.QueryHistoryDays); enabled {
+			p.QueryHistoryProjects = qhProjects
+			p.QueryHistoryExtra = config.ParseLineageProjects(settings.LineageProjects)
+			p.QueryHistoryProbe = func(ctx context.Context, billingProject, viewProject, location string, orgView bool) error {
+				reg := strings.ToLower(strings.TrimSpace(location))
+				if !validPreflightRegionRE.MatchString(reg) {
+					return fmt.Errorf("invalid BigQuery region %q", location)
+				}
+				if !orgView && !validPreflightProjectRE.MatchString(viewProject) {
+					return fmt.Errorf("invalid BigQuery project %q", viewProject)
+				}
+				c, err := newWarehouse(ctx)
+				if err != nil {
+					return err
+				}
+				view := fmt.Sprintf("`%s.region-%s.INFORMATION_SCHEMA.JOBS_BY_PROJECT`", viewProject, reg)
+				if orgView {
+					view = fmt.Sprintf("`region-%s.INFORMATION_SCHEMA.JOBS_BY_ORGANIZATION`", reg)
+				}
+				_, err = c.Check(ctx, billingProject, location, "SELECT 1 FROM "+view+" LIMIT 0")
+				return err
+			}
+		}
 	}
 	if pr != nil && pr.Token != "" {
 		p.Comments = forge.NewComments(pr.Repo, pr.Number, pr.Token, nil)

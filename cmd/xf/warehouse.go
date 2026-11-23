@@ -443,7 +443,7 @@ var errNoSnowflakeImpactWarehouse = fmt.Errorf("%w: column impact checks the cha
 // built table schemas from DESCRIBE TABLE, changed model schemas from
 // SELECT * FROM (<query>) LIMIT 0, and downstream readers from
 // SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY and OBJECT_DEPENDENCIES.
-func (w *projectWarehouse) snowflakeImpact(ctx context.Context, g *project.Graph, toProd func(string) string) (deps impact.Deps, used func() *impact.WarehouseUse, err error) {
+func (w *projectWarehouse) snowflakeImpact(ctx context.Context, g *project.Graph, toProd func(string) string, extDays int) (deps impact.Deps, used func() *impact.WarehouseUse, err error) {
 	c := w.snowflake()
 	if c.Warehouse() == "" {
 		return deps, nil, errNoSnowflakeImpactWarehouse
@@ -455,6 +455,9 @@ func (w *projectWarehouse) snowflakeImpact(ctx context.Context, g *project.Graph
 	var checked atomic.Int64
 	tables := lineage.NewTables(c.Table)
 	readers := snowflake.NewReaders(c, g, toProd)
+	if extDays > 0 {
+		readers.WithExternalReaders(extDays)
+	}
 	deps = impact.Deps{
 		Schema: tables.Schema,
 		DryRun: func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
@@ -725,7 +728,7 @@ var errNoImpactWarehouse = fmt.Errorf("%w: column impact plans the changed model
 // DESCRIBE QUERY of the changed models alone on the SQL warehouse, which
 // running the check asks for. used says afterwards which warehouse the
 // check used, and whether it started it; nil when no model needed it.
-func (w *projectWarehouse) databricksImpact(ctx context.Context, g *project.Graph, toProd func(string) string) (deps impact.Deps, used func() *impact.WarehouseUse, err error) {
+func (w *projectWarehouse) databricksImpact(ctx context.Context, g *project.Graph, toProd func(string) string, extDays int) (deps impact.Deps, used func() *impact.WarehouseUse, err error) {
 	c := w.databricks()
 	if c.Warehouse() == "" {
 		return deps, nil, errNoImpactWarehouse
@@ -737,13 +740,17 @@ func (w *projectWarehouse) databricksImpact(ctx context.Context, g *project.Grap
 	}
 	var checked atomic.Int64
 	tables := lineage.NewTables(c.Table)
+	readers := databricks.NewReaders(c, g, toProd)
+	if extDays > 0 {
+		readers.WithExternalReaders(extDays)
+	}
 	deps = impact.Deps{
 		Schema: tables.Schema,
 		DryRun: func(ctx context.Context, project, location, sql string) (*warehouse.Check, error) {
 			checked.Add(1)
 			return c.Check(ctx, project, location, sql)
 		},
-		Readers:   databricks.NewReaders(c, g, toProd),
+		Readers:   readers,
 		OnDemand:  true,
 		Warehouse: project.Databricks,
 	}

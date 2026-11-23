@@ -202,6 +202,8 @@ func groupReaders(t Table, of string) []*readerGroup {
 		}
 		if !IsSettled(r) && IsSettled(g.reader) {
 			g.reader = r // the column it still has to stop reading speaks for it
+		} else if g.reader.Consumer != nil && r.Consumer != nil && linkOrder[r.DependencyType] < linkOrder[g.reader.DependencyType] {
+			g.reader.DependencyType = r.DependencyType
 		}
 		if column != "" && !slices.Contains(g.columns, column) {
 			g.columns = append(g.columns, column)
@@ -251,10 +253,20 @@ func boolOrder(b bool) int {
 	return 0
 }
 
+func consumerLinkLabel(dep lineage.DependencyType) string {
+	if dep == lineage.TableOnly {
+		return "may read"
+	}
+	return "queries column"
+}
+
 // linkText is how a reader reads what the row changes.
 func linkText(g *readerGroup) string {
 	if g.whole {
 		return "reads the table"
+	}
+	if g.reader.Consumer != nil {
+		return consumerLinkLabel(g.reader.DependencyType)
 	}
 	return LinkLabels[g.reader.DependencyType]
 }
@@ -276,7 +288,12 @@ func (n namer) affected(groups []*readerGroup, many, renamed bool) ([]string, []
 	var cells []string
 	var list []LedgerReader
 	for _, g := range groups {
-		name := n.code(g.reader.Table)
+		var name string
+		if g.reader.Consumer != nil {
+			name = cell(g.reader.Consumer.Label())
+		} else {
+			name = n.code(g.reader.Table)
+		}
 		parts := []string{name}
 		if many && len(g.columns) > 0 {
 			parts[0] += " reads " + codeList(g.columns)
@@ -294,7 +311,11 @@ func (n namer) affected(groups []*readerGroup, many, renamed bool) ([]string, []
 			if len(g.columns) > 0 {
 				reads = codeList(g.columns)
 			}
-			reads += ", " + map[lineage.DependencyType]string{lineage.ExactCopy: "as an exact copy", lineage.Other: "derived", lineage.TableOnly: "may read"}[g.reader.DependencyType]
+			how := map[lineage.DependencyType]string{lineage.ExactCopy: "as an exact copy", lineage.Other: "derived", lineage.TableOnly: "may read"}[g.reader.DependencyType]
+			if g.reader.Consumer != nil {
+				how = consumerLinkLabel(g.reader.DependencyType)
+			}
+			reads += ", " + how
 		}
 		list = append(list, LedgerReader{Reader: name, Reads: reads, Of: n.code(g.of), Note: noteText(g, renamed)})
 	}
@@ -658,6 +679,14 @@ func BuildLedger(r *Report) Ledger {
 	if readsGraphs(r) {
 		l.Notes = append(l.Notes, "Property graphs come from the compile, as lineage doesn't record what one reads.")
 	}
+	if readsExternal(r) {
+		l.Notes = append(l.Notes, "External readers come from recent SELECT queries in warehouse query history.")
+	}
+	for _, w := range r.Warnings {
+		if strings.TrimSpace(w) != "" {
+			l.Notes = append(l.Notes, "⚠ "+w)
+		}
+	}
 	if note := OnBaseNote(r); note != "" {
 		l.Notes = append(l.Notes, note)
 	}
@@ -673,6 +702,20 @@ func readsGraphs(r *Report) bool {
 	graph := func(rs []Reader) bool { return slices.ContainsFunc(rs, func(x Reader) bool { return x.Graph }) }
 	for _, t := range r.AtRisk {
 		if graph(t.Readers) || slices.ContainsFunc(t.Columns, func(c Column) bool { return graph(c.Readers) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// readsExternal says whether an external SELECT-only consumer reads something
+// r drops, retypes or deletes.
+func readsExternal(r *Report) bool {
+	ext := func(rs []Reader) bool {
+		return slices.ContainsFunc(rs, func(x Reader) bool { return x.Consumer != nil })
+	}
+	for _, t := range r.AtRisk {
+		if ext(t.Readers) || slices.ContainsFunc(t.Columns, func(c Column) bool { return ext(c.Readers) }) {
 			return true
 		}
 	}

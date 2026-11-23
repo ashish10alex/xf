@@ -188,6 +188,7 @@ func compiledSQL(g *project.Graph) error {
 // DESCRIBE QUERY on the SQL warehouse, which the report names.
 func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engine.ImpactFunc {
 	lc := lazyLineage()
+	jobCache := lineage.NewJobHistoryCache()
 	bq := pw.bq
 	return func(ctx context.Context, req engine.ImpactRequest, res *changes.Result, g *project.Graph, progress func(impact.Progress)) (*impact.Report, error) {
 		if g == nil {
@@ -220,13 +221,14 @@ func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) eng
 			return targets.commit(ctx, target, res.MergeBase)
 		}
 		if onDemand {
+			extDays, _ := config.ParseQueryHistoryDays(req.QueryHistoryDays)
 			var deps impact.Deps
 			var used func() *impact.WarehouseUse
 			var err error
 			if whKind == project.Snowflake {
-				deps, used, err = pw.snowflakeImpact(ctx, g, toProd)
+				deps, used, err = pw.snowflakeImpact(ctx, g, toProd, extDays)
 			} else {
-				deps, used, err = pw.databricksImpact(ctx, g, toProd)
+				deps, used, err = pw.databricksImpact(ctx, g, toProd, extDays)
 			}
 			if err != nil {
 				return nil, err
@@ -239,10 +241,12 @@ func dbtImpact(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) eng
 			return report, err
 		}
 		tables := lineage.NewTables(lazyTables(bq))
+		readers := lineage.NewSource(client, tables, g, toProd).WithProjects(config.ParseLineageProjects(req.LineageProjects)...)
+		configureJobHistory(readers, bq, req, jobCache)
 		return impact.Run(ctx, res, g, impact.Deps{
 			Schema:  tables.Schema,
 			DryRun:  dryRun,
-			Readers: lineage.NewSource(client, tables, g, toProd).WithProjects(config.ParseLineageProjects(req.LineageProjects)...),
+			Readers: readers,
 			ToProd:  toProd,
 			Base:    base,
 		}, progress)

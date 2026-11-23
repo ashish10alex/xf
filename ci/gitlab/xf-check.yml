@@ -35,6 +35,9 @@ xf-check:
     XF_FAIL_ON_UNFILTERED: ""   # true: fail when an estimated query lacks a partition filter
     XF_FAIL_ON_UNESTIMATED: ""  # true: fail when a changed action couldn't be estimated
     XF_QUIET_UNDER: "1GiB"      # cost alone needs a run to grow this much for a note
+    XF_QUERY_HISTORY_PROJECTS: "" # auto, org, or comma-separated BigQuery billing projects for SELECT/BI readers
+    XF_QUERY_HISTORY_DAYS: ""   # lookback days (1..90, default 14; 0 disables external readers)
+    XF_QUERY_HISTORY_MAX_GB: "" # BigQuery scan cap in GiB (default 10; 0 for unlimited)
     XF_NPM_CI: auto             # auto runs npm ci when the project has a package.json, unless it is a dbt project
     XF_INSTALL_DATAFORM: auto   # auto installs the Dataform CLI unless dataform is on PATH or it is a dbt project
     XF_ARGS: ""                 # more flags for xf check, split on spaces
@@ -91,6 +94,9 @@ xf-check:
       [ -n "$XF_FAIL_OVER_DELTA" ] && flags+=(--fail-over-delta "$XF_FAIL_OVER_DELTA")
       is_true "$XF_FAIL_ON_UNFILTERED" && flags+=(--fail-on-unfiltered)
       is_true "$XF_FAIL_ON_UNESTIMATED" && flags+=(--fail-on-unestimated)
+      [ -n "$XF_QUERY_HISTORY_PROJECTS" ] && flags+=(--query-history-projects "$XF_QUERY_HISTORY_PROJECTS")
+      [ -n "$XF_QUERY_HISTORY_DAYS" ] && flags+=(--query-history-days "$XF_QUERY_HISTORY_DAYS")
+      [ -n "$XF_QUERY_HISTORY_MAX_GB" ] && flags+=(--query-history-max-gb "$XF_QUERY_HISTORY_MAX_GB")
       xf check "${flags[@]}" $XF_ARGS
       code=$?
       if [ "$code" -eq 2 ]; then cat "${TMPDIR:-/tmp}"/xf-*.log 2>/dev/null | tail -n 50 || true; fi

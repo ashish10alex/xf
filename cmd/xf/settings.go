@@ -42,6 +42,9 @@ var flagUsage = map[string]string{
 	config.KeyDevCompilerOptions:   "compiler `options` of your dev runs, e.g. --schema-suffix=ashish, so column impact folds their lineage into the actions they run (default: none)",
 	config.KeyProdCompilerOptions:  "compiler `options` of the project's prod runs, e.g. --default-database=acme-prod, so column impact compares with the tables they build and query cost dry runs against the tables they read; '' says the default targets are prod (default: none, the default targets, and the reports say so)",
 	config.KeyLineageProjects:      "comma-separated GCP `projects` to also search in Dataplex Data Lineage alongside each table's own project, e.g. acme-bi,acme-analytics (default: none)",
+	config.KeyQueryHistoryProjects: "BigQuery billing `projects` to scan INFORMATION_SCHEMA.JOBS for SELECT-only external/BI readers: auto (table's project + lineageProjects), org (JOBS_BY_ORGANIZATION), or comma-separated GCP project IDs (default: none, off so BigQuery stays free)",
+	config.KeyQueryHistoryDays:     "lookback `days` (1..90) for SELECT-only external/BI readers in warehouse query history; 0 disables external readers on Snowflake and Databricks too (default: 14)",
+	config.KeyQueryHistoryMaxGB:    "BigQuery maximumBytesBilled cap in `GiB` for each INFORMATION_SCHEMA.JOBS scan; 0 disables the cap, e.g. on slot reservations (default: 10)",
 	config.KeyEditor:               "`command` o opens files and projects with when no editor is connected, e.g. code, cursor, zed or nvim (default: $VISUAL, then $EDITOR, then " + config.DefaultEditor + ")",
 	config.KeyTheme:                "`theme` of the TUI: auto (follow the terminal), light or dark; the palette's View: theme changes it (default: auto)",
 	config.KeyWebTheme:             "`theme` of xf web: auto (follow the browser, with webThemeLight and webThemeDark) or a theme's id, e.g. dracula or catppuccin-mocha; the page's ◐ button picks it; a project's .xf/config.json can set its own (default: auto)",
@@ -104,6 +107,9 @@ var keyValue = map[string]string{
 	config.KeyDevCompilerOptions:   `e.g. "--schema-suffix=ashish"`,
 	config.KeyProdCompilerOptions:  `e.g. "--default-database=acme-prod"`,
 	config.KeyLineageProjects:      `comma-separated GCP project IDs, e.g. "acme-bi,acme-analytics"`,
+	config.KeyQueryHistoryProjects: `"auto", "org", or comma-separated GCP project IDs, e.g. "acme-bi,acme-prod"`,
+	config.KeyQueryHistoryDays:     "days, 1..90 (default 14; 0 disables external readers)",
+	config.KeyQueryHistoryMaxGB:    "GiB, e.g. 10 (0 for unlimited)",
 	config.KeyEditor:               `command, e.g. "code" or "nvim"`,
 	config.KeyTheme:                `"auto", "light" or "dark"`,
 	config.KeyWebTheme:             `"auto" or a theme, e.g. "dracula"`,
@@ -217,6 +223,21 @@ func (sf *settingFlags) load(root string) (config.Loaded, error) {
 	if v := l.LineageProjects; v != "" {
 		if err := config.Check(config.KeyLineageProjects, v); err != nil {
 			return l, fmt.Errorf("--%s: %w", config.Flags[config.KeyLineageProjects], err)
+		}
+	}
+	if v := l.QueryHistoryProjects; v != "" {
+		if err := config.Check(config.KeyQueryHistoryProjects, v); err != nil {
+			return l, fmt.Errorf("--%s: %w", config.Flags[config.KeyQueryHistoryProjects], err)
+		}
+	}
+	if v := l.QueryHistoryDays; v != "" {
+		if err := config.Check(config.KeyQueryHistoryDays, v); err != nil {
+			return l, fmt.Errorf("--%s: %w", config.Flags[config.KeyQueryHistoryDays], err)
+		}
+	}
+	if v := l.QueryHistoryMaxGB; v != "" {
+		if err := config.Check(config.KeyQueryHistoryMaxGB, v); err != nil {
+			return l, fmt.Errorf("--%s: %w", config.Flags[config.KeyQueryHistoryMaxGB], err)
 		}
 	}
 	return l, nil

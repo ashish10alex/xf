@@ -101,6 +101,7 @@ type Result struct {
 	Safe      []Table
 	New       []Table
 	Unchecked []Unchecked
+	Warnings  []string
 }
 
 // inBatches runs run on every item with up to size workers running at once,
@@ -137,10 +138,27 @@ type preloader interface {
 	Preload(ctx context.Context, tables []string)
 }
 
+// warner is an optional interface implemented by lineage readers that surface
+// report-level warnings (e.g. BigQuery query-history permission or scan cap)
+// without turning individual columns into SeverityUnknown.
+type warner interface {
+	Warnings() []string
+}
+
+func hasNonConsumerLinks(links []lineage.ColumnLink) bool {
+	for _, l := range links {
+		if l.Consumer == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // columnReaders is the direct readers of a column: its column links, then
 // readers Dataplex knows only at table level. For a nested STRUCT field
-// ("user.address.zip"), if lineage has no nested-field links it falls back
-// to the top-level STRUCT column ("user") tagged lineage.Other.
+// ("user.address.zip"), if table lineage has no nested-field links it falls
+// back to the top-level STRUCT column ("user") tagged lineage.Other (keeping
+// external SELECT* consumers at their original DependencyType).
 func columnReaders(ctx context.Context, src Readers, table, column string) ([]lineage.ColumnLink, error) {
 	var errs []error
 	addErr := func(err error) {
@@ -156,19 +174,23 @@ func columnReaders(ctx context.Context, src Readers, table, column string) ([]li
 	}
 	links, err := src.ColumnLinks(ctx, table, column)
 	addErr(err)
-	if len(links) == 0 {
+	if !hasNonConsumerLinks(links) {
 		if top, _, nested := strings.Cut(column, "."); nested {
 			parentLinks, pErr := src.ColumnLinks(ctx, table, top)
 			addErr(pErr)
 			for _, l := range parentLinks {
-				l.DependencyType = lineage.Other
+				if l.Consumer == nil {
+					l.DependencyType = lineage.Other
+				}
 				links = append(links, l)
 			}
 		}
 	}
 	linked := map[string]bool{}
 	for _, l := range links {
-		linked[l.Table] = true
+		if l.Consumer == nil {
+			linked[l.Table] = true
+		}
 	}
 	only, onlyErr := src.TableOnlyReaders(ctx, table, linked)
 	addErr(onlyErr)
@@ -333,6 +355,9 @@ func Build(ctx context.Context, candidates []Candidate, src Readers, rctx Reader
 	slices.SortFunc(res.New, func(a, b Table) int { return localeCompare(a.Table, b.Table) })
 	res.Unchecked = append(res.Unchecked, unchecked...)
 	slices.SortFunc(res.Unchecked, func(a, b Unchecked) int { return localeCompare(a.Table, b.Table) })
+	if w, ok := src.(warner); ok {
+		res.Warnings = w.Warnings()
+	}
 	return res, nil
 }
 
@@ -606,6 +631,7 @@ func Run(ctx context.Context, res *changes.Result, g *project.Graph, deps Deps, 
 		Safe:         result.Safe,
 		New:          result.New,
 		Unchecked:    result.Unchecked,
+		Warnings:     result.Warnings,
 		Against:      projectsOf(candidates, deps.ProdTarget != nil),
 		DryRunIn:     dryRunIn(g, changed),
 		CheckedAt:    deps.Now(),
