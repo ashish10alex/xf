@@ -2,7 +2,7 @@
 
 import { h, render } from './vendor/preact.mjs';
 import { App, LostNotice } from './view.js';
-import { runScratch, toggleResults, toggleList, flushSave, SC } from './scratch.js';
+import { runScratch, toggleResults, toggleList, flushAllSaves, nextScratchTab, newDraft, closeTab, SC } from './scratch.js';
 import { S, start, onRedraw, handleKey, keyName, redraw, togglePanel, toggleTerm, isTermKey, isNewTermKey, newTerm, isTermCloseKey, closeTerm, toggleTermZoom, termHasKey, termFocused, activeTerm, toggleChecksTerm, toggleChecksTermZoom, isTermZoomKey, logTabKey, nextTab, toggleRight, openSymbols, isPaletteKey, isCommandsKey, isProjectsKey, isRevealKey, openScratchPalette, setPaletteQuery, isSaveKey, saveAndCompile, onMac, appWindow, newTab, hooks, leaveOverlay, lostShown, openLink } from './state.js';
 import { SET, reopenAfterReload, openSettings, closeSettings } from './settings.js';
 import { T, closeThemePicker } from './theme.js';
@@ -180,7 +180,7 @@ window.addEventListener('keydown', async (e) => {
   // The page takes the keys from an editor, and Scratch's editor goes while
   // it shows, so its text is saved first.
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-  if (SC.open) await flushSave();
+  if (SC.open) await flushAllSaves();
   openSettings();
 }, true);
 
@@ -321,11 +321,32 @@ window.addEventListener('keydown', (e) => {
     redraw();
     return;
   }
+  // In Scratch they go round the open scratch tabs, from inside the editor too.
+  if (logDir && S.mode === 'project' && SC.open && !S.overlay && !SET.open) {
+    e.preventDefault();
+    nextScratchTab(logDir);
+    redraw();
+    return;
+  }
   if (logDir && S.mode === 'project' && S.showLog && S.focus === 'log' && !S.overlay && !S.checks && !SET.open && !SC.open) {
     e.preventDefault();
     nextTab(logDir);
     redraw();
     return;
+  }
+  // alt+t (⌥t on a Mac) opens a new scratch tab, and alt+w (⌥w) closes the
+  // active scratch tab, from anywhere in Scratch including inside the editor.
+  if (S.mode === 'project' && SC.open && !S.overlay && !SET.open && !SC.confirm && !SC.delAsk && !SC.recentOpen && !SC.whOpen) {
+    if (e.code === 'KeyT' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      newDraft();
+      return;
+    }
+    if (isTermCloseKey(e)) {
+      e.preventDefault();
+      closeTab();
+      return;
+    }
   }
   // alt+z (and ⌘z on a Mac) zooms the terminal tab from inside it, where
   // z is the shell's, on the project view and the Checks page alike.

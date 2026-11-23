@@ -11,37 +11,6 @@ export const GiB = 1024 ** 3;
 const ROW_H = 22;
 export { ROW_H };
 
-export const SC = {
-  open: false,
-  list: [],
-  cur: null,         // the scratch being edited: { id, from, project, location, sql }
-  listCursor: 0,
-  delAsk: '',        // the scratch d asked to delete
-  focus: 'results',  // list, editor, results
-  dry: null,         // the dry run of the scope: { sql, pending, ... }
-  run: null,         // the query run: see newRun
-  confirm: null,     // what the run is asked to confirm: { sql, why: [...] }
-  newForm: null,     // { busy, error } while the New scratch box is up
-  flash: '',
-  sel: null,         // the selected cell: { r, c }
-  scrollTop: 0,
-  listOpen: false,     // the scratch selector, cmd+b
-  hideResults: false,  // cmd+j hides the results as a terminal panel hides
-  defaults: null,      // the project and location a scratch with no model runs in
-  standalone: false,   // no project behind the page: Scratch is all of it
-  dbx: null,           // standalone Databricks connection: { profile, host, warehouse, hasProfiles, needsProfile }
-  projects: null,      // BigQuery projects or Databricks catalogs for the target box's datalist
-  whOpen: false,       // standalone warehouse switcher menu
-  whCursor: 0,
-  filters: {},         // the results' column filters: column index -> text
-  sort: null,          // the results' sort: { c: column index, desc }
-  recent: [],          // the last runs that returned rows, newest first (scratchruns.go)
-  recentOpen: '',      // set while the recent results menu is up: where the keys go after ('editor', 'results')
-  recentCursor: 0,
-  size: loadSize(),    // the panels as dragged, in px (0: its own size): list width, editor height, detail width
-};
-S.scratch = SC;
-
 const sizeKey = 'xf-web:scratch:size';
 function loadSize() {
   const z = { list: 0, editor: 0, detail: 0 };
@@ -50,6 +19,93 @@ function loadSize() {
     for (const k of Object.keys(z)) if (v[k] > 0) z[k] = v[k];
   } catch { /* no storage */ }
   return z;
+}
+
+const scSize = loadSize();
+let tabSeq = 0;
+
+function makeTab(cur = null) {
+  return {
+    key: 't' + (++tabSeq),
+    cur,               // the scratch being edited: { id, draft?, from, project, location, sql }
+    savedSql: cur ? (cur.sql || '') : '',
+    dry: null,         // the dry run of the scope: { sql, pending, ... }
+    dryPromise: null,
+    drySeq: 0,
+    dryTimer: 0,
+    run: null,         // the query run: see newRun
+    confirm: null,     // what the run or close is asked to confirm: { sql, why: [...], action?, tabKey? }
+    sel: null,         // the selected cell: { r, c }
+    scrollTop: 0,
+    filters: {},       // the results' column filters: column index -> text
+    sort: null,        // the results' sort: { c: column index, desc }
+    hideResults: false, // cmd+j hides the results as a terminal panel hides
+    editor: null,      // saved CodeMirror state while another tab is shown
+    editorScroll: 0,
+    saveTimer: 0,
+    saveSeq: 0,
+    labelLine: cur ? firstLine(cur.sql || '') : '',
+    closed: false,
+    size: scSize,
+  };
+}
+
+export const SC = {
+  open: false,
+  list: [],
+  tabs: [],          // open scratch tabs (makeTab)
+  activeTab: '',     // key of the active tab in tabs
+  listCursor: 0,
+  delAsk: '',        // the scratch d asked to delete
+  focus: 'results',  // list, editor, results
+  newForm: null,     // { busy, error } while the New scratch box is up
+  flash: '',
+  listOpen: false,     // the scratch selector, cmd+b
+  defaults: null,      // the project and location a scratch with no model runs in
+  standalone: false,   // no project behind the page: Scratch is all of it
+  dbx: null,           // standalone Databricks connection: { profile, host, warehouse, hasProfiles, needsProfile }
+  projects: null,      // BigQuery projects or Databricks catalogs for the target box's datalist
+  whOpen: false,       // standalone warehouse switcher menu
+  whCursor: 0,
+  recent: [],          // the last runs that returned rows, newest first (scratchruns.go)
+  recentOpen: '',      // set while the recent results menu is up: where the keys go after ('editor', 'results')
+  recentCursor: 0,
+  size: scSize,        // the panels as dragged, in px (0: its own size): list width, editor height, detail width
+};
+
+// activeTab is the tab shown now, creating one when none is open yet so
+// direct writes to SC.cur / SC.run / … always land on a tab.
+export function activeTab() {
+  let t = SC.tabs.find((x) => x.key === SC.activeTab);
+  if (!t) {
+    if (!SC.tabs.length) SC.tabs.push(makeTab(null));
+    t = SC.tabs[0];
+    SC.activeTab = t.key;
+  }
+  return t;
+}
+
+// Per-tab fields stay directly reachable on SC for the active tab.
+for (const prop of ['cur', 'dry', 'dryPromise', 'run', 'confirm', 'sel', 'scrollTop', 'filters', 'sort', 'hideResults']) {
+  Object.defineProperty(SC, prop, {
+    enumerable: true,
+    configurable: true,
+    get: () => activeTab()[prop],
+    set: (v) => { activeTab()[prop] = v; },
+  });
+}
+
+S.scratch = SC;
+
+// resetTabs clears open tabs back to one empty slot (for tests).
+export function resetTabs() {
+  for (const t of SC.tabs) {
+    clearTimeout(t.dryTimer);
+    clearTimeout(t.saveTimer);
+    t.closed = true;
+  }
+  SC.tabs = [];
+  SC.activeTab = '';
 }
 
 // setSize keeps a panel's dragged size, 0 to give it its own again.
@@ -61,6 +117,73 @@ export function setSize(which, px) {
 let ed = null; // the editor: { doc(), scope(), block(), set(text), focus(), blur() }
 export function setEditor(e) { ed = e; }
 export function editor() { return ed; }
+
+function isEmptyDraft(tab) {
+  if (!tab || !tab.cur) return true;
+  if (!tab.cur.draft) return false;
+  const sql = tab === activeTab() && ed && ed.doc ? ed.doc() : (tab.cur.sql || '');
+  return !sql.trim() && !tab.run;
+}
+
+function rawTabLabel(tab) {
+  const cur = tab && tab.cur;
+  if (!cur) return 'scratch';
+  if (cur.from) return cur.from;
+  const sql = (tab === activeTab() && ed && ed.doc ? ed.doc() : cur.sql) || '';
+  const line = firstLine(sql);
+  if (line) return line.length > 28 ? line.slice(0, 28) + '…' : line;
+  return cur.id || 'new scratch';
+}
+
+// tabLabel is tab's name in the tab bar, numbered where two share one.
+export function tabLabel(tab) {
+  const base = rawTabLabel(tab);
+  if (SC.tabs.filter((t) => rawTabLabel(t) === base).length < 2) return base;
+  return base + ' ' + (SC.tabs.indexOf(tab) + 1);
+}
+
+// canCloseTab says whether closing tab would do anything (the sole untouched
+// empty draft stays put).
+export function canCloseTab(tab = activeTab()) {
+  return SC.tabs.length > 1 || !isEmptyDraft(tab);
+}
+
+function captureEditor(tab) {
+  if (!tab || !ed) return;
+  if (tab.cur && ed.doc) {
+    const sql = ed.doc();
+    tab.cur.sql = sql;
+    tab.labelLine = firstLine(sql);
+  }
+  if (ed.save) tab.editor = ed.save(false);
+  if (ed.view && ed.view.scrollDOM) tab.editorScroll = ed.view.scrollDOM.scrollTop;
+}
+
+function applyEditor(tab) {
+  if (!ed) return;
+  const sql = (tab && tab.cur && tab.cur.sql) || '';
+  if (tab && tab.editor && ed.restore && tab.editor.doc === sql) {
+    ed.restore(tab.editor);
+    if (ed.view && ed.view.scrollDOM) ed.view.scrollDOM.scrollTop = tab.editorScroll || 0;
+  } else if (ed.set) {
+    ed.set(sql);
+  }
+  const scope = ed.scope ? ed.scope() : sql;
+  if (tab && tab.dry && !tab.dry.ok && tab.dry.error && scope === tab.dry.sql) {
+    markError(tab.dry.error, tab.dry.sql, 0);
+  } else if (tab && tab.run && tab.run.phase === 'failed' && tab.run.error && scope === tab.run.sql) {
+    markError(tab.run.error, tab.run.sql, tab.run.base);
+  } else if (ed.mark) {
+    ed.mark(null);
+  }
+}
+
+// restoreActiveEditor loads the active tab into a freshly mounted editor.
+export function restoreActiveEditor() {
+  const tab = activeTab();
+  if (tab.cur) applyEditor(tab);
+  scheduleDry(0, tab);
+}
 
 let fadeFlash = null;
 function say(msg) {
@@ -85,19 +208,40 @@ async function loadDefaults() {
 }
 
 // openScratchView shows the Scratch view on a scratch, the one open, or
-// the newest. With draft it opens on a new empty one, whose file is made
+// the newest. With draft it opens a new empty tab, whose file is made
 // when it is first typed in.
+let openSeq = 0;
 export async function openScratchView(id, opts = {}) {
   if (!S.caps.scratch) { S.flash = 'scratch queries need BigQuery access, which this project lacks'; redraw(); return; }
+  const seq = ++openSeq;
   SC.open = true;
   SC.focus = 'results';
   await Promise.all([loadList(), loadDefaults(), loadRecent()]);
+  if (seq !== openSeq) return;
   if (opts.draft) {
+    if (SC.tabs.length === 1 && isEmptyDraft(SC.tabs[0]) && SC.tabs[0].cur) {
+      SC.activeTab = SC.tabs[0].key;
+      focusEditor();
+      redraw();
+      return;
+    }
     await newDraft();
     return;
   }
-  const want = id || (SC.cur && SC.cur.id) || (SC.list[0] && SC.list[0].id);
+  if (id) {
+    await selectScratch(id, true);
+    redraw();
+    return;
+  }
+  const cur = SC.tabs.length ? activeTab() : null;
+  if (cur && cur.cur) {
+    if (!cur.cur.draft && cur.cur.id) await selectScratch(cur.cur.id, true);
+    redraw();
+    return;
+  }
+  const want = SC.list[0] && SC.list[0].id;
   if (want) await selectScratch(want, true);
+  else await newDraft();
   redraw();
 }
 
@@ -119,38 +263,203 @@ export async function openLastScratch() {
   setTimeout(put, 0);
 }
 
-// selectScratch opens a scratch in the editor. Opening the one already
-// open reads it again from disk only when force says to, since a file
-// edited elsewhere is read on opening the view, and keeps the result it
-// shows. Another scratch shows its latest recent result, if it has one,
-// or the recent run given.
-export async function selectScratch(id, force, show) {
-  if (SC.cur && SC.cur.id === id && !force) return;
-  await flushSave();
-  try {
-    const same = SC.cur && SC.cur.id === id && SC.run;
-    const f = await get('/api/scratch/file?id=' + encodeURIComponent(id));
-    SC.cur = f;
-    SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === id));
-    SC.dry = null;
-    if (!same) {
-      SC.run = null;
-      SC.sel = null;
-      SC.filters = {}; SC.sort = null;
-      const saved = show || SC.recent.find((r) => r.scratch === id);
-      if (saved) showRecent(saved);
+// switchTab activates an open tab by key, keeping the outgoing tab's
+// editor state and starting its save in the background.
+export function switchTab(key) {
+  const next = SC.tabs.find((t) => t.key === key);
+  if (!next) return false;
+  const prev = activeTab();
+  if (next === prev) return false;
+  SC.delAsk = '';
+  SC.recentOpen = '';
+  captureEditor(prev);
+  flushSave(prev);
+  SC.activeTab = next.key;
+  if (next.cur && next.cur.id) {
+    SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === next.cur.id));
+  }
+  applyEditor(next);
+  if (!next.dry || next.dry.stale) scheduleDry(0, next);
+  redraw();
+  return true;
+}
+
+// nextScratchTab steps to the next (dir 1) or previous (dir -1) open tab.
+export function nextScratchTab(dir = 1) {
+  if (SC.tabs.length < 2) return false;
+  const i = SC.tabs.indexOf(activeTab());
+  const next = SC.tabs[(i + dir + SC.tabs.length) % SC.tabs.length];
+  return switchTab(next.key);
+}
+
+// switchTabIndex activates the 0-based tab index if present.
+export function switchTabIndex(i) {
+  if (i < 0 || i >= SC.tabs.length) return false;
+  return switchTab(SC.tabs[i].key);
+}
+
+// closeTab closes the given tab (default: active). If a query is running
+// in it, asks before cancelling unless force is true. Closing the last
+// tab leaves a fresh empty draft.
+export async function closeTab(key = SC.activeTab, force = false) {
+  const idx = SC.tabs.findIndex((t) => t.key === key);
+  if (idx < 0) return false;
+  const tab = SC.tabs[idx];
+  if (!force && isRunning(tab)) {
+    if (tab !== activeTab()) switchTab(tab.key);
+    tab.confirm = { action: 'closeTab', tabKey: tab.key, why: ['A query is running in this tab. Closing it cancels the query.'], danger: true };
+    if (ed) ed.blur();
+    SC.focus = 'results';
+    redraw();
+    return false;
+  }
+  if (isRunning(tab)) await cancelRun(tab);
+  const wasActive = tab === activeTab();
+  if (wasActive) {
+    captureEditor(tab);
+    await flushSave(tab);
+  }
+  clearTimeout(tab.dryTimer);
+  clearTimeout(tab.saveTimer);
+  tab.closed = true;
+  if (SC.tabs.length === 1) {
+    if (isEmptyDraft(tab)) { tab.closed = false; return false; }
+    if (!SC.defaults) await loadDefaults();
+    const fresh = makeTab({ id: '', draft: true, from: '', project: SC.defaults.project, location: SC.defaults.location, sql: '' });
+    SC.tabs = [fresh];
+    SC.activeTab = fresh.key;
+    applyEditor(fresh);
+    redraw();
+    return true;
+  }
+  SC.tabs.splice(idx, 1);
+  if (wasActive) {
+    const next = SC.tabs[Math.min(idx, SC.tabs.length - 1)];
+    SC.activeTab = next.key;
+    if (next.cur && next.cur.id) {
+      SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === next.cur.id));
     }
-    if (ed) ed.set(f.sql);
-    scheduleDry(0);
+    applyEditor(next);
+    if (!next.dry || next.dry.stale) scheduleDry(0, next);
+  }
+  redraw();
+  return true;
+}
+
+// closeOtherTabs closes every tab except keepKey, asking first if any of
+// them has a running query.
+export async function closeOtherTabs(keepKey = SC.activeTab, force = false) {
+  const others = SC.tabs.filter((t) => t.key !== keepKey);
+  if (!others.length) return false;
+  const runningOthers = others.filter((t) => isRunning(t));
+  if (!force && runningOthers.length) {
+    const n = runningOthers.length;
+    activeTab().confirm = {
+      action: 'closeOtherTabs',
+      tabKey: keepKey,
+      why: [`${n === 1 ? 'A query is' : n + ' queries are'} running in other tabs. Closing them cancels ${n === 1 ? 'it' : 'them'}.`],
+      danger: true,
+    };
+    if (ed) ed.blur();
+    SC.focus = 'results';
+    redraw();
+    return false;
+  }
+  for (const t of others) {
+    if (isRunning(t)) cancelRun(t);
+    clearTimeout(t.dryTimer);
+    clearTimeout(t.saveTimer);
+    t.closed = true;
+  }
+  const keep = SC.tabs.find((t) => t.key === keepKey) || SC.tabs[0];
+  SC.tabs = keep ? [keep] : [];
+  if (keep) SC.activeTab = keep.key;
+  redraw();
+  return true;
+}
+
+// selectScratch opens a scratch in a tab. If it is already open in a tab,
+// switches to that tab (reading it again from disk only when force says
+// to, keeping its result). Otherwise opens it in a new tab — or reuses an
+// untouched empty draft, or replaces the current tab when opts.replace is
+// true (j/k list browsing) and the current tab is not running a query.
+export async function selectScratch(id, force, show, opts = {}) {
+  const existing = SC.tabs.find((t) => t.cur && t.cur.id === id);
+  if (existing) {
+    const wasActive = existing === activeTab();
+    if (!wasActive) switchTab(existing.key);
+    if (show && (!existing.run || !existing.run.job || existing.run.job.id !== show.job.id)) {
+      showRecent(show, existing);
+    }
+    if (!force) { redraw(); return; }
+    await flushSave(existing);
+    try {
+      const f = await get('/api/scratch/file?id=' + encodeURIComponent(id));
+      const changed = !existing.cur || existing.cur.sql !== f.sql;
+      existing.cur = f;
+      existing.savedSql = f.sql;
+      existing.labelLine = firstLine(f.sql);
+      SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === id));
+      if (changed) {
+        existing.editor = null;
+        existing.dry = null;
+        if (existing === activeTab()) applyEditor(existing);
+      }
+      if (!existing.run) {
+        const saved = show || SC.recent.find((r) => r.scratch === id);
+        if (saved) showRecent(saved, existing);
+      }
+      if (existing === activeTab()) scheduleDry(0, existing);
+    } catch (e) { say(e.message); }
+    redraw();
+    return;
+  }
+  const prev = SC.tabs.length ? activeTab() : null;
+  if (prev) {
+    captureEditor(prev);
+    await flushSave(prev);
+  }
+  try {
+    const f = await get('/api/scratch/file?id=' + encodeURIComponent(id));
+    let target;
+    const reuse = prev && (!prev.cur || isEmptyDraft(prev) || (opts.replace && !isRunning(prev)));
+    if (reuse) {
+      target = prev;
+      clearTimeout(target.dryTimer);
+      target.cur = f;
+      target.savedSql = f.sql;
+      target.labelLine = firstLine(f.sql);
+      target.editor = null;
+      target.editorScroll = 0;
+      target.dry = null;
+      target.run = null;
+      target.confirm = null;
+      target.sel = null;
+      target.scrollTop = 0;
+      target.filters = {};
+      target.sort = null;
+      target.hideResults = false;
+    } else {
+      target = makeTab(f);
+      SC.tabs.push(target);
+      SC.activeTab = target.key;
+    }
+    SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === id));
+    const saved = show || SC.recent.find((r) => r.scratch === id);
+    if (saved) showRecent(saved, target);
+    applyEditor(target);
+    scheduleDry(0, target);
   } catch (e) { say(e.message); }
   redraw();
 }
 
 export async function closeScratchView() {
   if (SC.standalone) return; // there is no project page to go back to
-  await flushSave();
+  const tab = SC.tabs.length ? activeTab() : null;
+  if (tab) captureEditor(tab);
+  await flushAllSaves();
   SC.open = false;
-  SC.confirm = null;
+  if (tab) tab.confirm = null;
   if (ed) ed.blur();
   redraw();
 }
@@ -168,11 +477,12 @@ export function focusEditor() {
 export function toggleList() { SC.listOpen = !SC.listOpen; redraw(); }
 
 export function toggleResults() {
-  if (!SC.run) { say('nothing to show yet: run a query first'); return; }
-  SC.hideResults = !SC.hideResults;
+  const tab = activeTab();
+  if (!tab.run) { say('nothing to show yet: run a query first'); return; }
+  tab.hideResults = !tab.hideResults;
   // Hiding the results gives the keys back to the editor, in normal mode,
   // wherever they were: the results, the SQL tab or insert mode.
-  if (SC.hideResults && ed) {
+  if (tab.hideResults && ed) {
     ed.normal();
     focusEditor();
   }
@@ -182,32 +492,51 @@ export function toggleResults() {
 // setResultTab shows the run's rows ('rows') or the SQL it ran ('sql').
 // The tab is the run's own, so a new run opens on its rows.
 export function setResultTab(tab, ctx = SC) {
-  if (!ctx.run) return;
-  ctx.run.tab = tab;
+  const c = resolveCtx(ctx);
+  if (!c.run) return;
+  c.run.tab = tab;
   redraw();
 }
 
-// newDraft opens an empty scratch with no file yet: the file is made when
-// there is something in it.
+// newDraft opens an empty scratch in a new tab with no file yet: the file
+// is made when there is something in it.
 export async function newDraft() {
-  await flushSave();
+  const prev = SC.tabs.length ? activeTab() : null;
+  if (prev && prev.cur) {
+    captureEditor(prev);
+    flushSave(prev);
+  }
   if (!SC.defaults) await loadDefaults();
-  SC.cur = { id: '', draft: true, from: '', project: SC.defaults.project, location: SC.defaults.location, sql: '' };
-  SC.dry = null; SC.run = null; SC.sel = null; SC.filters = {}; SC.sort = null;
-  if (ed) ed.set('');
+  const cur = { id: '', draft: true, from: '', project: SC.defaults.project, location: SC.defaults.location, sql: '' };
+  let tab;
+  if (prev && !prev.cur) {
+    tab = prev;
+    tab.cur = cur;
+    tab.savedSql = '';
+    tab.labelLine = '';
+    tab.dry = null; tab.run = null; tab.confirm = null; tab.sel = null;
+    tab.filters = {}; tab.sort = null; tab.scrollTop = 0; tab.hideResults = false;
+    tab.editor = null; tab.editorScroll = 0;
+  } else {
+    tab = makeTab(cur);
+    SC.tabs.push(tab);
+    SC.activeTab = tab.key;
+  }
+  applyEditor(tab);
   focusEditor();
   redraw();
 }
 
 // ensureFile makes a draft's file, and resolves once it is there.
-export function ensureFile() {
-  const cur = SC.cur;
+export function ensureFile(tab = activeTab()) {
+  const cur = tab && tab.cur;
   if (!cur || !cur.draft) return Promise.resolve(cur);
   if (!cur.making) {
     cur.making = post('/api/scratch/create', { form: 'empty', project: cur.project, location: cur.location }).then(async (f) => {
       cur.id = f.id; cur.project = f.project; cur.location = f.location; cur.draft = false;
       await loadList();
-      SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === f.id));
+      if (tab === activeTab()) SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === f.id));
+      redraw();
       return cur;
     }).catch((e) => { cur.making = null; say('could not make the scratch: ' + e.message); throw e; });
   }
@@ -216,15 +545,16 @@ export function ensureFile() {
 
 // setTarget changes the project and location a scratch runs in.
 export async function setTarget(project, location) {
-  const cur = SC.cur;
+  const tab = activeTab();
+  const cur = tab.cur;
   if (!cur || (cur.project === project && cur.location === location)) return;
   cur.project = project; cur.location = location;
   if (!cur.draft) {
     try { await post('/api/scratch/target', { id: cur.id, project, location }); } catch (e) { say(e.message); }
   }
   clearMeta();
-  SC.dry = null;
-  scheduleDry(0);
+  tab.dry = null;
+  scheduleDry(0, tab);
   redraw();
 }
 
@@ -278,7 +608,6 @@ export async function createScratch(form) {
     const f = await post('/api/scratch/create', { id: S.sel, form, incremental: S.incremental });
     S.overlay = null;
     SC.newForm = null;
-    SC.cur = null;
     await openScratchView(f.id);
     focusEditor();
   } catch (e) {
@@ -293,41 +622,84 @@ export function cancelNew() { S.overlay = null; SC.newForm = null; }
 export async function deleteScratch(id) {
   try {
     await post('/api/scratch/delete', { id });
-    if (SC.cur && SC.cur.id === id) { SC.cur = null; SC.dry = null; SC.run = null; if (ed) ed.set(''); }
     SC.delAsk = '';
     SC.recent = SC.recent.filter((r) => r.scratch !== id);
     await loadList();
-    if (!SC.cur && SC.list[0]) await selectScratch(SC.list[0].id);
+    const idx = SC.tabs.findIndex((t) => t.cur && t.cur.id === id);
+    if (idx >= 0) {
+      const tab = SC.tabs[idx];
+      if (isRunning(tab)) cancelRun(tab);
+      clearTimeout(tab.dryTimer);
+      clearTimeout(tab.saveTimer);
+      tab.closed = true;
+      if (SC.tabs.length > 1) {
+        const wasActive = tab === activeTab();
+        SC.tabs.splice(idx, 1);
+        if (wasActive) {
+          const next = SC.tabs[Math.min(idx, SC.tabs.length - 1)];
+          SC.activeTab = next.key;
+          applyEditor(next);
+          if (!next.dry || next.dry.stale) scheduleDry(0, next);
+        }
+      } else {
+        tab.closed = false;
+        tab.cur = null; tab.savedSql = ''; tab.dry = null; tab.run = null;
+        tab.sel = null; tab.filters = {}; tab.sort = null; tab.editor = null;
+        if (ed) ed.set('');
+        if (SC.list[0]) await selectScratch(SC.list[0].id);
+        else await newDraft();
+      }
+    }
   } catch (e) { say(e.message); }
   redraw();
 }
 
 // ---- saving ----
 
-let saveTimer = 0, saveSeq = 0;
+const pendingSaves = new Set();
+
 export function onEdit() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(flushSave, 600);
-  scheduleDry(500);
+  const tab = activeTab();
+  clearTimeout(tab.saveTimer);
+  tab.saveTimer = setTimeout(() => flushSave(tab), 600);
+  if (tab.cur && !tab.cur.from && ed && ed.doc) {
+    const line = firstLine(ed.doc());
+    if (line !== tab.labelLine) { tab.labelLine = line; redraw(); }
+  }
+  scheduleDry(500, tab);
 }
 
-export async function flushSave() {
-  clearTimeout(saveTimer);
-  saveTimer = 0;
-  if (!SC.cur || !ed) return;
-  const sql = ed.doc();
-  if (sql === SC.cur.sql) return;
-  if (SC.cur.draft) { // the file is made when there is something to keep
-    if (!sql.trim()) return;
-    try { await ensureFile(); } catch { return; }
-  }
-  const id = SC.cur.id, seq = ++saveSeq;
-  SC.cur.sql = sql;
-  try {
-    await post('/api/scratch/save', { id, sql });
-    const row = SC.list.find((s) => s.id === id);
-    if (row && seq === saveSeq) row.preview = firstLine(sql);
-  } catch (e) { say('could not save: ' + e.message); }
+export function flushSave(tab = activeTab()) {
+  if (!tab) return Promise.resolve();
+  clearTimeout(tab.saveTimer);
+  tab.saveTimer = 0;
+  if (!tab.cur) return Promise.resolve();
+  const isAct = tab === activeTab();
+  if (isAct && !ed) return Promise.resolve();
+  const sql = isAct && ed && ed.doc ? ed.doc() : (tab.cur.sql || '');
+  if (sql === tab.savedSql && !tab.cur.draft) return Promise.resolve();
+  if (tab.cur.draft && !sql.trim()) return Promise.resolve();
+  tab.cur.sql = sql;
+  const p = (async () => {
+    if (tab.cur.draft) {
+      try { await ensureFile(tab); } catch { return; }
+    }
+    const id = tab.cur.id, seq = ++tab.saveSeq;
+    try {
+      await post('/api/scratch/save', { id, sql });
+      if (seq === tab.saveSeq) tab.savedSql = sql;
+      const row = SC.list.find((s) => s.id === id);
+      if (row && seq === tab.saveSeq) row.preview = firstLine(sql);
+    } catch (e) { say('could not save: ' + e.message); }
+  })();
+  pendingSaves.add(p);
+  p.finally(() => pendingSaves.delete(p));
+  return p;
+}
+
+export async function flushAllSaves() {
+  if (SC.tabs.length) await flushSave(activeTab());
+  if (pendingSaves.size) await Promise.all([...pendingSaves]);
 }
 
 function firstLine(sql) {
@@ -340,39 +712,39 @@ function firstLine(sql) {
 
 // ---- the dry run ----
 
-let dryTimer = 0, drySeq = 0;
-export function scheduleDry(ms) {
-  clearTimeout(dryTimer);
-  dryTimer = setTimeout(() => { dryTimer = 0; dryRunNow(); }, ms);
+export function scheduleDry(ms, tab = activeTab()) {
+  if (!tab) return;
+  clearTimeout(tab.dryTimer);
+  tab.dryTimer = setTimeout(() => { tab.dryTimer = 0; dryRunNow(tab); }, ms);
 }
 
 // dryRunNow dry-runs the scope, the SQL the next run would run, and
 // resolves with the answer. Edits made while it runs start a later one;
 // this one's answer is then not shown.
-export async function dryRunNow() {
-  if (!SC.cur || !ed || ed.block()) return null;
+export async function dryRunNow(tab = activeTab()) {
+  if (!tab || tab.closed || !tab.cur || tab !== activeTab() || !ed || ed.block()) return null;
   const sql = ed.scope();
-  if (!sql.trim()) { SC.dry = null; redraw(); return null; }
-  if (SC.dry && SC.dry.sql === sql && !SC.dry.stale) return SC.dryPromise || SC.dry;
-  const seq = ++drySeq;
-  const keep = SC.dry && SC.dry.sql !== sql ? { ...SC.dry, stale: true } : SC.dry;
-  SC.dry = { ...(keep || {}), sql, pending: true };
+  if (!sql.trim()) { tab.dry = null; redraw(); return null; }
+  if (tab.dry && tab.dry.sql === sql && !tab.dry.stale) return tab.dryPromise || tab.dry;
+  const seq = ++tab.drySeq;
+  const keep = tab.dry && tab.dry.sql !== sql ? { ...tab.dry, stale: true } : tab.dry;
+  tab.dry = { ...(keep || {}), sql, pending: true };
   redraw();
   const base = ed.scopeOffset();
-  const p = post('/api/scratch/dryrun', { id: SC.cur.id, sql, project: SC.cur.project, location: SC.cur.location }).then((r) => {
+  const p = post('/api/scratch/dryrun', { id: tab.cur.id, sql, project: tab.cur.project, location: tab.cur.location }).then((r) => {
     const out = { ...r, sql, pending: false };
-    if (seq === drySeq) {
-      SC.dry = out;
-      if (ed && ed.scope() === sql) markError(out.ok ? '' : out.error, sql, base);
+    if (!tab.closed && seq === tab.drySeq) {
+      tab.dry = out;
+      if (tab === activeTab() && ed && ed.scope() === sql) markError(out.ok ? '' : out.error, sql, base);
       redraw();
     }
     return out;
   }).catch((e) => {
     const out = { ok: false, error: e.message, sql, pending: false, bytes: 0, writes: false };
-    if (seq === drySeq) { SC.dry = out; redraw(); }
+    if (!tab.closed && seq === tab.drySeq) { tab.dry = out; redraw(); }
     return out;
   });
-  SC.dryPromise = p;
+  tab.dryPromise = p;
   return p;
 }
 
@@ -417,15 +789,15 @@ async function recordRun(run) {
 
 // showRecent shows a recent run's result, read again from BigQuery, which
 // keeps it about a day. It is polled as a fresh run is, from its job.
-function showRecent(saved) {
-  const run = SC.run = newRun(saved.sql);
+function showRecent(saved, tab = activeTab()) {
+  const run = tab.run = newRun(saved.sql, tab);
   run.job = saved.job;
   run.scratch = saved.scratch;
   run.started = Date.parse(saved.started) || Date.now();
   run.restored = Date.parse(saved.ended) || run.started;
   run.phase = 'running';
-  SC.hideResults = false;
-  SC.sel = null; SC.filters = {}; SC.sort = null; SC.scrollTop = 0;
+  tab.hideResults = false;
+  tab.sel = null; tab.filters = {}; tab.sort = null; tab.scrollTop = 0;
   poll(run);
 }
 
@@ -433,11 +805,6 @@ function showRecent(saved) {
 export async function openRecent(saved) {
   SC.recentOpen = '';
   if (!saved) { redraw(); return; }
-  if (SC.cur && SC.cur.id === saved.scratch) {
-    if (!SC.run || !SC.run.job || SC.run.job.id !== saved.job.id) showRecent(saved);
-    redraw();
-    return;
-  }
   await selectScratch(saved.scratch, false, saved);
 }
 
@@ -482,22 +849,24 @@ export function ago(t) {
 // about 24 hours.
 export const recentGone = (saved) => Date.now() - (Date.parse(saved.ended) || 0) > 24 * 3600 * 1000;
 
-// A result's view: SC for Scratch's, or one the dependency inspector
-// keeps per row (resultView). Each holds the run it shows and the grid's
+// A result's view: a Scratch tab, or one the dependency inspector keeps
+// per row (resultView). Each holds the run it shows and the grid's
 // filters, sort, scroll and selected cell; the functions below take one,
-// Scratch's when not given. ctxOf is the view a run belongs to, outside
-// the run, which a snapshot turns into JSON.
+// the active Scratch tab when SC (the default) is given. ctxOf is the
+// view a run belongs to, outside the run, which a snapshot turns into JSON.
 const ctxOf = new WeakMap();
+const resolveCtx = (ctx) => (!ctx || ctx === SC ? activeTab() : ctx);
 
 // resultView is a new view of no run, for a result shown outside Scratch.
 export const resultView = () => ({ run: null, filters: {}, sort: null, scrollTop: 0, sel: null, confirm: null, size: SC.size });
 
 function newRun(sql, ctx = SC) {
+  const target = resolveCtx(ctx);
   const run = {
     sql, phase: 'starting', job: null, status: null, started: Date.now(), ended: 0, error: '',
     schema: null, rows: [], next: '', total: 0, loadingMore: false, children: [], child: '', seq: ++runSeq,
   };
-  ctxOf.set(run, ctx);
+  ctxOf.set(run, target);
   return run;
 }
 
@@ -506,26 +875,31 @@ function newRun(sql, ctx = SC) {
 // rows' runs. fresh is a job just started (a preview), which the result's
 // line times from now rather than calling it a recent result.
 export function showJob(ctx, job, sql, fresh) {
-  const run = ctx.run = newRun(sql, ctx);
+  const c = resolveCtx(ctx);
+  const run = c.run = newRun(sql, c);
   run.job = job;
   if (!fresh) run.restored = Date.now();
   run.phase = 'running';
-  ctx.sel = null; ctx.filters = {}; ctx.sort = null; ctx.scrollTop = 0;
+  c.sel = null; c.filters = {}; c.sort = null; c.scrollTop = 0;
   poll(run);
 }
 
 // runScratch runs the scope, asking first when the dry run says it costs a
 // lot or changes data. force skips the asking.
 export async function runScratch(force) {
-  if (!SC.cur || !ed) return;
-  if (SC.run && ['starting', 'running'].includes(SC.run.phase)) { say('a query is running: cancel it first (ctrl+c)'); return; }
+  const tab = activeTab();
+  if (!tab.cur || !ed) return;
+  if (isRunning(tab)) { say('a query is running: cancel it first (ctrl+c)'); return; }
   if (ed.block()) { say('a ctrl+v block can\'t run: select with v or V to run part of the file'); return; }
   const sql = ed.scope();
   if (!sql.trim()) { say('nothing to run'); return; }
-  try { await ensureFile(); } catch { return; }
-  await flushSave();
+  const base = ed.scopeOffset();
+  try { await ensureFile(tab); } catch { return; }
+  await flushSave(tab);
+  if (tab.closed) return;
   if (!force) {
-    const d = await dryRunNow();
+    const d = await dryRunNow(tab);
+    if (tab.closed) return;
     if (d && d.ok) {
       const why = [];
       if (d.bytes >= d.confirmBytes) why.push(`The dry run says this scans ${fmtBytes(d.bytes)}${d.cost ? ` (≈ ${d.cost} on demand)` : ''}.`);
@@ -533,26 +907,25 @@ export async function runScratch(force) {
       if (why.length) {
         // The prompt takes its answer from the page's keys, which the
         // editor would otherwise swallow.
-        ed.blur();
-        SC.focus = 'results';
-        SC.confirm = { sql, why, danger: d.bytes >= d.confirmBytes || d.writes };
+        if (tab === activeTab()) { ed.blur(); SC.focus = 'results'; }
+        tab.confirm = { sql, why, danger: d.bytes >= d.confirmBytes || d.writes };
         redraw();
         return;
       }
     }
   }
-  SC.confirm = null;
-  SC.hideResults = false;
-  const run = SC.run = newRun(sql);
-  run.base = ed.scopeOffset();
-  run.scratch = SC.cur.id;
+  tab.confirm = null;
+  tab.hideResults = false;
+  const run = tab.run = newRun(sql, tab);
+  run.base = base;
+  run.scratch = tab.cur.id;
   run.record = true;
-  SC.sel = null;
-  SC.filters = {}; SC.sort = null;
-  SC.scrollTop = 0;
+  tab.sel = null;
+  tab.filters = {}; tab.sort = null;
+  tab.scrollTop = 0;
   redraw();
   try {
-    run.job = await post('/api/scratch/run', { id: SC.cur.id, sql });
+    run.job = await post('/api/scratch/run', { id: tab.cur.id, sql });
   } catch (e) {
     run.phase = 'failed'; run.error = e.message; run.ended = Date.now();
     // A Databricks or Snowflake project with no warehouse/profile yet: pick one, then run.
@@ -561,15 +934,17 @@ export async function runScratch(force) {
     redraw();
     return;
   }
+  if (!live(run)) return;
   run.phase = 'running';
   redraw();
   poll(run);
 }
 
-// live says run is still what the page shows: the run, or the search of
-// all its rows.
+// live says run is still what its tab or view shows: the run, or the
+// search of all its rows.
 const live = (run) => {
-  const c = ctxOf.get(run) || SC;
+  const c = ctxOf.get(run) || activeTab();
+  if (c.closed) return false;
   return c.run === run || (!!c.run && c.run.sub === run);
 };
 
@@ -588,7 +963,8 @@ async function poll(run) {
     if (!live(run)) return;
     run.status = st;
     if (st.state === 'DONE') {
-      SC.flash = '';
+      const owner = ctxOf.get(run);
+      if (!owner || owner === activeTab()) SC.flash = '';
       if (!run.restored && /^(CREATE_|ALTER_|DROP_|SCRIPT)/.test(st.statementType || '')) clearMeta(); // tables or columns may have changed
       const ended = st.ended ? Date.parse(st.ended) : 0;
       run.ended = ended > 1e12 ? ended : Date.now();
@@ -642,7 +1018,8 @@ async function loadFirst(run, job) {
 // loadMore reads the next page when the grid scrolls near the end of the
 // rows it has.
 export async function loadMore(ctx = SC) {
-  const run = viewRun(ctx);
+  const c = resolveCtx(ctx);
+  const run = viewRun(c);
   if (!run || run.phase !== 'done' || !run.next || run.loadingMore) return;
   run.loadingMore = true;
   redraw();
@@ -660,35 +1037,47 @@ export async function loadMore(ctx = SC) {
 
 // showChild shows the rows of one statement of a script.
 export async function showChild(child, ctx = SC) {
-  const run = ctx.run;
+  const c = resolveCtx(ctx);
+  const run = c.run;
   if (!run || run.phase !== 'done') return;
   run.child = child.id;
   run.schema = null; run.rows = []; run.next = ''; run.total = 0;
   run.sub = null; run.subOn = false; run.lc = null;
-  ctx.sel = null; ctx.scrollTop = 0; ctx.filters = {}; ctx.sort = null;
+  c.sel = null; c.scrollTop = 0; c.filters = {}; c.sort = null;
   redraw();
   if (child.hasRows) {
     run.phase = 'loading';
     await loadFirst(run, { ...run.job, id: child.id });
-    if (ctx.run === run && run.phase === 'loading') run.phase = 'done';
+    if (c.run === run && run.phase === 'loading') run.phase = 'done';
   }
   redraw();
 }
 
-export const isRunning = () => !!SC.run && ['starting', 'running'].includes(SC.run.phase);
+export const isRunning = (tab = activeTab()) => !!tab && !!tab.run && ['starting', 'running'].includes(tab.run.phase);
+export const anyRunning = () => SC.tabs.some((t) => isRunning(t));
 
-export async function cancelRun() {
-  const run = SC.run;
+export async function cancelRun(tab = activeTab()) {
+  const run = tab && tab.run;
   if (!run || !run.job || !['starting', 'running'].includes(run.phase)) { return false; }
   try {
     await post('/api/scratch/cancel', run.job);
-    say('cancelling…');
+    if (tab === activeTab()) say('cancelling…');
   } catch (e) { say(e.message); }
   return true;
 }
 
+export async function cancelAllRuns() {
+  const running = SC.tabs.filter((t) => isRunning(t));
+  if (!running.length) return false;
+  await Promise.all(running.map((t) => cancelRun(t)));
+  return true;
+}
+
 export function confirmRun() {
-  if (SC.confirm && SC.confirm.action === 'searchAll') { SC.confirm = null; return searchAll(true); }
+  const c = SC.confirm;
+  if (c && c.action === 'searchAll') { SC.confirm = null; return searchAll(true); }
+  if (c && c.action === 'closeTab') { const k = c.tabKey; SC.confirm = null; return closeTab(k, true); }
+  if (c && c.action === 'closeOtherTabs') { const k = c.tabKey; SC.confirm = null; return closeOtherTabs(k, true); }
   return runScratch(true);
 }
 export function dismissConfirm() { SC.confirm = null; redraw(); }
@@ -712,9 +1101,10 @@ export function jobURL(job) {
 }
 
 export function csvURL(ctx = SC, name = '') {
-  const run = viewRun(ctx);
+  const c = resolveCtx(ctx);
+  const run = viewRun(c);
   if (!run || !run.rowsJob || !run.schema || !run.schema.length) return '';
-  return jobQuery('/api/scratch/csv', run.rowsJob, { name: name || (SC.cur ? SC.cur.id : 'result') });
+  return jobQuery('/api/scratch/csv', run.rowsJob, { name: name || (c.cur ? c.cur.id : 'result') });
 }
 
 export function fmtBytes(n) {
@@ -901,13 +1291,13 @@ export function anyArrays(schema) {
 }
 
 export function copyCell(r, c, ctx = SC) {
-  const run = viewRun(ctx);
+  const run = viewRun(resolveCtx(ctx));
   if (!run || !run.schema) return;
   copy(plain(run.schema[c], run.rows[r][c]), 'copied cell');
 }
 
 export function copyRow(r, ctx = SC) {
-  const run = viewRun(ctx);
+  const run = viewRun(resolveCtx(ctx));
   if (!run || !run.schema) return;
   const o = {};
   run.schema.forEach((f, i) => { o[f.name] = named(f, run.rows[r][i]); });
@@ -929,16 +1319,21 @@ export function scratchKey(k) {
   if (SC.recentOpen) { recentKey(k); return true; }
   if (SC.whOpen) { warehouseMenuKey(k); return true; }
   SC.flash = '';
+  if (/^[1-9]$/.test(k)) { switchTabIndex(Number(k) - 1); return true; }
   switch (k) {
     case 'ctrl+c': if (isRunning()) cancelRun(); return true;
     case 'i': case 'enter': focusEditor(); return true;
     case 'r': runScratch(); return true;
     case 'j': case 'down': moveScratch(1); return true;
     case 'k': case 'up': moveScratch(-1); return true;
+    case 't': newDraft(); return true;
+    case 'x': closeTab(); return true;
+    case '[': nextScratchTab(-1); return true;
+    case ']': nextScratchTab(1); return true;
     case 'n': askNew(); return true;
     case 'b': toggleList(); return true;
     case 'h': toggleRecent(); return true;
-    case 'd': if (SC.cur) { SC.delAsk = SC.cur.id; } return true;
+    case 'd': if (SC.cur && !SC.cur.draft) { SC.delAsk = SC.cur.id; } return true;
     case 'y': if (SC.sel) copyCell(SC.sel.r, SC.sel.c); return true;
     case 'Y': if (SC.sel) copyRow(SC.sel.r); return true;
   }
@@ -955,10 +1350,20 @@ export function scratchCommands() {
   const toggle = (title, on, key, f) => add(title, key, f, on ? 'on' : 'off');
   const cur = SC.cur, run = SC.run, shown = viewRun();
   const toResults = () => { SC.focus = 'results'; if (ed) ed.blur(); };
+  const tabPrevKey = onMac ? '⌥⌘←' : 'ctrl+alt+←';
+  const tabNextKey = onMac ? '⌥⌘→' : 'ctrl+alt+→';
+  const tabNewKey = onMac ? '⌥t' : 'alt+t';
+  const tabCloseKey = onMac ? '⌥w' : 'alt+w';
   if (cur && !isRunning()) add('Run: query (the selection, else the file)', onMac ? '⌘↵' : 'ctrl+↵', () => runScratch());
-  if (isRunning()) add('Run: cancel', 'ctrl+c', cancelRun);
-  add('Scratch: new empty query', SC.standalone ? 'n' : '', newDraft);
+  if (isRunning()) add('Run: cancel', 'ctrl+c', () => cancelRun());
+  add('Scratch: new empty query', SC.standalone ? 'n' : tabNewKey, newDraft);
   if (!SC.standalone && S.view && S.sel) add('Scratch: new query from the selected model', 'n', askNew, S.view.name);
+  if (SC.tabs.length > 1) {
+    add('Scratch: next tab', tabNextKey, () => nextScratchTab(1), SC.tabs.length + ' open');
+    add('Scratch: previous tab', tabPrevKey, () => nextScratchTab(-1), SC.tabs.length + ' open');
+  }
+  if (canCloseTab()) add('Scratch: close tab', tabCloseKey, () => closeTab());
+  if (SC.tabs.length > 1) add('Scratch: close other tabs', '', () => closeOtherTabs(), (SC.tabs.length - 1) + ' others');
   if (cur && !cur.draft) add('Scratch: delete this scratch', 'd', () => { toResults(); SC.delAsk = cur.id; }, cur.id);
   if (cur) add(onDbx() ? 'Scratch: change its catalog' : onSf() ? 'Scratch: change its database' : 'Scratch: change its project or location', '', () => {
     toResults();
@@ -978,8 +1383,8 @@ export function scratchCommands() {
   if (shown && shown.phase === 'done' && csvURL()) add('Results: export CSV', '', downloadCSV);
   if (run && run.job) add('Results: open the job in BigQuery', '', () => openLink(jobURL(run.job)));
   if (run && run.next && run.rowsJob && (activeFilters().length || SC.sort)) add('Results: search all rows', '', () => searchAll(false), run.total ? run.total.toLocaleString() + ' rows' : '');
-  if (activeFilters().length) add('Results: clear filters', '', clearFilters);
-  if (SC.sort) add('Results: clear sort', '', clearSort);
+  if (activeFilters().length) add('Results: clear filters', '', () => clearFilters());
+  if (SC.sort) add('Results: clear sort', '', () => clearSort());
   if (SC.sel) {
     add('Copy: cell', 'y', () => copyCell(SC.sel.r, SC.sel.c));
     add('Copy: row as JSON', 'Y', () => copyRow(SC.sel.r));
@@ -987,7 +1392,7 @@ export function scratchCommands() {
   toggle('View: scratch list', SC.listOpen, onMac ? '⌘b' : 'ctrl+b', toggleList);
   if (run) toggle('View: results', !SC.hideResults, onMac ? '⌘j' : 'ctrl+j', toggleResults);
   add('View: colour theme', '', () => openThemePicker('theme'), themeLabel());
-  if (hooks.openSettings) add('View: settings', 'ctrl+,', () => { flushSave().then(() => { hooks.openSettings(); redraw(); }); });
+  if (hooks.openSettings) add('View: settings', 'ctrl+,', () => { flushAllSaves().then(() => { hooks.openSettings(); redraw(); }); });
   if (cur) add('Go to: editor', 'i', focusEditor);
   if (run && !SC.hideResults) add('Go to: results', 'ctrl+w', toResults);
   if (SC.standalone) {
@@ -995,7 +1400,7 @@ export function scratchCommands() {
       add('Scratch: switch warehouse', '', toggleWarehouseMenu, site());
     }
     add('Project: switch or add', '', openProjects);
-    add('Close scratch: back to the projects', 'ctrl+q', () => { flushSave().then(() => askQuit()); });
+    add('Close scratch: back to the projects', 'ctrl+q', () => { flushAllSaves().then(() => askQuit()); });
   } else {
     add('Project: switch or add', '', openProjects);
     add('Close scratch: back to the project', 'esc', closeScratchView, S.boot && S.boot.name);
@@ -1024,7 +1429,7 @@ function moveScratch(d) {
   if (!SC.list.length) return;
   const i = Math.min(Math.max(SC.listCursor + d, 0), SC.list.length - 1);
   SC.listCursor = i;
-  selectScratch(SC.list[i].id);
+  selectScratch(SC.list[i].id, false, null, { replace: true });
 }
 
 export function scratchNewKey(k) {
@@ -1035,41 +1440,108 @@ export function scratchNewKey(k) {
   return true;
 }
 
-// startScratch is how xf scratch starts the page: on a new empty scratch.
 // The Scratch view goes into the tab's workspace (workspace.js) while it
-// is open: the scratch, its editor's text, cursor and undo history, the
-// results' place, filters and sort, and a finished run's results unless
-// they are big (light).
-part('scratch', (light) => {
-  if (!SC.open || SC.standalone || !SC.cur) return null;
-  const done = SC.run && SC.run.phase === 'done' && !light ? SC.run : null;
-  return {
-    id: SC.cur.id, focus: SC.focus, listOpen: SC.listOpen, hideResults: SC.hideResults,
-    filters: SC.filters, sort: SC.sort, sel: SC.sel, scrollTop: SC.scrollTop, run: done,
-    editor: ed && !SC.cur.draft ? ed.save(light) : null,
-  };
-}, (v) => {
-  if (!v.id) return;
-  openScratchView(v.id).then(() => {
-    if (!SC.cur || SC.cur.id !== v.id) return;
-    Object.assign(SC, { focus: v.focus || SC.focus, listOpen: !!v.listOpen, hideResults: !!v.hideResults,
-      filters: v.filters || {}, sort: v.sort || null, sel: v.sel || null, scrollTop: v.scrollTop || 0 });
-    if (v.run && v.run.sql) SC.run = v.run;
-    redraw();
-    // The editor mounts as the view draws.
-    let tries = 0;
-    const put = () => {
-      if (!ed) { if (++tries < 40) setTimeout(put, 25); return; }
-      if (v.editor && v.editor.doc === ed.doc()) ed.restore(v.editor);
-      if (SC.focus === 'editor') ed.focus();
+// is open: every open tab (its scratch, editor text, cursor and undo
+// history, results' place, filters and sort, and a finished run's results
+// unless they are big).
+export function saveScratchWorkspace(light) {
+  if (!SC.open || !SC.tabs.length) return null;
+  const active = activeTab();
+  const tabs = SC.tabs.map((t) => {
+    const cur = t.cur;
+    if (!cur) return null;
+    const isAct = t === active;
+    const done = t.run && t.run.phase === 'done' && !light ? t.run : null;
+    const edState = isAct && ed && ed.save ? (!cur.draft ? ed.save(light) : null)
+      : (!cur.draft && t.editor ? (light ? { doc: t.editor.doc, selection: t.editor.selection } : t.editor) : null);
+    return {
+      id: cur.id || '',
+      draft: !!cur.draft,
+      project: cur.project || '',
+      location: cur.location || '',
+      hideResults: !!t.hideResults,
+      filters: t.filters,
+      sort: t.sort,
+      sel: t.sel,
+      scrollTop: t.scrollTop,
+      run: done,
+      editor: edState,
     };
-    put();
-  });
-});
+  }).filter((t) => t && (t.id || t.draft));
+  if (!tabs.length) return null;
+  const activeIndex = Math.max(0, SC.tabs.indexOf(active));
+  return {
+    tabs,
+    activeIndex,
+    id: active && active.cur ? active.cur.id : '',
+    focus: SC.focus,
+    listOpen: SC.listOpen,
+  };
+}
 
-hooks.scratchFlush = () => (SC.open ? flushSave() : Promise.resolve());
-hooks.scratchRunning = () => SC.open && isRunning();
-hooks.scratchCancel = () => cancelRun();
+export async function restoreScratchWorkspace(v) {
+  if (!v) return;
+  const savedTabs = Array.isArray(v.tabs) && v.tabs.length
+    ? v.tabs
+    : (v.id ? [{ id: v.id, hideResults: v.hideResults, filters: v.filters, sort: v.sort, sel: v.sel, scrollTop: v.scrollTop, run: v.run, editor: v.editor }] : []);
+  if (!savedTabs.length) return;
+  if (!S.caps.scratch) return;
+  const seq = ++openSeq;
+  SC.open = true;
+  SC.focus = v.focus || 'results';
+  SC.listOpen = !!v.listOpen;
+  await Promise.all([loadList(), loadDefaults(), loadRecent()]);
+  if (seq !== openSeq) return;
+  const built = [];
+  for (const st of savedTabs) {
+    let cur = null;
+    if (st.id) {
+      try { cur = await get('/api/scratch/file?id=' + encodeURIComponent(st.id)); } catch { continue; }
+    } else if (st.draft) {
+      cur = { id: '', draft: true, from: '', project: st.project || (SC.defaults && SC.defaults.project) || '', location: st.location || (SC.defaults && SC.defaults.location) || '', sql: '' };
+    }
+    if (!cur) continue;
+    const t = makeTab(cur);
+    t.hideResults = !!st.hideResults;
+    t.filters = st.filters || {};
+    t.sort = st.sort || null;
+    t.sel = st.sel || null;
+    t.scrollTop = st.scrollTop || 0;
+    if (st.run && st.run.sql) {
+      t.run = st.run;
+      ctxOf.set(t.run, t);
+    } else if (cur.id) {
+      const recent = SC.recent.find((r) => r.scratch === cur.id);
+      if (recent) showRecent(recent, t);
+    }
+    if (st.editor && st.editor.doc === cur.sql) t.editor = st.editor;
+    built.push(t);
+  }
+  if (seq !== openSeq || !built.length) return;
+  resetTabs();
+  SC.tabs = built;
+  const activeIdx = Math.min(Math.max(v.activeIndex || 0, 0), built.length - 1);
+  SC.activeTab = built[activeIdx].key;
+  const act = built[activeIdx];
+  if (act.cur && act.cur.id) SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === act.cur.id));
+  redraw();
+  let tries = 0;
+  const put = () => {
+    if (!ed) { if (++tries < 40) setTimeout(put, 25); return; }
+    if (activeTab() === act) {
+      applyEditor(act);
+      scheduleDry(0, act);
+      if (SC.focus === 'editor') ed.focus();
+    }
+  };
+  put();
+}
+
+part('scratch', saveScratchWorkspace, restoreScratchWorkspace);
+
+hooks.scratchFlush = () => (SC.open ? flushAllSaves() : Promise.resolve());
+hooks.scratchRunning = () => SC.open && anyRunning();
+hooks.scratchCancel = () => cancelAllRuns();
 
 hooks.startScratch = (standalone) => {
   SC.standalone = !!standalone;
@@ -1096,11 +1568,13 @@ hooks.dbxUpdated = (u) => {
     projectsLoading = false;
     SC.projects = null;
     clearMeta();
-    if (!isRunning()) {
-      SC.run = null;
-      SC.sel = null;
-      SC.filters = {};
-      SC.sort = null;
+    for (const t of SC.tabs) {
+      if (!isRunning(t)) {
+        t.run = null;
+        t.sel = null;
+        t.filters = {};
+        t.sort = null;
+      }
     }
     loadRecent();
   }
@@ -1125,7 +1599,7 @@ export function closeWarehouseMenu() {
 
 export function switchStandaloneWarehouse(id, flip) {
   SC.whOpen = false;
-  flushSave().then(() => openScratchWarehouse(id, flip));
+  flushAllSaves().then(() => openScratchWarehouse(id, flip));
 }
 
 function warehouseMenuKey(k) {
@@ -1154,7 +1628,7 @@ hooks.scratchEditing = () => SC.open && SC.focus === 'editor';
 // viewRun is the run whose rows the grid shows: the search of all rows
 // while it is on, else the run's own.
 export function viewRun(ctx = SC) {
-  const run = ctx.run;
+  const run = resolveCtx(ctx).run;
   return run && run.sub && run.subOn ? run.sub : run;
 }
 
@@ -1169,25 +1643,30 @@ function cellText(f, v) {
 
 // activeFilters are the filters with something typed, as [column, text].
 export function activeFilters(ctx = SC) {
-  return Object.entries(ctx.filters).filter(([, t]) => t !== '').map(([c, t]) => [Number(c), t]);
+  return Object.entries(resolveCtx(ctx).filters).filter(([, t]) => t !== '').map(([c, t]) => [Number(c), t]);
 }
 
-const filtersKey = (ctx = SC) => JSON.stringify([activeFilters(ctx), ctx.sort]);
+const filtersKey = (ctx = SC) => {
+  const c = resolveCtx(ctx);
+  return JSON.stringify([activeFilters(c), c.sort]);
+};
 
 export function setFilter(c, text, ctx = SC) {
-  if (text) ctx.filters[c] = text; else delete ctx.filters[c];
-  const run = ctx.run;
-  if (run && run.sub && run.sub.key !== filtersKey(ctx)) run.subOn = false; // the search no longer matches the boxes
-  ctx.scrollTop = 0;
-  autoSearch(ctx);
+  const t = resolveCtx(ctx);
+  if (text) t.filters[c] = text; else delete t.filters[c];
+  const run = t.run;
+  if (run && run.sub && run.sub.key !== filtersKey(t)) run.subOn = false; // the search no longer matches the boxes
+  t.scrollTop = 0;
+  autoSearch(t);
   redraw();
 }
 
 export function clearFilters(ctx = SC) {
-  ctx.filters = {};
-  const run = ctx.run;
+  const t = resolveCtx(ctx);
+  t.filters = {};
+  const run = t.run;
   if (run) { dropSearch(run); run.subOn = false; run.sub = null; }
-  ctx.scrollTop = 0;
+  t.scrollTop = 0;
   redraw();
 }
 
@@ -1200,13 +1679,14 @@ const SEARCH_WAIT = 400; // ms after the last change to a filter
 // A search of a result table at or over the confirm size waits for the
 // user to ask, through the link or enter.
 function autoSearch(ctx = SC) {
-  const run = ctx.run;
+  const t = resolveCtx(ctx);
+  const run = t.run;
   if (!run) return;
   dropSearch(run);
-  if (!run.next || !run.rowsJob || !activeFilters(ctx).length) return;
-  if (run.sub && run.sub.key === filtersKey(ctx) && !['failed', 'cancelled'].includes(run.sub.phase)) { run.subOn = true; return; } // back to what was searched
+  if (!run.next || !run.rowsJob || !activeFilters(t).length) return;
+  if (run.sub && run.sub.key === filtersKey(t) && !['failed', 'cancelled'].includes(run.sub.phase)) { run.subOn = true; return; } // back to what was searched
   if (run.searchBytes !== undefined) return; // too big to search unasked
-  run.searchTimer = setTimeout(() => { run.searchTimer = null; if (ctx.run === run) searchAll(false, true, ctx); }, SEARCH_WAIT);
+  run.searchTimer = setTimeout(() => { run.searchTimer = null; if (t.run === run) searchAll(false, true, t); }, SEARCH_WAIT);
   run.searchPending = true;
 }
 
@@ -1218,11 +1698,12 @@ function dropSearch(run) {
 
 // searchNow searches every row at once, as enter in a filter asks.
 export function searchNow(ctx = SC) {
-  const run = ctx.run;
+  const t = resolveCtx(ctx);
+  const run = t.run;
   if (!run || !run.next) return;
   dropSearch(run);
-  if (run.sub && run.subOn && run.sub.key === filtersKey(ctx)) return;
-  searchAll(false, false, ctx);
+  if (run.sub && run.subOn && run.sub.key === filtersKey(t)) return;
+  searchAll(false, false, t);
 }
 
 // lowerCol is the lower-cased text of a column of the loaded rows, kept
@@ -1281,24 +1762,26 @@ export function compareCells(f, a, b) {
 
 // setSort cycles a column's sort: ascending, descending, none.
 export function setSort(c, ctx = SC) {
-  const run = viewRun(ctx) || ctx.run;
+  const t = resolveCtx(ctx);
+  const run = viewRun(t) || t.run;
   if (!run || !run.schema) return;
   if (!isSortable(run.schema[c])) { say(`BigQuery can't order by a ${typeLabel(run.schema[c]).toLowerCase()} column`); return; }
-  if (!ctx.sort || ctx.sort.c !== c) ctx.sort = { c, desc: false };
-  else if (!ctx.sort.desc) ctx.sort = { c, desc: true };
-  else ctx.sort = null;
-  const main = ctx.run;
-  if (main && main.sub && main.sub.key !== filtersKey(ctx)) main.subOn = false; // the search no longer matches
-  ctx.scrollTop = 0;
-  autoSearch(ctx);
+  if (!t.sort || t.sort.c !== c) t.sort = { c, desc: false };
+  else if (!t.sort.desc) t.sort = { c, desc: true };
+  else t.sort = null;
+  const main = t.run;
+  if (main && main.sub && main.sub.key !== filtersKey(t)) main.subOn = false; // the search no longer matches
+  t.scrollTop = 0;
+  autoSearch(t);
   redraw();
 }
 
 export function clearSort(ctx = SC) {
-  ctx.sort = null;
-  const main = ctx.run;
-  if (main && main.sub && main.sub.key !== filtersKey(ctx)) main.subOn = false;
-  autoSearch(ctx);
+  const t = resolveCtx(ctx);
+  t.sort = null;
+  const main = t.run;
+  if (main && main.sub && main.sub.key !== filtersKey(t)) main.subOn = false;
+  autoSearch(t);
   redraw();
 }
 
@@ -1306,14 +1789,15 @@ export function clearSort(ctx = SC) {
 // every filter's text (any case), in the sort's order; null when there is
 // neither, or the rows are the server's, already searched and sorted.
 export function visibleRows(run, ctx = SC) {
-  const active = activeFilters(ctx);
-  const sort = ctx.sort;
-  if (!run || !run.schema || (!active.length && !sort) || run === (ctx.run && ctx.run.sub)) return null;
-  const key = run.rows.length + '|' + filtersKey(ctx);
+  const t = resolveCtx(ctx);
+  const active = activeFilters(t);
+  const sort = t.sort;
+  if (!run || !run.schema || (!active.length && !sort) || run === (t.run && t.run.sub)) return null;
+  const key = run.rows.length + '|' + filtersKey(t);
   if (run.visKey === key) return run.vis;
-  const cols = active.map(([c, t]) => [lowerCol(run, c), t.toLowerCase()]);
+  const cols = active.map(([c, txt]) => [lowerCol(run, c), txt.toLowerCase()]);
   const out = [];
-  for (let i = 0; i < run.rows.length; i++) if (cols.every(([col, t]) => col[i].includes(t))) out.push(i);
+  for (let i = 0; i < run.rows.length; i++) if (cols.every(([col, txt]) => col[i].includes(txt))) out.push(i);
   if (sort) {
     const f = run.schema[sort.c], rows = run.rows, sign = sort.desc ? -1 : 1;
     out.sort((x, y) => sign * compareCells(f, rows[x][sort.c], rows[y][sort.c]));
@@ -1328,22 +1812,23 @@ export function visibleRows(run, ctx = SC) {
 // question for when they ask. A reply to a search the filters have since
 // moved past is dropped.
 export async function searchAll(confirm, auto, ctx = SC) {
-  const run = ctx.run;
-  const terms = activeFilters(ctx);
-  const sort = ctx.sort;
+  const t = resolveCtx(ctx);
+  const run = t.run;
+  const terms = activeFilters(t);
+  const sort = t.sort;
   if (!run || !run.rowsJob || !run.schema || (!terms.length && !sort)) return;
   if (onDemand()) return; // Databricks and Snowflake keep no table of a result to search
   dropSearch(run);
   const job = run.rowsJob;
-  const key = filtersKey(ctx);
+  const key = filtersKey(t);
   const seq = run.searchSeq = (run.searchSeq || 0) + 1;
-  const stale = () => ctx.run !== run || run.searchSeq !== seq || filtersKey(ctx) !== key;
+  const stale = () => t.closed || t.run !== run || run.searchSeq !== seq || filtersKey(t) !== key;
   run.searchPending = true;
   let res;
   try {
     res = await post('/api/scratch/filter', {
       project: job.project, location: job.location, id: job.id, confirm: !!confirm,
-      filters: terms.map(([c, t]) => ({ column: run.schema[c].name, value: t })),
+      filters: terms.map(([c, txt]) => ({ column: run.schema[c].name, value: txt })),
       sort: sort ? [{ column: run.schema[sort.c].name, desc: sort.desc }] : [],
     });
   } catch (e) {
@@ -1360,8 +1845,8 @@ export async function searchAll(confirm, auto, ctx = SC) {
   if (res.needsConfirm) run.searchBytes = res.bytes;
   if (res.needsConfirm && auto) { redraw(); return; }
   if (res.needsConfirm) {
-    ctx.confirm = { action: 'searchAll', why: [`${terms.length ? 'Searching' : 'Sorting'} every row scans the result's table, ${fmtBytes(res.bytes)}.`], danger: true };
-    if (ctx === SC) {
+    t.confirm = { action: 'searchAll', why: [`${terms.length ? 'Searching' : 'Sorting'} every row scans the result's table, ${fmtBytes(res.bytes)}.`], danger: true };
+    if (t === activeTab()) {
       if (ed) ed.blur();
       SC.focus = 'results';
     }
@@ -1370,19 +1855,20 @@ export async function searchAll(confirm, auto, ctx = SC) {
   }
   const prev = run.sub;
   if (prev && prev.job && ['starting', 'running'].includes(prev.phase)) post('/api/scratch/cancel', prev.job).catch(() => {});
-  const sub = newRun('(search)', ctx);
+  const sub = newRun('(search)', t);
   sub.job = res.job;
   sub.phase = 'running';
   sub.key = key;
   run.sub = sub; run.subOn = true;
-  ctx.scrollTop = 0; ctx.sel = null;
+  t.scrollTop = 0; t.sel = null;
   redraw();
   poll(sub);
 }
 
 export function showLoadedRows(ctx = SC) {
-  const run = ctx.run;
+  const t = resolveCtx(ctx);
+  const run = t.run;
   if (run) { dropSearch(run); run.subOn = false; }
-  ctx.scrollTop = 0;
+  t.scrollTop = 0;
   redraw();
 }

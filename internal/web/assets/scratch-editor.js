@@ -7,7 +7,7 @@ import * as cm from './vendor/codemirror.mjs';
 import { createEditor, warehouseSQL, builtins, isBlock, formatText } from './editor.js';
 import { completionExtensions, hoverAtCursor } from './scratch-complete.js';
 import { loadFunctions, dialect } from './scratch-functions.js';
-import { SC, setEditor, refreshMeta, scratchSay, onEdit, scheduleDry, runScratch, flushSave, cancelRun, isRunning } from './scratch.js';
+import { SC, setEditor, refreshMeta, scratchSay, onEdit, scheduleDry, runScratch, flushSave, cancelRun, isRunning, nextScratchTab, closeTab, newDraft } from './scratch.js';
 import { redraw, post } from './state.js';
 
 // sqlOf is the language of the project's warehouse, its functions colored.
@@ -34,8 +34,13 @@ export function mountEditor(parent, onFocus) {
     ],
     // sqlfluff formats the query (ADR 0024); nothing is saved but by the
     // scratch's own autosave.
-    ex: { run: () => runScratch(), refresh: () => refreshMeta(), format: () => format(), fmt: () => format() },
-    exShort: { run: 'ru', refresh: 'ref', format: 'fo', fmt: 'fmt' },
+    ex: {
+      run: () => runScratch(), refresh: () => refreshMeta(), format: () => format(), fmt: () => format(),
+      bnext: () => nextScratchTab(1), bprevious: () => nextScratchTab(-1), bdelete: () => closeTab(), tabnew: () => newDraft(),
+    },
+    exShort: { run: 'ru', refresh: 'ref', format: 'fo', fmt: 'fmt', bnext: 'bn', bprevious: 'bp', bdelete: 'bd', tabnew: 'tabe' },
+    buffer: (dir) => nextScratchTab(dir),
+    bufferDelete: () => closeTab(),
     format: () => format(),
     save: () => flushSave(),
     leave: () => { SC.focus = 'results'; redraw(); },

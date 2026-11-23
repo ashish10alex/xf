@@ -1081,6 +1081,7 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .sc-item { position: relative; padding: 4px 10px; border-bottom: 1px solid var(--rule); cursor: pointer; }
 .sc-item:hover { background: var(--bg-2); }
 .sc-item.sel { background: var(--sel); }
+.sc-item.open::before { content: ''; position: absolute; left: 3px; top: 50%; width: 4px; height: 4px; margin-top: -2px; border-radius: 50%; background: var(--focus); opacity: 0.7; }
 .sc-item-top { display: flex; align-items: baseline; gap: 8px; }
 .sc-from { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .sc-when { white-space: nowrap; font-size: 12px; }
@@ -1088,6 +1089,18 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .sc-item:hover .sc-del-btn, .sc-del-btn:focus-visible { opacity: 1; }
 .sc-del { white-space: nowrap; font-size: 12px; }
 .sc-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.sc-tabbar { display: flex; align-items: stretch; gap: 0; overflow-x: auto; scrollbar-width: none; background: var(--bg-2); border-bottom: 1px solid var(--rule); min-height: 28px; flex: none; }
+.sc-tabbar::-webkit-scrollbar { display: none; }
+.sc-tab { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px 0 10px; max-width: 220px; min-width: 72px; border-right: 1px solid var(--rule); color: var(--dim); cursor: pointer; user-select: none; font: 12px/28px var(--mono); position: relative; flex: 0 0 auto; }
+.sc-tab:hover { color: var(--fg); background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.sc-tab.on { color: var(--fg); background: var(--panel); box-shadow: inset 0 -2px 0 var(--focus); }
+.sc-tab-state { flex: none; font-size: 11px; line-height: 1; }
+.sc-tab-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-tab-close { flex: none; border: 0; background: none; color: var(--dim); font: 13px/1 var(--chrome); padding: 1px 4px; border-radius: 3px; cursor: pointer; opacity: 0; }
+.sc-tab:hover .sc-tab-close, .sc-tab.on .sc-tab-close, .sc-tab-close:focus-visible { opacity: 0.75; }
+.sc-tab-close:hover { opacity: 1; color: var(--fg); background: var(--focus-glow); }
+.sc-tab-add { flex: none; border: 0; background: none; color: var(--dim); font: 15px/28px var(--chrome); padding: 0 10px; cursor: pointer; }
+.sc-tab-add:hover { color: var(--fg); background: var(--focus-glow); }
 .sc-editor-pane { flex: 0 0 42%; min-height: 160px; display: flex; flex-direction: column; border-bottom: 1px solid var(--rule); }
 .sc-editor-pane.full { flex: 1; border-bottom: 0; }
 .sc-editor-pane.focused { box-shadow: inset 0 0 0 1px var(--focus), inset 0 0 12px var(--focus-glow); }
@@ -1106,7 +1119,7 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .chip.dry.pending { opacity: 0.6; }
 .sc-result { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* The recent results menu (h), under the toolbar's right end. */
-.ctx-menu.sc-recent { top: 64px; right: 16px; width: min(640px, calc(100vw - 32px)); max-width: none; cursor: default; }
+.ctx-menu.sc-recent { top: 92px; right: 16px; width: min(640px, calc(100vw - 32px)); max-width: none; cursor: default; }
 .sc-recent-head { padding: 4px 10px 6px; font: 11px/1.2 var(--chrome); }
 .sc-recent-row { gap: 12px; cursor: pointer; }
 .sc-recent-row .ctx-label { line-height: 1.3; }

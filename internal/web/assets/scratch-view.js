@@ -31,12 +31,49 @@ function Editor() {
   const box = useRef(null);
   useEffect(() => {
     const e = mountEditor(box.current);
-    if (SC.cur) e.set(SC.cur.sql);
-    sc.scheduleDry(0);
+    sc.restoreActiveEditor();
     if (SC.focus === 'editor') e.focus();
     return () => { e.view.destroy(); sc.setEditor(null); };
   }, []);
   return html`<div class=${'sc-editor' + (SC.focus === 'editor' ? ' focused' : '')} ref=${box}></div>`;
+}
+
+// ---- the tab bar ----
+
+function TabBar() {
+  const activeRef = useRef(null);
+  useTick(sc.anyRunning(), 100);
+  useEffect(() => {
+    if (activeRef.current && activeRef.current.scrollIntoView) {
+      activeRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [SC.activeTab, SC.tabs.length]);
+  const mac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const newTip = `New scratch tab (${mac ? '⌥t' : 'alt+t'})`;
+  const closeTip = `Close tab (${mac ? '⌥w' : 'alt+w'})`;
+  const openTabs = SC.tabs.filter((t) => t.cur);
+  return html`<div class="sc-tabbar" role="tablist" aria-label="Scratch tabs">
+    ${openTabs.map((t) => {
+      const on = t.key === SC.activeTab;
+      const r = t.run;
+      const busy = r && ['starting', 'running', 'loading'].includes(r.phase);
+      const state = busy ? html`<span class="sc-tab-state warn">${SPIN[Math.floor(Date.now() / 90) % SPIN.length]}</span>`
+        : r && r.phase === 'failed' ? html`<span class="sc-tab-state error">✗</span>`
+        : r && r.phase === 'done' ? html`<span class="sc-tab-state ok">✓</span>`
+        : null;
+      const label = sc.tabLabel(t);
+      const cur = t.cur;
+      const tip = [cur.id ? cur.id + '.sql' : 'new scratch', cur.from ? 'from ' + cur.from : '', cur.project ? [cur.project, cur.location].filter(Boolean).join(' · ') : ''].filter(Boolean).join(' · ');
+      return html`<div key=${t.key} ref=${on ? activeRef : null} class=${'sc-tab' + (on ? ' on' : '')} role="tab" aria-selected=${on} title=${tip}
+        onClick=${() => sc.switchTab(t.key)}
+        onAuxClick=${(e) => { if (e.button === 1) { e.preventDefault(); sc.closeTab(t.key); } }}>
+        ${state}
+        <span class="sc-tab-name">${label}</span>
+        ${sc.canCloseTab(t) && html`<button class="sc-tab-close" title=${closeTip} onClick=${(e) => { e.stopPropagation(); sc.closeTab(t.key); }}>×</button>`}
+      </div>`;
+    })}
+    <button class="sc-tab-add" title=${newTip} onClick=${() => sc.newDraft()}>+</button>
+  </div>`;
 }
 
 // ---- the list ----
@@ -46,11 +83,12 @@ function List() {
     const d = new Date(s.modified);
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toTimeString().slice(0, 5);
   };
+  const openIds = new Set(SC.tabs.map((t) => t.cur && t.cur.id).filter(Boolean));
   return html`<aside class="sc-list">
     <${Sash} which="list" axis="x" dir=${1} min=${140} max=${(el) => el.parentElement.getBoundingClientRect().width - 300} />
     <div class="sc-list-head"><span>scratches</span><span><button class="link" title="A new empty scratch" onClick=${() => sc.newDraft()}>+ empty</button></span></div>
     <div class="sc-list-body">
-      ${SC.list.map((s, i) => html`<div class=${'sc-item' + (SC.cur && SC.cur.id === s.id ? ' sel' : '')} onClick=${() => { SC.listCursor = i; sc.selectScratch(s.id); }}>
+      ${SC.list.map((s, i) => html`<div class=${'sc-item' + (SC.cur && SC.cur.id === s.id ? ' sel' : openIds.has(s.id) ? ' open' : '')} onClick=${() => { SC.listCursor = i; sc.selectScratch(s.id); }}>
         <div class="sc-item-top"><span class="sc-from" title=${s.preview}>${s.from || 'scratch'}</span>${SC.delAsk !== s.id && html`<span class="dim sc-when">${when(s)}</span>`}
           ${SC.delAsk === s.id
             ? html`<span class="sc-del warn">delete? <button class="link error" onClick=${(e) => { e.stopPropagation(); sc.deleteScratch(s.id); }}>y</button> <button class="link" onClick=${(e) => { e.stopPropagation(); SC.delAsk = ''; redraw(); }}>n</button></span>`
@@ -542,13 +580,20 @@ export function NewBox() {
 function ConfirmBox() {
   const c = SC.confirm;
   if (!c) return null;
+  const title = c.action === 'searchAll' ? 'search every row'
+    : c.action === 'closeTab' ? 'close this tab'
+    : c.action === 'closeOtherTabs' ? 'close other tabs'
+    : 'run this';
+  const verb = c.action === 'searchAll' ? 'search'
+    : c.action === 'closeTab' || c.action === 'closeOtherTabs' ? 'close & cancel'
+    : 'run';
   return html`<div class="overlay-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) sc.dismissConfirm(); }}>
     <div class=${'overlay pane focused confirm ' + (c.danger ? 'amber' : '')}>
-      <header class="pane-title"><span class="pane-name">⚠ really ${c.action === 'searchAll' ? 'search every row' : 'run this'}?</span></header>
+      <header class="pane-title"><span class="pane-name">⚠ really ${title}?</span></header>
       <div class="pane-body">
         ${c.why.map((w) => html`<p class="warn"><b>${w}</b></p>`)}
-        <p class="dim">Do you really want to ${c.action === 'searchAll' ? 'search' : 'run'} it?</p>
-        <div class="buttons"><button class="run-btn danger" onClick=${() => sc.confirmRun()}><kbd>y</kbd> ${c.action === 'searchAll' ? 'search' : 'run'}</button>
+        <p class="dim">Do you really want to ${title}?</p>
+        <div class="buttons"><button class="run-btn danger" onClick=${() => sc.confirmRun()}><kbd>y</kbd> ${verb}</button>
           <button class="plain" onClick=${() => sc.dismissConfirm()}><kbd>any other key</kbd> cancel</button></div>
       </div>
     </div>
@@ -606,6 +651,7 @@ export function ScratchPage() {
     <div class=${'sc-body' + (SC.listOpen ? '' : ' no-list')} style=${SC.listOpen && SC.size.list ? `grid-template-columns:${SC.size.list}px minmax(0,1fr)` : ''}>
       ${SC.listOpen && html`<${List} />`}
       <main class="sc-main">
+        <${TabBar} />
         <section class=${'sc-editor-pane' + (focus === 'editor' ? ' focused' : '') + (SC.run && !SC.hideResults ? '' : ' full')} style=${SC.run && !SC.hideResults && SC.size.editor ? `flex:0 0 ${SC.size.editor}px` : ''}>
           ${SC.run && !SC.hideResults && html`<${Sash} which="editor" axis="y" dir=${1} min=${100} max=${(el) => el.parentElement.getBoundingClientRect().height - 120} />`}
           <div class="sc-toolbar">
@@ -616,10 +662,10 @@ export function ScratchPage() {
               ${SC.dbx.hasProfiles && html`<button class=${'tool sc-dbx-chip' + (!SC.dbx.host ? ' warn' : '')} onClick=${() => openProfilePicker()} title=${SC.dbx.host ? (sc.onSf() ? 'Snowflake connection' : 'Databricks profile') + ' (' + SC.dbx.host + ') — click to switch' : (sc.onSf() ? 'Pick a Snowflake connection from ~/.snowflake/connections.toml' : 'Pick a Databricks profile from ~/.databrickscfg')}>${SC.dbx.profile || (SC.dbx.host ? (sc.onSf() ? 'env account' : 'env host') : (sc.onSf() ? 'pick connection' : 'pick profile'))}</button>`}
               <button class=${'tool sc-dbx-chip' + (!SC.dbx.warehouse ? ' warn' : '')} onClick=${() => openWarehousePicker(() => {})} title=${SC.dbx.warehouse ? (sc.onSf() ? 'Virtual warehouse ' : 'SQL warehouse ') + SC.dbx.warehouse + ' — click to switch' : (sc.onSf() ? 'Pick a Snowflake virtual warehouse' : 'Pick a Databricks SQL warehouse')}>${SC.dbx.warehouse ? 'wh:' + SC.dbx.warehouse : 'pick warehouse'}</button>
             </span>`}
-            ${SC.cur && sc.onDemand() && html`<span class="sc-target" title=${sc.onSf() ? "The database the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen virtual warehouse" : "The catalog the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen SQL warehouse"}>
+            ${SC.cur && sc.onDemand() && html`<span key=${SC.activeTab} class="sc-target" title=${sc.onSf() ? "The database the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen virtual warehouse" : "The catalog the query's unqualified names are in, kept in the scratch's first line; it runs on the chosen SQL warehouse"}>
               <input class="sc-target-in" list="sc-projects" value=${SC.cur.project || ''} placeholder=${sc.onSf() ? 'database' : 'catalog'} size=${fieldSize(SC.cur.project, sc.onSf() ? 'database' : 'catalog')} spellcheck="false" autocomplete="off" onFocus=${() => sc.loadProjects()} onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
             </span>`}
-            ${SC.cur && !sc.onDemand() && html`<span class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
+            ${SC.cur && !sc.onDemand() && html`<span key=${SC.activeTab} class="sc-target" title="The project the query is billed to and the location it runs in, kept in the scratch's first line">
               <input class="sc-target-in" list="sc-projects" value=${SC.cur.project || ''} placeholder="project" size=${fieldSize(SC.cur.project, 'project')} spellcheck="false" autocomplete="off" onFocus=${() => sc.loadProjects()} onInput=${growField} onChange=${(e) => sc.setTarget(e.currentTarget.value.trim(), SC.cur.location || '')} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
               <span class="dim">·</span>
               <input class="sc-target-in" value=${SC.cur.location || ''} placeholder="location" size=${fieldSize(SC.cur.location, 'location')} spellcheck="false" autocomplete="off" onInput=${growField} onChange=${(e) => sc.setTarget(SC.cur.project || '', e.currentTarget.value.trim())} onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
@@ -638,8 +684,8 @@ export function ScratchPage() {
     </div>
     ${SC.flash ? html`<div class="footer warn">${SC.flash}</div>`
       : html`<div class="footer">${focus === 'editor'
-        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [savesWith(), 'save'], ['⌘J', 'results'], ['⌘B', 'scratches'], ['ctrl+q', SC.standalone ? 'close' : 'back']])
-        : k([[commandsKey, 'commands'], ['i', 'edit'], ['⌘↵/r', 'run'], ['ctrl+c', 'cancel run'], ['j/k', 'switch scratch'], ['h', 'recent results'], ['⌘J', 'results'], ['⌘B/b', 'scratches'], ['n', 'new'], ['d', 'delete'], ['y/Y', 'copy cell/row'], ['ctrl+q', SC.standalone ? 'close' : 'back']])}</div>`}
+        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [savesWith(), 'save'], [/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌥t/⌥w' : 'alt+t/w', 'new/close tab'], [/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌥⌘←/→' : 'ctrl+alt+←/→', 'tabs'], ['⌘J', 'results'], ['⌘B', 'scratches'], ['ctrl+q', SC.standalone ? 'close' : 'back']])
+        : k([[commandsKey, 'commands'], ['i', 'edit'], ['⌘↵/r', 'run'], ['ctrl+c', 'cancel run'], ['t/x', 'new/close tab'], ['[/]', 'tabs'], ['j/k', 'switch scratch'], ['h', 'recent results'], ['⌘J', 'results'], ['⌘B/b', 'scratches'], ['n', 'new'], ['d', 'delete'], ['y/Y', 'copy cell/row'], ['ctrl+q', SC.standalone ? 'close' : 'back']])}</div>`}
     <${NewBox} />
     <${ConfirmBox} />
     <${RecentMenu} />

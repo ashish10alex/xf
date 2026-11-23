@@ -51,7 +51,12 @@ export function snapshot() {
     menu: menuItems(),
     checks: S.checks, inspector: !!S.inspector,
     settings: SET.open ? { view: SET.view, tab: SET.tab, query: SET.query, closing: SET.closing } : null,
-    scratch: SC.open ? { focus: SC.focus, cur: SC.cur && SC.cur.id, running: !!(SC.run && ['starting', 'running'].includes(SC.run.phase)), confirm: !!SC.confirm, delAsk: SC.delAsk, standalone: SC.standalone, flash: SC.flash } : null,
+    scratch: SC.open ? {
+      focus: SC.focus, cur: SC.cur && SC.cur.id,
+      tabs: SC.tabs.map((t) => ({ key: t.key, id: t.cur && t.cur.id, active: t.key === SC.activeTab, running: !!(t.run && ['starting', 'running'].includes(t.run.phase)) })),
+      running: SC.tabs.some((t) => t.run && ['starting', 'running'].includes(t.run.phase)),
+      confirm: !!SC.confirm, delAsk: SC.delAsk, standalone: SC.standalone, flash: SC.flash,
+    } : null,
     theme: { choice: THEME.choice.theme, picking: !!THEME.pick },
     tree: { cursor: TREE.cursor, filter: TREE.filter, prompt: TREE.prompt ? TREE.prompt.kind : '' },
     scm: { cursor: G.cursor, busy: G.busy, failed: G.failed, prompt: G.prompt ? G.prompt.kind : '' },
