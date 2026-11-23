@@ -68,7 +68,7 @@ Give each question 2 to 4 options with your recommendation first, drawn from the
   | `severity` | Means | Act |
   |---|---|---|
   | `critical` | a dropped column or deleted table that something still reads | grill the user (step 4) |
-  | `warning` | a retyped column that something still reads | check each reader handles the new type |
+  | `warning` | a retyped column that something still reads, or a drop/deletion read only by external query-history consumers | check each reader or coordinate with external/BI owners |
   | `unknown` | its readers couldn't be looked up (`readersError`) | report it as unchecked: it is not safe |
   | `low` | nothing still reads it, or the base branch made the change (`change.onBase`) | nothing |
 

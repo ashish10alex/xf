@@ -17,8 +17,7 @@ Table-to-table lineage (Dataplex on BigQuery, `OBJECTS_MODIFIED` in Snowflake `A
 - **Databricks (`internal/databricks/extreaders.go`)**: Enabled by default whenever `queryHistoryDays > 0` (set `0` to disable). Scans Databricks' REST Query History API (`/api/2.0/sql/history/queries`, waking no SQL warehouse, capped at 10 pages) concurrently via `Readers.Preload`, matching tables with exact multi-part identifiers (no bare-table leaf fallback) and classifying multi-table `JOIN` SQL matches as `TableOnly` (`Warning`).
 
 **Severity and error isolation:**
-- Confirmed column-level external reads (`DependencyType: Other`) and any external read of a deleted table produce `SeverityCritical`.
-- Heuristic `SELECT *` (or ambiguous multi-table `JOIN`) external reads (`DependencyType: TableOnly`) on a dropped column produce `SeverityWarning` so a one-off `SELECT * LIMIT 10` does not falsely trip `--fail-on critical`.
+- External query-history (`SELECT`-only) consumers always grade as `SeverityWarning` (`REVIEW` / ⚠️), with a link to their most recent matching warehouse job. Because query history is retrospective and cannot be dry-run verified as fixed in git, grading external-only readers as `warning` ensures they surface loudly in PR comments, `xf web`, and `xf impact` without permanently wedging a `--fail-on critical` CI gate after a BI workbook is updated or because of a one-off ad-hoc query (teams that want to gate on them can pass `--fail-on warning`). When a dropped column or deleted table also has an open table/view/graph lineage reader, it remains `SeverityCritical` (`FIX` / 🚨) until those downstream models are settled.
 - Optional query-history errors (missing `roles/bigquery.resourceViewer`, scan cap hit, row cap truncation, or `QUERY_HISTORY` denied) are surfaced as report-level `Report.Warnings` notes rather than per-column `ReadersError`, so they never downgrade clean columns to `SeverityUnknown`.
 
 ## Known limitations

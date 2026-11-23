@@ -662,16 +662,13 @@ const (
 // deletedChange marks a deleted table where a ColumnChange is expected.
 var deletedChange = ColumnChange{Kind: "deleted"}
 
-// hasConfirmedDropReader reports whether readers contains any open reader that
-// definitely breaks on a column drop — either any non-consumer table/view
-// reader, or an external consumer with confirmed column-level usage (not a
-// SELECT * TableOnly heuristic).
-func hasConfirmedDropReader(readers []Reader) bool {
+// hasOpenLineageReader reports whether readers contains any open non-consumer
+// (table, view, or property-graph lineage) reader. External query-history
+// consumers are retrospective and cannot be dry-run verified as fixed in git, so
+// they grade as SeverityWarning (REVIEW) rather than blocking --fail-on critical.
+func hasOpenLineageReader(readers []Reader) bool {
 	for _, r := range readers {
-		if IsSettled(r) {
-			continue
-		}
-		if r.Consumer == nil || r.DependencyType != lineage.TableOnly {
+		if !IsSettled(r) && r.Consumer == nil {
 			return true
 		}
 	}
@@ -681,10 +678,11 @@ func hasConfirmedDropReader(readers []Reader) bool {
 // ImpactSeverity is low for a change the base branch already made, which
 // this branch can do nothing about, unless its uniqueKey alone names the
 // dropped column (keyedHere); else critical for a drop that breaks
-// the table's own incremental run (BreaksRun); else unknown when the readers couldn't
-// be looked up, low when nothing still reads it (no readers, or only ones
-// this branch probably updated), else critical for a drop or deletion and a
-// warning for a retype (or a drop read only by SELECT * external consumers).
+// the table's own incremental run (BreaksRun); else critical for a drop or
+// deletion with an open table/view/graph lineage reader; else unknown when
+// lineage readers couldn't be looked up; else low when nothing still reads it
+// (no readers, or only ones this branch probably updated); else warning for a
+// retype or when only external query-history consumers remain.
 func ImpactSeverity(change ColumnChange, readers []Reader, readersError string) Severity {
 	switch {
 	case change.OnBase && !change.keyedHere():
@@ -693,22 +691,17 @@ func ImpactSeverity(change ColumnChange, readers []Reader, readersError string) 
 		return SeverityCritical
 	case change.Kind == TypeChanged && change.Widening:
 		return SeverityLow
-	case OpenReaders(readers) > 0 && change.Kind == deletedChange.Kind:
-		return SeverityCritical
-	case OpenReaders(readers) > 0 && change.Kind != TypeChanged && hasConfirmedDropReader(readers):
+	case change.Kind != TypeChanged && hasOpenLineageReader(readers):
 		return SeverityCritical
 	case readersError != "":
 		return SeverityUnknown
 	case OpenReaders(readers) == 0:
 		return SeverityLow
-	case change.Kind == TypeChanged:
-		return SeverityWarning
-	case change.Kind == Dropped && OpenReaders(readers) > 0:
-		// Only SELECT * (TableOnly) external consumers: review before merging
-		// without tripping a hard critical gate on ad-hoc SELECT * LIMIT 10.
+	default:
+		// Retype with open readers, or a drop/deletion read only by external
+		// query-history consumers (which can't be settled in git).
 		return SeverityWarning
 	}
-	return SeverityCritical
 }
 
 // severityOrder is the extension's order of urgency, for a table's

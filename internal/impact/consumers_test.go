@@ -78,8 +78,8 @@ func TestExternalConsumerImpactRenderingAndSeverity(t *testing.T) {
 	}
 
 	worst, ok := Worst(rep)
-	if !ok || worst != SeverityCritical {
-		t.Fatalf("Worst = (%v, %v), want (SeverityCritical, true)", worst, ok)
+	if !ok || worst != SeverityWarning {
+		t.Fatalf("Worst = (%v, %v), want (SeverityWarning, true) for external-only readers", worst, ok)
 	}
 
 	md := Markdown(rep)
@@ -130,20 +130,41 @@ func TestExternalConsumerImpactRenderingAndSeverity(t *testing.T) {
 	}
 }
 
-func TestTableOnlyExternalConsumerSeverity(t *testing.T) {
+func TestExternalConsumerSeverityIsReviewWarning(t *testing.T) {
+	confirmed := []Reader{{
+		Table:          "external:looker:explore-orders",
+		DependencyType: lineage.Other,
+		Consumer:       &lineage.Consumer{Tool: "Looker", Asset: "explore orders", Queries: 840, Days: 14},
+	}}
 	starOnly := []Reader{{
 		Table:          "external:query:alice@acme.com",
 		DependencyType: lineage.TableOnly,
 		Consumer:       &lineage.Consumer{User: "alice@acme.com", Queries: 2, Days: 14},
 	}}
-	// Dropped column read only via SELECT * external consumer is Warning (review),
-	// avoiding hard critical gate failures on ad-hoc SELECT * LIMIT 10.
+	// External query-history consumers (confirmed or SELECT *) always grade as
+	// Warning (REVIEW) on drops and deletions so historical queries don't
+	// permanently wedge a --fail-on critical gate after downstream tables are fixed.
+	if got := ImpactSeverity(ColumnChange{Kind: Dropped}, confirmed, ""); got != SeverityWarning {
+		t.Errorf("Dropped with confirmed external consumer = %v, want SeverityWarning", got)
+	}
 	if got := ImpactSeverity(ColumnChange{Kind: Dropped}, starOnly, ""); got != SeverityWarning {
 		t.Errorf("Dropped with SELECT* external consumer = %v, want SeverityWarning", got)
 	}
-	// Deleted table read by ANY external consumer is still Critical.
-	if got := ImpactSeverity(deletedChange, starOnly, ""); got != SeverityCritical {
-		t.Errorf("Deleted table with SELECT* external consumer = %v, want SeverityCritical", got)
+	if got := ImpactSeverity(deletedChange, confirmed, ""); got != SeverityWarning {
+		t.Errorf("Deleted table with external-only consumer = %v, want SeverityWarning", got)
+	}
+	// Mixed open lineage table reader + external consumer stays Critical until
+	// the lineage reader is settled, then drops cleanly to Warning.
+	mixed := []Reader{
+		confirmed[0],
+		{Table: "acme.marts.inc_table", DependencyType: lineage.ExactCopy},
+	}
+	if got := ImpactSeverity(ColumnChange{Kind: Dropped}, mixed, ""); got != SeverityCritical {
+		t.Errorf("Dropped with open lineage + external consumer = %v, want SeverityCritical", got)
+	}
+	mixed[1].ProbablyUpdated = true
+	if got := ImpactSeverity(ColumnChange{Kind: Dropped}, mixed, ""); got != SeverityWarning {
+		t.Errorf("Dropped with settled lineage + external consumer = %v, want SeverityWarning", got)
 	}
 	// Normal non-consumer TableOnly reader on Dropped stays Critical.
 	normalTableOnly := []Reader{{Table: "acme.marts.inc_table", DependencyType: lineage.TableOnly}}

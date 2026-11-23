@@ -16,7 +16,7 @@ Rows are numbered down the left, and a collapsed "Every reader" table follows, e
 On the `--web` page the number is a link to its row.
 The numbers are positions in that report: another check may number the same model differently.
 They are bare digits, since `#1` would link to issue 1 on GitHub and GitLab.
-Each row is marked: 🚨 a column or table something still reads is gone, ⚠️ a column something reads changes type, ❔ not checked or its readers couldn't be looked up, ℹ️ changed but nothing reads it any more or the base branch already changes it, 🔁 renamed, 🆕 new, ✅ keeps every column.
+Each row is marked: 🚨 a column or table something still reads is gone, ⚠️ a column something reads changes type or an external query read it, ❔ not checked or its readers couldn't be looked up, ℹ️ changed but nothing reads it any more or the base branch already changes it, 🔁 renamed, 🆕 new, ✅ keeps every column.
 The terminal draws the same ledger, with words for the marks.
 
 A reader this branch changes that still names a dropped column may only name it: as an alias of a new column, say.
@@ -73,7 +73,8 @@ To also catch `SELECT`-only consumers—Looker, Tableau, Looker Studio, Power BI
   Control the lookback and scan safety cap with `queryHistoryDays` (`--query-history-days`, default `14`, range `1`–`90`) and `queryHistoryMaxGB` (`--query-history-max-gb`, default `10` GiB; set `0` for unlimited on slot capacity reservations, since `INFORMATION_SCHEMA.JOBS_BY_PROJECT` is a clustered metadata table whose dry-run upper bound can be much larger than actual billed bytes).
 - **Snowflake & Databricks:** enabled by default over `queryHistoryDays` (set `queryHistoryDays` to `0` to turn them off). Snowflake reads `SELECT`-only `ACCESS_HISTORY` rows (including reads through secure views via `BASE_OBJECTS_ACCESSED`) enriched with `QUERY_HISTORY`. Databricks reads its REST Query History API (`/api/2.0/sql/history/queries`) without waking a SQL warehouse; non-admin principals and CI service principals only see their own queries plus SQL warehouses where they have `CAN MONITOR` or `CAN MANAGE`, so grant `CAN MONITOR` on BI SQL warehouses to the CI principal to see BI readers.
 
-Confirmed external column reads and any external read of a deleted table are marked 🚨 (`critical`); `SELECT *` (or ambiguous multi-table `JOIN`) external reads on a dropped column are marked ⚠️ (`warning`) so an ad-hoc `SELECT * LIMIT 10` doesn't trip `--fail-on critical`.
+External query-history readers are marked ⚠️ (`warning` / `REVIEW`), with a link to their most recent matching warehouse job, so they surface prominently for human review without permanently wedging a `--fail-on critical` CI gate after a BI dashboard is updated or because of a one-off ad-hoc query (use `--fail-on warning` to gate on them too).
+When a dropped column or deleted table also has an open table/view lineage reader, it stays 🚨 (`critical` / `FIX`) until those downstream tables are updated.
 Query-history permission or scan-cap issues appear as report-level warnings without downgrading clean columns to ❔ (`unknown`).
 Note that BigQuery does not populate `referenced_tables` on cache-hit jobs, and Tableau Query Tagging records opaque `workbook-luid` IDs rather than human-readable dashboard names.
 

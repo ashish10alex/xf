@@ -92,7 +92,7 @@ func (r LedgerRow) Mark() string {
 // legend explains each mark, in the order shown.
 var legend = []struct{ mark, text string }{
 	{"🚨", "a column or table something still reads is gone"},
-	{"⚠️", "a column something reads changes type"},
+	{"⚠️", "a column something reads changes type, or an external query read it"},
 	{"❔", "not checked, or its readers couldn't be looked up"},
 	{"ℹ️", "changed, but nothing reads it any more, or the base branch already changes it"},
 	{"🔁", "renamed on this branch"},

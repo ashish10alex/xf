@@ -48,13 +48,21 @@ func TestNotesFormatsExternalConsumerNamesCleanly(t *testing.T) {
 	if len(notes) != 1 {
 		t.Fatalf("got %d notes, want 1: %+v", len(notes), notes)
 	}
-	if notes[0].Level != Error {
-		t.Errorf("Level = %q, want error", notes[0].Level)
+	if notes[0].Level != Warning {
+		t.Errorf("Level under --fail-on critical = %q, want warning", notes[0].Level)
 	}
 	if !strings.Contains(notes[0].Text, "Looker (explore orders, dashboard 412)") {
 		t.Errorf("note text = %q, want Looker label", notes[0].Text)
 	}
 	if strings.Contains(notes[0].Text, "external:") {
 		t.Errorf("note text leaked raw consumer ID: %q", notes[0].Text)
+	}
+
+	// Under --fail-on warning, external consumers still escalate to error annotations.
+	warnGate := Notes(r, Options{Gate: true, FailOn: impact.SeverityWarning}, stubSource{
+		diff: map[string]string{"definitions/marts/fct_orders.sqlx": "@@ -3,1 +3,0 @@\n-  customer_tier,\n"},
+	}, "")
+	if len(warnGate) != 1 || warnGate[0].Level != Error {
+		t.Errorf("Level under --fail-on warning = %+v, want single error note", warnGate)
 	}
 }
