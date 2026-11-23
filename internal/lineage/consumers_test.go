@@ -438,3 +438,60 @@ func TestQueryReadsColumn(t *testing.T) {
 		})
 	}
 }
+
+func TestJobURLsAndMarkdownNote(t *testing.T) {
+	bqURL := BigQueryJobURL("acme-bi", "EU", "job_abc123")
+	wantBQ := "https://console.cloud.google.com/bigquery?project=acme-bi&j=bq:EU:job_abc123&page=queryresults"
+	if bqURL != wantBQ {
+		t.Errorf("BigQueryJobURL = %q, want %q", bqURL, wantBQ)
+	}
+	if BigQueryJobURL("", "EU", "job_1") != "" || BigQueryJobURL("acme-bi", "EU", "") != "" {
+		t.Error("BigQueryJobURL should return empty when project or jobID is empty")
+	}
+
+	dbxURL := DatabricksJobURL("https://dbc-123.cloud.databricks.com/", "q-42")
+	wantDBX := "https://dbc-123.cloud.databricks.com/sql/history?queryId=q-42"
+	if dbxURL != wantDBX {
+		t.Errorf("DatabricksJobURL = %q, want %q", dbxURL, wantDBX)
+	}
+	if DatabricksJobURL("http://127.0.0.1:8080", "q-42") != "" {
+		t.Error("DatabricksJobURL should reject non-https hosts")
+	}
+
+	for _, bad := range []string{
+		"",
+		"http://example.com/job",
+		"javascript:alert(1)",
+		"https://example.com/job?a=1&b=2)",
+		"https://example.com/job\"onclick=x",
+		"https://example.com/job with space",
+		"https://",
+	} {
+		if got := SafeJobURL(bad); got != "" {
+			t.Errorf("SafeJobURL(%q) = %q, want empty", bad, got)
+		}
+	}
+
+	c := &Consumer{
+		Tool:         "Looker",
+		Asset:        "explore orders",
+		User:         "looker@acme.com",
+		Queries:      8,
+		Days:         14,
+		LastSeen:     "2026-11-23T12:00:00Z",
+		SampleJobID:  "job_abc123",
+		SampleJobURL: bqURL,
+	}
+	if got := c.Note(); strings.Contains(got, "https://") || !strings.Contains(got, "last 2026-11-23") {
+		t.Errorf("Note() should stay plain text, got %q", got)
+	}
+	wantMD := "8 queries in 14d · [last 2026-11-23](" + bqURL + ") · looker@acme.com"
+	if got := c.MarkdownNote(); got != wantMD {
+		t.Errorf("MarkdownNote() = %q, want %q", got, wantMD)
+	}
+
+	noDate := &Consumer{Tool: "Tableau", User: "t@acme.com", Queries: 2, Days: 7, SampleJobURL: bqURL}
+	if got := noDate.MarkdownNote(); !strings.Contains(got, "[latest job]("+bqURL+")") {
+		t.Errorf("MarkdownNote() without LastSeen = %q, want [latest job](...)", got)
+	}
+}

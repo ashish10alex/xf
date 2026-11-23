@@ -116,8 +116,12 @@ func TestDatabricksExternalReadersFromRestHistory(t *testing.T) {
 		byKey[k] = l
 	}
 	pbi := byKey["Power BI"]
-	if pbi.DependencyType != lineage.Other || pbi.Consumer.Queries != 2 {
-		t.Errorf("Power BI link = %+v (%+v), want Other with 2 queries", pbi, pbi.Consumer)
+	if pbi.DependencyType != lineage.Other || pbi.Consumer.Queries != 2 || pbi.Consumer.SampleJobID != "q2" {
+		t.Errorf("Power BI link = %+v (%+v), want Other with 2 queries and newest sampleJobId q2", pbi, pbi.Consumer)
+	}
+	// httptest uses http://, so SampleJobURL stays empty (only https:// links are emitted).
+	if pbi.Consumer.SampleJobURL != "" {
+		t.Errorf("Power BI SampleJobURL = %q, want empty on http:// test server", pbi.Consumer.SampleJobURL)
 	}
 	tab := byKey["Tableau"]
 	if tab.DependencyType != lineage.TableOnly || tab.Consumer.Queries != 1 {

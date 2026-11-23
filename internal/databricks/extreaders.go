@@ -24,6 +24,8 @@ type extQuerySample struct {
 	stripped lineage.StrippedQuery
 	count    int
 	lastSeen string
+	jobID    string
+	jobURL   string
 }
 
 type extConsumerBucket struct {
@@ -182,9 +184,9 @@ func (r *Readers) extColumnLinks(ctx context.Context, table, column string) []li
 	var out []lineage.ColumnLink
 	for _, b := range buckets {
 		directCount := 0
-		directLast := ""
+		directLast, directJobID, directJobURL := "", "", ""
 		probableCount := 0
-		probableLast := ""
+		probableLast, probableJobID, probableJobURL := "", "", ""
 		for _, q := range b.queries {
 			reads, star := matcher.Match(q.stripped)
 			if reads {
@@ -193,21 +195,21 @@ func (r *Readers) extColumnLinks(ctx context.Context, table, column string) []li
 				// to another joined table, so classify as TableOnly (Warning).
 				if !q.stripped.HasJoin() {
 					directCount += q.count
-					if q.lastSeen > directLast {
-						directLast = q.lastSeen
+					if q.lastSeen > directLast || (q.lastSeen == directLast && directJobURL == "" && q.jobURL != "") {
+						directLast, directJobID, directJobURL = q.lastSeen, q.jobID, q.jobURL
 					}
 					continue
 				}
 				probableCount += q.count
-				if q.lastSeen > probableLast {
-					probableLast = q.lastSeen
+				if q.lastSeen > probableLast || (q.lastSeen == probableLast && probableJobURL == "" && q.jobURL != "") {
+					probableLast, probableJobID, probableJobURL = q.lastSeen, q.jobID, q.jobURL
 				}
 				continue
 			}
 			if star {
 				probableCount += q.count
-				if q.lastSeen > probableLast {
-					probableLast = q.lastSeen
+				if q.lastSeen > probableLast || (q.lastSeen == probableLast && probableJobURL == "" && q.jobURL != "") {
+					probableLast, probableJobID, probableJobURL = q.lastSeen, q.jobID, q.jobURL
 				}
 			}
 		}
@@ -219,13 +221,14 @@ func (r *Readers) extColumnLinks(ctx context.Context, table, column string) []li
 		if directCount > 0 {
 			c.Queries = directCount + probableCount
 			c.LastSeen = directLast
-			if probableLast > c.LastSeen {
-				c.LastSeen = probableLast
-			}
+			c.SampleJobID = directJobID
+			c.SampleJobURL = directJobURL
 		} else {
 			dep = lineage.TableOnly
 			c.Queries = probableCount
 			c.LastSeen = probableLast
+			c.SampleJobID = probableJobID
+			c.SampleJobURL = probableJobURL
 		}
 		out = append(out, lineage.ColumnLink{
 			Table:          c.ID(),
@@ -357,6 +360,8 @@ func (r *Readers) scanExternalHistory(ctx context.Context, tables []string) (map
 			if q.Start > 0 {
 				cons.LastSeen = time.UnixMilli(q.Start).UTC().Format(time.RFC3339)
 			}
+			cons.SampleJobID = strings.TrimSpace(q.ID)
+			cons.SampleJobURL = lineage.DatabricksJobURL(r.c.Host(), cons.SampleJobID)
 			id := cons.ID()
 			normKey := stripped.ShapeKey()
 
@@ -371,8 +376,10 @@ func (r *Readers) scanExternalHistory(ctx context.Context, tables []string) (map
 					orderByTable[tbl] = append(orderByTable[tbl], id)
 				} else {
 					b.consumer.Queries++
-					if cons.LastSeen > b.consumer.LastSeen {
+					if cons.LastSeen > b.consumer.LastSeen || (cons.LastSeen == b.consumer.LastSeen && b.consumer.SampleJobURL == "" && cons.SampleJobURL != "") {
 						b.consumer.LastSeen = cons.LastSeen
+						b.consumer.SampleJobID = cons.SampleJobID
+						b.consumer.SampleJobURL = cons.SampleJobURL
 					}
 					if b.consumer.User == "" {
 						b.consumer.User = cons.User
@@ -380,8 +387,10 @@ func (r *Readers) scanExternalHistory(ctx context.Context, tables []string) (map
 				}
 				if idx, ok := b.seenIdx[normKey]; ok {
 					b.queries[idx].count++
-					if cons.LastSeen > b.queries[idx].lastSeen {
+					if cons.LastSeen > b.queries[idx].lastSeen || (cons.LastSeen == b.queries[idx].lastSeen && b.queries[idx].jobURL == "" && cons.SampleJobURL != "") {
 						b.queries[idx].lastSeen = cons.LastSeen
+						b.queries[idx].jobID = cons.SampleJobID
+						b.queries[idx].jobURL = cons.SampleJobURL
 					}
 				} else if len(b.queries) < maxExtQueriesPerConsumer {
 					b.seenIdx[normKey] = len(b.queries)
@@ -389,6 +398,8 @@ func (r *Readers) scanExternalHistory(ctx context.Context, tables []string) (map
 						stripped: stripped,
 						count:    1,
 						lastSeen: cons.LastSeen,
+						jobID:    cons.SampleJobID,
+						jobURL:   cons.SampleJobURL,
 					})
 				}
 			}

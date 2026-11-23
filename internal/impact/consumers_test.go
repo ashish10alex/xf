@@ -223,3 +223,79 @@ func TestNestedFallbackNotBlockedByConsumerAndPreservesTableOnly(t *testing.T) {
 		t.Fatalf("nested parent Dataplex fallback was skipped when consumer link existed: %+v", links)
 	}
 }
+
+func TestConsumerJobLinkAcrossMarkdownWebAndText(t *testing.T) {
+	jobURL := lineage.BigQueryJobURL("acme-bi", "EU", "job_xyz")
+	cons := &lineage.Consumer{
+		Tool:         "Tableau",
+		User:         "mm@acme.com",
+		Queries:      8,
+		Days:         1,
+		LastSeen:     "2026-11-23T12:11:15Z",
+		SampleJobID:  "job_xyz",
+		SampleJobURL: jobURL,
+	}
+	rep := &Report{
+		AtRisk: []Table{{
+			Table: "acme-prod.marts.fct_orders",
+			Columns: []Column{{
+				Column:  "platform",
+				Change:  ColumnChange{Kind: Dropped},
+				Readers: []Reader{{Table: cons.ID(), DependencyType: lineage.Other, Consumer: cons}},
+			}},
+		}},
+	}
+
+	// PR Markdown links "last 2026-11-23" to the job URL.
+	md := Markdown(rep)
+	wantLink := "[last 2026-11-23](" + jobURL + ")"
+	if !strings.Contains(md, wantLink) {
+		t.Errorf("Markdown missing linked date %q:\n%s", wantLink, md)
+	}
+
+	// xf web PageData renders a safe target=_blank <a> with escaped &amp; query params.
+	pg := pageData(rep)
+	wantHTML := `<a href="https://console.cloud.google.com/bigquery?project=acme-bi&amp;j=bq:EU:job_xyz&amp;page=queryresults" target="_blank" rel="noopener noreferrer">last 2026-11-23</a>`
+	if len(pg.Rows) != 1 || len(pg.Rows[0].Affected) != 1 || !strings.Contains(pg.Rows[0].Affected[0].HTML, wantHTML) {
+		t.Errorf("PageData affected HTML missing link %q: %+v", wantHTML, pg.Rows)
+	}
+	if len(pg.Readers) != 1 || !strings.Contains(pg.Readers[0].Note, wantHTML) {
+		t.Errorf("PageData reader note missing link %q: %+v", wantHTML, pg.Readers)
+	}
+
+	// Terminal Text keeps the reader line clean and puts "↗ <url>" on the sub-line.
+	txt := Text(rep, false, false)
+	if strings.Contains(txt, "[last 2026-11-23]") {
+		t.Errorf("Text leaked raw Markdown link:\n%s", txt)
+	}
+	if !strings.Contains(txt, "last 2026-11-23") || !strings.Contains(txt, "↗ "+jobURL) {
+		t.Errorf("Text missing plain date or job URL sub-line:\n%s", txt)
+	}
+
+	// Plain ReaderNote (used by GitHub annotations) stays link-free.
+	if note := ReaderNote(Reader{Consumer: cons}); strings.Contains(note, "https://") {
+		t.Errorf("ReaderNote should stay plain text, got %q", note)
+	}
+
+	// Unsafe URLs must never become clickable <a> tags in InlineHTML.
+	if got := InlineHTML(`[last 2026-11-23](javascript:alert(1)) and [last 2026-11-23](http://evil.example/x)`); strings.Contains(got, "<a ") {
+		t.Errorf("InlineHTML created link for unsafe URL: %q", got)
+	}
+	// Links inside backticks stay literal <code> (never clickable <a> or ↗ in Text).
+	codeLink := "`[last 2026-11-23](https://evil.example/x)`"
+	if got := InlineHTML(codeLink); strings.Contains(got, "<a ") || !strings.Contains(got, "<code>") {
+		t.Errorf("InlineHTML turned backticked link into <a>: %q", got)
+	}
+	if _, extracted := plainWithLink(codeLink); extracted != "" {
+		t.Errorf("plainWithLink extracted URL from backticked code span: %q", extracted)
+	}
+	// Bold wrapping a job link renders <strong> around <a> cleanly.
+	boldLink := InlineHTML("**Tableau · [last 2026-11-23](" + jobURL + ")**")
+	if !strings.HasPrefix(boldLink, "<strong>") || !strings.HasSuffix(boldLink, "</strong>") || !strings.Contains(boldLink, wantHTML) {
+		t.Errorf("InlineHTML failed to keep bold around link: %q", boldLink)
+	}
+	// Unicode format characters (Cf, e.g. RLO U+202E) are rejected by SafeJobURL.
+	if got := lineage.SafeJobURL("https://console.cloud.google.com/bigquery?j=\u202ebq"); got != "" {
+		t.Errorf("SafeJobURL accepted U+202E format char: %q", got)
+	}
+}

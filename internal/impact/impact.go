@@ -515,10 +515,19 @@ func RankReaders(readers []Reader) []Reader {
 			out = append(out, r)
 			continue
 		}
-		// Keep first-seen entry; for external consumers only upgrade a
-		// TableOnly link to a confirmed column link without double-counting.
-		if r.Consumer != nil && out[i].Consumer != nil && linkOrder[r.DependencyType] < linkOrder[out[i].DependencyType] {
-			out[i].DependencyType = r.DependencyType
+		// Keep first-seen entry; for external consumers upgrade TableOnly to a
+		// confirmed column link without double-counting, and keep LastSeen +
+		// SampleJobID + SampleJobURL paired atomically to the newest observation.
+		if r.Consumer != nil && out[i].Consumer != nil {
+			if linkOrder[r.DependencyType] < linkOrder[out[i].DependencyType] {
+				out[i].DependencyType = r.DependencyType
+			}
+			if r.Consumer.LastSeen > out[i].Consumer.LastSeen ||
+				(r.Consumer.LastSeen == out[i].Consumer.LastSeen && out[i].Consumer.SampleJobURL == "" && r.Consumer.SampleJobURL != "") {
+				out[i].Consumer.LastSeen = r.Consumer.LastSeen
+				out[i].Consumer.SampleJobID = r.Consumer.SampleJobID
+				out[i].Consumer.SampleJobURL = r.Consumer.SampleJobURL
+			}
 		}
 	}
 	slices.SortStableFunc(out, func(a, b Reader) int {
@@ -752,7 +761,7 @@ func cell(text string) string {
 }
 
 // ReaderNote is what this branch does about a reader, or that it is
-// outside the project.
+// outside the project (plain text, safe for annotations and terminals).
 func ReaderNote(r Reader) string {
 	if r.Consumer != nil {
 		return r.Consumer.Note()
@@ -785,6 +794,16 @@ func ReaderNote(r Reader) string {
 		return "changed here, " + note
 	}
 	return note
+}
+
+// ReaderMarkdownNote is ReaderNote for Markdown/HTML ledgers, linking an
+// external consumer's recency date to its most recent matching warehouse job
+// when a validated https:// URL is available.
+func ReaderMarkdownNote(r Reader) string {
+	if r.Consumer != nil {
+		return r.Consumer.MarkdownNote()
+	}
+	return ReaderNote(r)
 }
 
 // LinkLabels is how a reader reads the column, as the extension's panel

@@ -68,6 +68,8 @@ type bucketQuery struct {
 	stripped StrippedQuery
 	count    int
 	lastSeen string
+	jobID    string
+	jobURL   string
 }
 
 // consumerBucket holds one aggregated external consumer of a specific table
@@ -440,8 +442,10 @@ func (j *jobHistorySource) fetchTables(ctx context.Context, tables []string, cal
 						order = append(order, id)
 					} else {
 						dst.consumer.Queries += b.consumer.Queries
-						if b.consumer.LastSeen > dst.consumer.LastSeen {
+						if b.consumer.LastSeen > dst.consumer.LastSeen || (b.consumer.LastSeen == dst.consumer.LastSeen && dst.consumer.SampleJobURL == "" && b.consumer.SampleJobURL != "") {
 							dst.consumer.LastSeen = b.consumer.LastSeen
+							dst.consumer.SampleJobID = b.consumer.SampleJobID
+							dst.consumer.SampleJobURL = b.consumer.SampleJobURL
 						}
 						if dst.consumer.User == "" {
 							dst.consumer.User = b.consumer.User
@@ -534,6 +538,7 @@ func buildJobHistorySQL(bk queryBatchKey, lowerTables []string, days int) (strin
 WITH matched AS (
   SELECT
     LOWER(CONCAT(rt.project_id, '.', rt.dataset_id, '.', rt.table_id)) AS ref_table,
+    j.project_id,
     j.job_id,
     j.user_email,
     j.creation_time,
@@ -559,7 +564,7 @@ grouped AS (
     FORMAT_TIMESTAMP('%%Y-%%m-%%dT%%H:%%M:%%SZ', MAX(creation_time)) AS last_seen,
     ANY_VALUE(query) AS sample_query,
     TO_JSON_STRING(ANY_VALUE(labels)) AS sample_labels,
-    ANY_VALUE(job_id) AS sample_job_id
+    ARRAY_AGG(STRUCT(job_id, project_id) ORDER BY creation_time DESC, job_id DESC LIMIT 1)[SAFE_OFFSET(0)] AS latest_job
   FROM matched
   GROUP BY
     ref_table,
@@ -575,7 +580,8 @@ SELECT
   last_seen,
   sample_query,
   sample_labels,
-  sample_job_id
+  latest_job.job_id AS sample_job_id,
+  latest_job.project_id AS sample_project_id
 FROM grouped
 QUALIFY ROW_NUMBER() OVER (PARTITION BY ref_table ORDER BY query_count DESC) <= %d`, view, days, strings.Join(inList, ", "), maxJobHistoryPerTable+1), nil
 }
@@ -659,7 +665,7 @@ func (j *jobHistorySource) runBatch(ctx context.Context, bk queryBatchKey, lower
 		token = page.NextToken
 	}
 
-	byTable, trunc := decodeJobHistoryRows(rows, j.days)
+	byTable, trunc := decodeJobHistoryRows(rows, j.days, cmp.Or(bk.viewProject, bk.billingProject), bk.location)
 	return byTable, trunc, nil
 }
 
@@ -694,7 +700,7 @@ func (j *jobHistorySource) formatQueryError(bk queryBatchKey, err error) error {
 	return fmt.Errorf("BigQuery query history in %s: %w", scope, err)
 }
 
-func decodeJobHistoryRows(rows [][]any, days int) (map[string][]consumerBucket, map[string]bool) {
+func decodeJobHistoryRows(rows [][]any, days int, defaultProject, location string) (map[string][]consumerBucket, map[string]bool) {
 	byTable := map[string]map[string]*consumerBucket{}
 	orderByTable := map[string][]string{}
 	rawCount := map[string]int{}
@@ -722,10 +728,17 @@ func decodeJobHistoryRows(rows [][]any, days int) (map[string][]consumerBucket, 
 		sampleQuery := warehouse.CellText(row[4])
 		labels := parseBQLabelsJSON(warehouse.CellText(row[5]))
 		jobID := strings.TrimSpace(warehouse.CellText(row[6]))
+		jobProject := defaultProject
+		if len(row) >= 8 {
+			if p := strings.TrimSpace(warehouse.CellText(row[7])); p != "" {
+				jobProject = p
+			}
+		}
 
 		if IsOwnXFQuery(jobID, sampleQuery, labels) || IsTransformToolQuery(sampleQuery, "", labels) {
 			continue
 		}
+		jobURL := BigQueryJobURL(jobProject, location, jobID)
 		cons := ParseConsumer(QuerySignal{
 			User:   userEmail,
 			Query:  sampleQuery,
@@ -734,6 +747,8 @@ func decodeJobHistoryRows(rows [][]any, days int) (map[string][]consumerBucket, 
 		cons.Queries = count
 		cons.Days = days
 		cons.LastSeen = lastSeen
+		cons.SampleJobID = jobID
+		cons.SampleJobURL = jobURL
 
 		id := cons.ID()
 		if byTable[refTable] == nil {
@@ -746,8 +761,10 @@ func decodeJobHistoryRows(rows [][]any, days int) (map[string][]consumerBucket, 
 			orderByTable[refTable] = append(orderByTable[refTable], id)
 		} else {
 			b.consumer.Queries += count
-			if lastSeen > b.consumer.LastSeen {
+			if lastSeen > b.consumer.LastSeen || (lastSeen == b.consumer.LastSeen && b.consumer.SampleJobURL == "" && jobURL != "") {
 				b.consumer.LastSeen = lastSeen
+				b.consumer.SampleJobID = jobID
+				b.consumer.SampleJobURL = jobURL
 			}
 			if b.consumer.User == "" {
 				b.consumer.User = cons.User
@@ -758,6 +775,8 @@ func decodeJobHistoryRows(rows [][]any, days int) (map[string][]consumerBucket, 
 				stripped: StripQueryForMatch(sampleQuery, true),
 				count:    count,
 				lastSeen: lastSeen,
+				jobID:    jobID,
+				jobURL:   jobURL,
 			})
 		}
 	}
@@ -807,9 +826,9 @@ func (j *jobHistorySource) columnLinks(ctx context.Context, table, column string
 	var out []ColumnLink
 	for _, b := range tc.buckets {
 		directCount := 0
-		directLast := ""
+		directLast, directJobID, directJobURL := "", "", ""
 		probableCount := 0
-		probableLast := ""
+		probableLast, probableJobID, probableJobURL := "", "", ""
 		for _, q := range b.queries {
 			r, s := matcher.Match(q.stripped)
 			if r {
@@ -818,19 +837,19 @@ func (j *jobHistorySource) columnLinks(ctx context.Context, table, column string
 				// to another joined table, so classify as TableOnly (Warning).
 				if !q.stripped.HasJoin() {
 					directCount += q.count
-					if q.lastSeen > directLast {
-						directLast = q.lastSeen
+					if q.lastSeen > directLast || (q.lastSeen == directLast && directJobURL == "" && q.jobURL != "") {
+						directLast, directJobID, directJobURL = q.lastSeen, q.jobID, q.jobURL
 					}
 					continue
 				}
 				probableCount += q.count
-				if q.lastSeen > probableLast {
-					probableLast = q.lastSeen
+				if q.lastSeen > probableLast || (q.lastSeen == probableLast && probableJobURL == "" && q.jobURL != "") {
+					probableLast, probableJobID, probableJobURL = q.lastSeen, q.jobID, q.jobURL
 				}
 			} else if s {
 				probableCount += q.count
-				if q.lastSeen > probableLast {
-					probableLast = q.lastSeen
+				if q.lastSeen > probableLast || (q.lastSeen == probableLast && probableJobURL == "" && q.jobURL != "") {
+					probableLast, probableJobID, probableJobURL = q.lastSeen, q.jobID, q.jobURL
 				}
 			}
 		}
@@ -842,13 +861,14 @@ func (j *jobHistorySource) columnLinks(ctx context.Context, table, column string
 		if directCount > 0 {
 			c.Queries = directCount + probableCount
 			c.LastSeen = directLast
-			if probableLast > c.LastSeen {
-				c.LastSeen = probableLast
-			}
+			c.SampleJobID = directJobID
+			c.SampleJobURL = directJobURL
 		} else {
 			dep = TableOnly
 			c.Queries = probableCount
 			c.LastSeen = probableLast
+			c.SampleJobID = probableJobID
+			c.SampleJobURL = probableJobURL
 		}
 		out = append(out, ColumnLink{
 			Table:          c.ID(),

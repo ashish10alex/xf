@@ -628,7 +628,8 @@ per_col AS (
     query_tag,
     source_col,
     COUNT(DISTINCT QUERY_ID) AS col_queries,
-    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS col_last_seen
+    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS col_last_seen,
+    MAX_BY(QUERY_ID, QUERY_START_TIME) AS col_job_id
   FROM filtered
   WHERE source_col <> ''
   GROUP BY 1, 2, 3, 4, 5
@@ -639,7 +640,7 @@ cols_agg AS (
     user_name,
     role_name,
     query_tag,
-    TO_JSON(ARRAY_AGG(OBJECT_CONSTRUCT('col', source_col, 'n', col_queries, 'last', col_last_seen))) AS cols_json
+    TO_JSON(ARRAY_AGG(OBJECT_CONSTRUCT('col', source_col, 'n', col_queries, 'last', col_last_seen, 'job', col_job_id))) AS cols_json
   FROM per_col
   GROUP BY 1, 2, 3, 4
 ),
@@ -652,7 +653,8 @@ per_consumer AS (
     COUNT(DISTINCT QUERY_ID) AS query_count,
     TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
     BOOLOR_AGG(source_col = '') AS has_untracked,
-    ANY_VALUE(QUERY_TEXT) AS sample_query
+    ANY_VALUE(QUERY_TEXT) AS sample_query,
+    MAX_BY(QUERY_ID, QUERY_START_TIME) AS sample_job_id
   FROM filtered
   GROUP BY 1, 2, 3, 4
   QUALIFY ROW_NUMBER() OVER (PARTITION BY source_table ORDER BY query_count DESC) <= %d
@@ -666,7 +668,8 @@ SELECT
   c.last_seen,
   COALESCE(ca.cols_json, '[]') AS cols_json,
   c.has_untracked,
-  c.sample_query
+  c.sample_query,
+  c.sample_job_id
 FROM per_consumer c
 LEFT JOIN cols_agg ca
   ON ca.source_table = c.source_table
@@ -716,7 +719,8 @@ per_col AS (
     access_user AS user_name,
     source_col,
     COUNT(DISTINCT QUERY_ID) AS col_queries,
-    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS col_last_seen
+    TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS col_last_seen,
+    MAX_BY(QUERY_ID, QUERY_START_TIME) AS col_job_id
   FROM accessed
   WHERE source_col <> ''
   GROUP BY 1, 2, 3
@@ -725,7 +729,7 @@ cols_agg AS (
   SELECT
     source_table,
     user_name,
-    TO_JSON(ARRAY_AGG(OBJECT_CONSTRUCT('col', source_col, 'n', col_queries, 'last', col_last_seen))) AS cols_json
+    TO_JSON(ARRAY_AGG(OBJECT_CONSTRUCT('col', source_col, 'n', col_queries, 'last', col_last_seen, 'job', col_job_id))) AS cols_json
   FROM per_col
   GROUP BY 1, 2
 ),
@@ -735,7 +739,8 @@ per_consumer AS (
     access_user AS user_name,
     COUNT(DISTINCT QUERY_ID) AS query_count,
     TO_CHAR(MAX(QUERY_START_TIME), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
-    BOOLOR_AGG(source_col = '') AS has_untracked
+    BOOLOR_AGG(source_col = '') AS has_untracked,
+    MAX_BY(QUERY_ID, QUERY_START_TIME) AS sample_job_id
   FROM accessed
   GROUP BY 1, 2
   QUALIFY ROW_NUMBER() OVER (PARTITION BY source_table ORDER BY query_count DESC) <= %d
@@ -749,7 +754,8 @@ SELECT
   c.last_seen,
   COALESCE(ca.cols_json, '[]') AS cols_json,
   c.has_untracked,
-  '' AS sample_query
+  '' AS sample_query,
+  c.sample_job_id
 FROM per_consumer c
 LEFT JOIN cols_agg ca
   ON ca.source_table = c.source_table
@@ -769,6 +775,7 @@ LEFT JOIN cols_agg ca
 	type colStat struct {
 		queries  int
 		lastSeen string
+		jobID    string
 	}
 	type consumerAgg struct {
 		consumer  lineage.Consumer
@@ -792,6 +799,7 @@ LEFT JOIN cols_agg ca
 		roleName := strings.TrimSpace(cellStr(row, idx, "role_name"))
 		queryTag := strings.TrimSpace(cellStr(row, idx, "query_tag"))
 		sampleQuery := cellStr(row, idx, "sample_query")
+		sampleJobID := strings.TrimSpace(cellStr(row, idx, "sample_job_id"))
 		lastSeen := strings.TrimSpace(cellStr(row, idx, "last_seen"))
 		colsJSON := strings.TrimSpace(cellStr(row, idx, "cols_json"))
 		hasUntracked := strings.EqualFold(strings.TrimSpace(cellStr(row, idx, "has_untracked")), "true")
@@ -817,6 +825,7 @@ LEFT JOIN cols_agg ca
 		cons.Queries = cnt
 		cons.Days = r.extDays
 		cons.LastSeen = lastSeen
+		cons.SampleJobID = sampleJobID
 		id := cons.ID()
 
 		if byTable[srcKey] == nil {
@@ -829,16 +838,22 @@ LEFT JOIN cols_agg ca
 			tableOrder[srcKey] = append(tableOrder[srcKey], id)
 		} else {
 			agg.consumer.Queries += cnt
-			if lastSeen > agg.consumer.LastSeen {
+			if lastSeen > agg.consumer.LastSeen || (lastSeen == agg.consumer.LastSeen && agg.consumer.SampleJobID == "" && sampleJobID != "") {
 				agg.consumer.LastSeen = lastSeen
+				if sampleJobID != "" {
+					agg.consumer.SampleJobID = sampleJobID
+				}
 			}
 		}
-		colStats := decodeSnowflakeColsJSON(colsJSON, cnt, lastSeen)
+		colStats := decodeSnowflakeColsJSON(colsJSON, cnt, lastSeen, sampleJobID)
 		for _, cs := range colStats {
 			cur := agg.cols[cs.name]
 			cur.queries += cs.queries
-			if cs.lastSeen > cur.lastSeen {
+			if cs.lastSeen > cur.lastSeen || (cs.lastSeen == cur.lastSeen && cur.jobID == "" && cs.jobID != "") {
 				cur.lastSeen = cs.lastSeen
+				if cs.jobID != "" {
+					cur.jobID = cs.jobID
+				}
 			}
 			agg.cols[cs.name] = cur
 		}
@@ -864,6 +879,9 @@ LEFT JOIN cols_agg ca
 				if cs.lastSeen != "" {
 					cCopy.LastSeen = cs.lastSeen
 				}
+				if cs.jobID != "" {
+					cCopy.SampleJobID = cs.jobID
+				}
 				lin.extByCol[col] = append(lin.extByCol[col], lineage.ColumnLink{
 					Table:          cCopy.ID(),
 					DependencyType: lineage.Other,
@@ -886,11 +904,12 @@ type decodedColStat struct {
 	name     string
 	queries  int
 	lastSeen string
+	jobID    string
 }
 
 // decodeSnowflakeColsJSON parses either the per-column stat object array
-// [{"col":"X","n":5,"last":"..."}] or a plain string array ["X","Y"].
-func decodeSnowflakeColsJSON(raw string, fallbackCount int, fallbackLast string) []decodedColStat {
+// [{"col":"X","n":5,"last":"...","job":"..."}] or a plain string array ["X","Y"].
+func decodeSnowflakeColsJSON(raw string, fallbackCount int, fallbackLast, fallbackJob string) []decodedColStat {
 	if raw == "" || raw == "null" || raw == "[]" {
 		return nil
 	}
@@ -898,6 +917,7 @@ func decodeSnowflakeColsJSON(raw string, fallbackCount int, fallbackLast string)
 		Col  string `json:"col"`
 		N    int    `json:"n"`
 		Last string `json:"last"`
+		Job  string `json:"job"`
 	}
 	if err := json.Unmarshal([]byte(raw), &objs); err == nil {
 		out := make([]decodedColStat, 0, len(objs))
@@ -914,7 +934,11 @@ func decodeSnowflakeColsJSON(raw string, fallbackCount int, fallbackLast string)
 			if last == "" {
 				last = fallbackLast
 			}
-			out = append(out, decodedColStat{name: name, queries: n, lastSeen: last})
+			job := strings.TrimSpace(o.Job)
+			if job == "" {
+				job = fallbackJob
+			}
+			out = append(out, decodedColStat{name: name, queries: n, lastSeen: last, jobID: job})
 		}
 		if len(out) > 0 {
 			return out
@@ -928,7 +952,7 @@ func decodeSnowflakeColsJSON(raw string, fallbackCount int, fallbackLast string)
 	for _, col := range names {
 		name := strings.ToLower(strings.TrimSpace(col))
 		if name != "" {
-			out = append(out, decodedColStat{name: name, queries: fallbackCount, lastSeen: fallbackLast})
+			out = append(out, decodedColStat{name: name, queries: fallbackCount, lastSeen: fallbackLast, jobID: fallbackJob})
 		}
 	}
 	return out

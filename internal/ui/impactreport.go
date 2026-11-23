@@ -95,13 +95,12 @@ func (s styles) ledgerMark(row impact.LedgerRow) (string, lipgloss.Style) {
 // for its legend.
 var terminalMarks = map[string]string{"🚨": "FIX", "⚠️": "REVIEW", "❔": "?", "ℹ️": "low", "🔁": "renamed", "🆕": "new", "✅": "ok"}
 
-// plainMarkdown is a ledger cell without its Markdown: no backticks or
-// bold, and line breaks for <br>.
+// plainMarkdown is a ledger cell without its Markdown: no links, backticks,
+// bold/italic, or escaped pipes, and line breaks for <br>.
 func plainMarkdown(text string) string {
 	text = strings.ReplaceAll(text, "<br>", "\n")
-	text = strings.ReplaceAll(text, "**", "")
-	text = strings.ReplaceAll(text, "*", "")
-	return strings.ReplaceAll(text, "`", "")
+	text = impact.Plain(text)
+	return strings.ReplaceAll(text, "*", "")
 }
 
 // impactReportLines is the report drawn for the terminal, width wide: the
@@ -151,7 +150,7 @@ func (s styles) impactReportLines(r *impact.Report, width int) []string {
 	if l.ReadersTotal > 0 {
 		var readerRows [][]string
 		for _, e := range l.Readers {
-			readerRows = append(readerRows, []string{plainMarkdown(e.Reader), plainMarkdown(e.Reads), fmt.Sprintf("%d · %s", e.Row, plainMarkdown(e.Of)), e.Note})
+			readerRows = append(readerRows, []string{plainMarkdown(e.Reader), plainMarkdown(e.Reads), fmt.Sprintf("%d · %s", e.Row, plainMarkdown(e.Of)), plainMarkdown(e.Note)})
 		}
 		if l.MoreReaders > 0 {
 			readerRows = append(readerRows, []string{fmt.Sprintf("+%d more", l.MoreReaders), "", "", ""})

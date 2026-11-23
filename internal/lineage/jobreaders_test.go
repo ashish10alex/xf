@@ -84,7 +84,7 @@ func TestJobHistoryBatchedDiscoveryAndFiltering(t *testing.T) {
 				{
 					Complete: true,
 					Rows: [][]any{
-						// 1. Looker explicitly reading customer_tier
+						// 1. Looker explicitly reading customer_tier (8-column row with explicit billing project_id)
 						{
 							"acme-prod.marts.fct_orders",
 							"looker-prod@acme.iam.gserviceaccount.com",
@@ -94,6 +94,7 @@ func TestJobHistoryBatchedDiscoveryAndFiltering(t *testing.T) {
 SELECT order_id, customer_tier FROM acme-prod.marts.fct_orders`,
 							"[]",
 							"bquxjob_looker_1",
+							"acme-bi-real",
 						},
 						// 2. Tableau SA running TWO dashboards: one reads total_usd (unrelated), one reads customer_tier
 						{
@@ -201,12 +202,17 @@ SELECT order_id, customer_tier FROM acme-prod.marts.fct_orders`,
 	}
 
 	looker := byTool["Looker"]
-	if looker.DependencyType != Other || looker.Consumer.Asset != "explore orders, dashboard 412" || looker.Consumer.Queries != 840 {
+	wantLookerURL := "https://console.cloud.google.com/bigquery?project=acme-bi-real&j=bq:EU:bquxjob_looker_1&page=queryresults"
+	if looker.DependencyType != Other || looker.Consumer.Asset != "explore orders, dashboard 412" || looker.Consumer.Queries != 840 ||
+		looker.Consumer.SampleJobID != "bquxjob_looker_1" || looker.Consumer.SampleJobURL != wantLookerURL {
 		t.Errorf("unexpected Looker link: %+v (%+v)", looker, looker.Consumer)
 	}
 	tableau := byTool["Tableau"]
-	// Only the 120-query dashboard reads customer_tier (the 500-query one only reads total_usd).
-	if tableau.DependencyType != Other || tableau.Consumer.Queries != 120 || tableau.Consumer.LastSeen != "2026-11-21T08:00:00Z" {
+	// Only the 120-query dashboard reads customer_tier (the 500-query one only reads total_usd),
+	// and its sample job URL points to bquxjob_tab_2 (the query that actually read customer_tier).
+	wantTabURL := "https://console.cloud.google.com/bigquery?project=acme-bi&j=bq:EU:bquxjob_tab_2&page=queryresults"
+	if tableau.DependencyType != Other || tableau.Consumer.Queries != 120 || tableau.Consumer.LastSeen != "2026-11-21T08:00:00Z" ||
+		tableau.Consumer.SampleJobID != "bquxjob_tab_2" || tableau.Consumer.SampleJobURL != wantTabURL {
 		t.Errorf("unexpected Tableau link: %+v (%+v)", tableau, tableau.Consumer)
 	}
 	alice := byTool["alice@acme.com"]

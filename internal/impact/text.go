@@ -3,6 +3,8 @@ package impact
 import (
 	"strings"
 	"unicode/utf8"
+
+	"github.com/ashish10alex/xf/internal/lineage"
 )
 
 // ANSI styles of Text.
@@ -39,10 +41,45 @@ func (color textPainter) paint(s string, styles ...string) string {
 	return "\x1b[" + strings.Join(styles, ";") + "m" + s + "\x1b[0m"
 }
 
-// plain is a ledger cell without its Markdown: no backticks, bold or
+// Plain strips ledger Markdown (links, backticks, bold, escaped pipes) for
+// plain-text renderers such as terminals and the TUI.
+func Plain(md string) string { return plain(md) }
+
+// plain is a ledger cell without its Markdown: no links, backticks, bold or
 // escaped pipes.
 func plain(md string) string {
-	return strings.NewReplacer("`", "", "**", "", `\|`, "|").Replace(md)
+	s, _ := plainWithLink(md)
+	return s
+}
+
+// plainWithLink strips Markdown from md and returns the first validated
+// https:// job URL embedded as [label](url) outside backtick code spans.
+func plainWithLink(md string) (string, string) {
+	link := ""
+	var out strings.Builder
+	stripLinks := func(seg string) string {
+		return inlineLink.ReplaceAllStringFunc(seg, func(m string) string {
+			sub := inlineLink.FindStringSubmatch(m)
+			if len(sub) != 3 {
+				return m
+			}
+			if safe := lineage.SafeJobURL(sub[2]); safe != "" {
+				if link == "" {
+					link = safe
+				}
+				return sub[1]
+			}
+			return m
+		})
+	}
+	pos := 0
+	for _, m := range inlineCode.FindAllStringIndex(md, -1) {
+		out.WriteString(stripLinks(md[pos:m[0]]))
+		out.WriteString(md[m[0]:m[1]])
+		pos = m[1]
+	}
+	out.WriteString(stripLinks(md[pos:]))
+	return strings.NewReplacer("`", "", "**", "", `\|`, "|").Replace(out.String()), link
 }
 
 // Text is the report for a terminal, coloured with ANSI escapes when color
@@ -105,7 +142,8 @@ func Text(r *Report, color, attention bool) string {
 			if a == "—" {
 				continue // nothing it had is gone, or it wasn't checked
 			}
-			text, unknown := strings.CutPrefix(plain(a), "❔ ")
+			clean, link := plainWithLink(a)
+			text, unknown := strings.CutPrefix(clean, "❔ ")
 			text = "↳ " + text
 			switch {
 			case strings.HasPrefix(a, "**"):
@@ -116,6 +154,9 @@ func Text(r *Report, color, attention bool) string {
 				text = p.paint(text, ansiDim)
 			}
 			b.WriteString(indent + text + "\n")
+			if link != "" {
+				b.WriteString(indent + "  " + p.paint("↗ "+link, ansiDim) + "\n")
+			}
 		}
 	}
 

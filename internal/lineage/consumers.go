@@ -1,8 +1,10 @@
 package lineage
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -34,6 +36,11 @@ type Consumer struct {
 	Days int `json:"days,omitempty"`
 	// LastSeen is the most recent query timestamp (RFC3339, UTC) when known.
 	LastSeen string `json:"lastSeen,omitempty"`
+	// SampleJobID is the most recent matching warehouse query/job ID when known.
+	SampleJobID string `json:"sampleJobId,omitempty"`
+	// SampleJobURL is a console link to the most recent matching warehouse job
+	// (BigQuery Console or Databricks Query History) when constructible.
+	SampleJobURL string `json:"sampleJobUrl,omitempty"`
 }
 
 // ID returns a stable canonical identifier for ColumnLink.Table so
@@ -83,7 +90,13 @@ func (c *Consumer) Label() string {
 }
 
 // Note returns a concise frequency, recency and principal note for ReaderNote.
-func (c *Consumer) Note() string {
+func (c *Consumer) Note() string { return c.note(false) }
+
+// MarkdownNote returns Note with the recency date (or "latest job") linked to
+// SampleJobURL when a validated https:// job URL is available.
+func (c *Consumer) MarkdownNote() string { return c.note(true) }
+
+func (c *Consumer) note(withLink bool) string {
 	if c == nil {
 		return ""
 	}
@@ -99,8 +112,18 @@ func (c *Consumer) Note() string {
 		}
 		parts = append(parts, q)
 	}
+	link := ""
+	if withLink {
+		link = SafeJobURL(c.SampleJobURL)
+	}
 	if date := shortDate(c.LastSeen); date != "" {
-		parts = append(parts, "last "+date)
+		if link != "" {
+			parts = append(parts, "[last "+date+"]("+link+")")
+		} else {
+			parts = append(parts, "last "+date)
+		}
+	} else if link != "" {
+		parts = append(parts, "[latest job]("+link+")")
 	}
 	tool := sanitizeMeta(c.Tool, 64)
 	asset := sanitizeMeta(c.Asset, 96)
@@ -117,6 +140,57 @@ func (c *Consumer) Note() string {
 		parts = append(parts, "external query")
 	}
 	return strings.Join(parts, " · ")
+}
+
+// BigQueryJobURL returns the Google Cloud Console URL for a BigQuery query job,
+// or "" when project or jobID is empty.
+func BigQueryJobURL(project, location, jobID string) string {
+	project = strings.TrimSpace(project)
+	jobID = strings.TrimSpace(jobID)
+	if project == "" || jobID == "" {
+		return ""
+	}
+	loc := cmp.Or(strings.TrimSpace(location), "US")
+	return SafeJobURL(fmt.Sprintf(
+		"https://console.cloud.google.com/bigquery?project=%s&j=bq:%s:%s&page=queryresults",
+		url.QueryEscape(project), url.QueryEscape(loc), url.QueryEscape(jobID),
+	))
+}
+
+// DatabricksJobURL returns the Databricks SQL Query History deep link for
+// queryID on workspace host, or "" when host is not an https:// URL or queryID
+// is empty.
+func DatabricksJobURL(host, queryID string) string {
+	host = strings.TrimSpace(host)
+	queryID = strings.TrimSpace(queryID)
+	if host == "" || queryID == "" {
+		return ""
+	}
+	u, err := url.Parse(host)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" {
+		return ""
+	}
+	return SafeJobURL(fmt.Sprintf("https://%s/sql/history?queryId=%s", u.Host, url.QueryEscape(queryID)))
+}
+
+// SafeJobURL validates that raw is an https:// URL with a non-empty host and no
+// control, whitespace, or Markdown/HTML delimiter characters, returning "" when
+// unsafe.
+func SafeJobURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	for _, r := range raw {
+		if r <= 0x20 || r == 0x7f || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || strings.ContainsRune(`()[]<>"'\`+"`|", r) {
+			return ""
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" {
+		return ""
+	}
+	return raw
 }
 
 func shortDate(rfc3339 string) string {

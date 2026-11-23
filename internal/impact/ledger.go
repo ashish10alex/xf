@@ -196,14 +196,29 @@ func groupReaders(t Table, of string) []*readerGroup {
 	add := func(r Reader, column string, whole bool) {
 		g := byTable[r.Table]
 		if g == nil {
+			if r.Consumer != nil {
+				cp := *r.Consumer
+				r.Consumer = &cp
+			}
 			g = &readerGroup{reader: r, whole: whole, of: of}
 			byTable[r.Table] = g
 			groups = append(groups, g)
-		}
-		if !IsSettled(r) && IsSettled(g.reader) {
+		} else if !IsSettled(r) && IsSettled(g.reader) {
+			if r.Consumer != nil {
+				cp := *r.Consumer
+				r.Consumer = &cp
+			}
 			g.reader = r // the column it still has to stop reading speaks for it
-		} else if g.reader.Consumer != nil && r.Consumer != nil && linkOrder[r.DependencyType] < linkOrder[g.reader.DependencyType] {
-			g.reader.DependencyType = r.DependencyType
+		} else if g.reader.Consumer != nil && r.Consumer != nil {
+			if linkOrder[r.DependencyType] < linkOrder[g.reader.DependencyType] {
+				g.reader.DependencyType = r.DependencyType
+			}
+			if r.Consumer.LastSeen > g.reader.Consumer.LastSeen ||
+				(r.Consumer.LastSeen == g.reader.Consumer.LastSeen && g.reader.Consumer.SampleJobURL == "" && r.Consumer.SampleJobURL != "") {
+				g.reader.Consumer.LastSeen = r.Consumer.LastSeen
+				g.reader.Consumer.SampleJobID = r.Consumer.SampleJobID
+				g.reader.Consumer.SampleJobURL = r.Consumer.SampleJobURL
+			}
 		}
 		if column != "" && !slices.Contains(g.columns, column) {
 			g.columns = append(g.columns, column)
@@ -279,7 +294,7 @@ func noteText(g *readerGroup, renamed bool) string {
 	if renamed && g.whole && r.ProbablyUpdated && r.Checked == "" && r.RenamedFrom == "" {
 		return "moved to the new name"
 	}
-	return ReaderNote(r)
+	return ReaderMarkdownNote(r)
 }
 
 // affected is a row's "Who is affected" entries, and the "Every reader"

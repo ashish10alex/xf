@@ -1,9 +1,12 @@
 package impact
 
 import (
+	"fmt"
 	"html"
 	"regexp"
 	"strings"
+
+	"github.com/ashish10alex/xf/internal/lineage"
 )
 
 // webRow is a ledger row as xf web's Checks page draws it.
@@ -54,23 +57,57 @@ var (
 	inlineCode   = regexp.MustCompile("`([^`]+)`")
 	inlineStrong = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	inlineEm     = regexp.MustCompile(`\*([^*]+)\*`)
+	inlineLink   = regexp.MustCompile(`\[(last \d{4}-\d{2}-\d{2}|latest job)\]\((https://[^)\s]+)\)`)
 )
 
 // InlineHTML is inlineHTML for another report's Markdown sentence.
 func InlineHTML(md string) string { return inlineHTML(md) }
 
-// inlineHTML is a ledger cell's Markdown as HTML: its text escaped, then
-// `code`, **bold** and *italic*, the only Markdown the ledger writes.
+// inlineHTML is a ledger cell's Markdown as HTML: code spans first (so links
+// or emphasis inside backticks stay literal), then validated https:// job
+// links, then **bold** and *italic*, the only Markdown the ledger writes.
 func inlineHTML(md string) string {
-	s := html.EscapeString(strings.ReplaceAll(md, `\|`, "|"))
-	s = inlineCode.ReplaceAllStringFunc(s, func(code string) string {
+	sentinel := "\x00XFPH"
+	for strings.Contains(md, sentinel) {
+		sentinel += "_"
+	}
+	var slots []string
+	place := func(rendered string) string {
+		tok := fmt.Sprintf("%s%d\x00", sentinel, len(slots))
+		slots = append(slots, rendered)
+		return tok
+	}
+
+	// 1. Protect code spans before matching links, bold, or italic.
+	s := inlineCode.ReplaceAllStringFunc(md, func(code string) string {
 		// Long names wrap at their underscores and dots, not mid-word.
-		name := strings.Trim(code, "`")
+		name := html.EscapeString(strings.ReplaceAll(strings.Trim(code, "`"), `\|`, "|"))
 		name = strings.NewReplacer("_", "_<wbr>", ".", ".<wbr>").Replace(name)
-		return "<code>" + name + "</code>"
+		return place("<code>" + name + "</code>")
 	})
+
+	// 2. Protect validated https:// job links so **bold** can wrap them cleanly.
+	s = inlineLink.ReplaceAllStringFunc(s, func(m string) string {
+		sub := inlineLink.FindStringSubmatch(m)
+		if len(sub) != 3 {
+			return m
+		}
+		safe := lineage.SafeJobURL(sub[2])
+		if safe == "" {
+			return m
+		}
+		return place(`<a href="` + html.EscapeString(safe) + `" target="_blank" rel="noopener noreferrer">` + html.EscapeString(sub[1]) + `</a>`)
+	})
+
+	// 3. Escape remaining plain text and apply bold/italic.
+	s = html.EscapeString(strings.ReplaceAll(s, `\|`, "|"))
 	s = inlineStrong.ReplaceAllString(s, "<strong>$1</strong>")
 	s = inlineEm.ReplaceAllString(s, "<em>$1</em>")
+
+	// 4. Restore protected HTML fragments.
+	for i, rendered := range slots {
+		s = strings.ReplaceAll(s, fmt.Sprintf("%s%d\x00", sentinel, i), rendered)
+	}
 	return s
 }
 
