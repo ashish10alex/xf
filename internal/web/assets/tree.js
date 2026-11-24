@@ -27,8 +27,11 @@ export const T = {
   view: 'files',   // what the column shows: 'files', 'scm', 'search' or 'projects'
   width: 0,        // px; 0 is the default
   open: {},        // the open folders, by path
-  files: [],       // fileRow from the server: {path, git, action, actions, errors}
+  files: [],       // fileRow from the server: {path, git, ignored, action, actions, errors}
   dirs: [],        // the folders without files
+  lazyDirs: [],    // ignored folders whose children load on expand
+  dirEntries: {},  // path -> {files, dirs} for expanded lazy folders
+  loadingDirs: {}, // path -> true while /api/files/dir is in flight
   git: false,
   truncated: false,
   loaded: false,
@@ -63,7 +66,7 @@ function restore() {
   if (loadedFor === root()) return;
   loadedFor = root();
   cancelDragExpand();
-  Object.assign(T, { projCursor: '', shown: false, view: 'files', width: 0, open: {}, files: [], dirs: [], loaded: false, error: '', cursor: '', centre: null, filter: '', filtering: false, prompt: null, drag: null });
+  Object.assign(T, { projCursor: '', shown: false, view: 'files', width: 0, open: {}, files: [], dirs: [], lazyDirs: [], dirEntries: {}, loadingDirs: {}, loaded: false, error: '', cursor: '', centre: null, filter: '', filtering: false, prompt: null, drag: null });
   try {
     const v = JSON.parse(localStorage.getItem(storeKey()) || '{}');
     T.shown = !!v.shown && !phone(); // on a phone it would cover the page
@@ -171,20 +174,85 @@ export function refresh() {
 async function load() {
   const n = ++seq;
   try {
-    const v = await get('/api/files');
+    const v = await get('/api/files?ignored=1');
     if (n !== seq) return;
-    T.files = v.files;
-    T.dirs = v.dirs;
-    T.git = v.git;
+    T.files = v.files || [];
+    T.dirs = v.dirs || [];
+    T.lazyDirs = v.lazyDirs || [];
+    T.git = !!v.git;
     T.truncated = !!v.truncated;
     T.error = '';
     T.loaded = true;
+    pruneDirEntries();
+    if (!T.cursor || !rowPaths().has(T.cursor)) T.cursor = SRC.file || '';
+    redraw();
+    await loadOpenLazyDirs(n);
+    if (n !== seq) return;
     if (!T.cursor || !rowPaths().has(T.cursor)) T.cursor = SRC.file || '';
   } catch (e) {
     if (n !== seq) return;
     T.error = e.message;
   }
   redraw();
+}
+
+const underLazy = (p) => T.lazyDirs.some((d) => p === d || p.startsWith(d + '/'));
+
+function isLazyPath(path) {
+  if (T.lazyDirs.includes(path)) return true;
+  for (const e of Object.values(T.dirEntries)) {
+    if ((e.dirs || []).includes(path)) return true;
+  }
+  return false;
+}
+
+// pruneDirEntries drops cached lazy folders that are no longer under any
+// lazyDir or are no longer open (so closed node_modules doesn't stay stale).
+function pruneDirEntries() {
+  for (const d of Object.keys(T.dirEntries)) {
+    if (!underLazy(d) || !T.open[d]) delete T.dirEntries[d];
+  }
+}
+
+// loadDir fetches the immediate children of one lazy folder, and continues
+// into any child folders already marked open.
+export async function loadDir(path, forSeq = null) {
+  if (!path) return;
+  const interactive = forSeq == null;
+  if (interactive) {
+    T.loadingDirs[path] = true;
+    redraw();
+  }
+  try {
+    const v = await get('/api/files/dir?path=' + encodeURIComponent(path));
+    if (!interactive && forSeq !== seq) return;
+    const dirs = v.dirs || [];
+    T.dirEntries[path] = { files: v.files || [], dirs };
+    delete T.loadingDirs[path];
+    const dirSet = new Set(dirs);
+    const prefix = path + '/';
+    for (const k of Object.keys(T.dirEntries)) {
+      if (!k.startsWith(prefix)) continue;
+      const rest = k.slice(prefix.length);
+      const child = prefix + (rest.includes('/') ? rest.slice(0, rest.indexOf('/')) : rest);
+      if (!dirSet.has(child)) delete T.dirEntries[k];
+    }
+    redraw();
+    const openSubs = dirs.filter((sub) => T.open[sub]);
+    if (openSubs.length) {
+      await Promise.all(openSubs.map((sub) => loadDir(sub, forSeq)));
+    }
+  } catch (e) {
+    delete T.loadingDirs[path];
+    if (interactive) say(e.message);
+    redraw();
+  }
+}
+
+async function loadOpenLazyDirs(forSeq) {
+  const openTop = T.lazyDirs.filter((d) => T.open[d]);
+  if (!openTop.length) return;
+  await Promise.all(openTop.map((d) => loadDir(d, forSeq)));
 }
 
 // ---- the rows ----
@@ -198,15 +266,33 @@ function tree() {
     let at = '';
     for (const part of path.split('/')) {
       at = at ? at + '/' + part : part;
-      if (!n.dirs.has(part)) n.dirs.set(part, { path: at, dirs: new Map(), files: [] });
+      if (!n.dirs.has(part)) n.dirs.set(part, { path: at, dirs: new Map(), files: [], ignored: false, lazy: false });
       n = n.dirs.get(part);
     }
     return n;
   };
   for (const d of T.dirs) dirOf(d);
+  for (const d of T.lazyDirs) {
+    const n = dirOf(d);
+    n.ignored = true;
+    n.lazy = !T.dirEntries[d];
+  }
   for (const f of T.files) {
     const i = f.path.lastIndexOf('/');
     dirOf(i < 0 ? '' : f.path.slice(0, i)).files.push(f);
+  }
+  for (const [d, entries] of Object.entries(T.dirEntries)) {
+    const parent = dirOf(d);
+    parent.ignored = true;
+    parent.lazy = false;
+    for (const sub of entries.dirs || []) {
+      const sn = dirOf(sub);
+      sn.ignored = true;
+      sn.lazy = !T.dirEntries[sub];
+    }
+    for (const f of entries.files || []) {
+      parent.files.push(f);
+    }
   }
   return top;
 }
@@ -214,22 +300,28 @@ function tree() {
 const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 const gitRank = { C: 4, M: 3, A: 2, U: 1 };
 
-// marks are a folder's git status and errors, from its files'.
+// marks are a folder's git status, errors and whether it is ignored, from
+// its own flag and its files'.
 function marks(n) {
   let git = '', errors = 0, dirty = false;
+  let allIgnored = true, hasChild = false;
   const take = (g) => { if ((gitRank[g] || 0) > (gitRank[git] || 0)) git = g; };
   for (const f of n.files) {
+    hasChild = true;
     take(f.git);
     errors += f.errors || 0;
     if (isDirty(f.path)) dirty = true;
+    if (!f.ignored) allIgnored = false;
   }
   for (const d of n.dirs.values()) {
+    hasChild = true;
     const m = marks(d);
     take(m.git);
     errors += m.errors;
     dirty = dirty || m.dirty;
+    if (!m.ignored) allIgnored = false;
   }
-  return { git, errors, dirty };
+  return { git, errors, dirty, ignored: !!n.ignored || (hasChild && allIgnored) };
 }
 
 const isDirty = (path) => SRC.dirty && SRC.file === path;
@@ -238,8 +330,9 @@ const isDirty = (path) => SRC.dirty && SRC.file === path;
 const filterWords = () => T.filter.toLowerCase().split(/\s+/).filter(Boolean);
 
 // rows are the tree's rows as drawn: {path, name, dir, depth, open, git,
-// errors, dirty, action}. A filter shows the files whose path has each of
-// its words, in their folders, open.
+// ignored, errors, dirty, action}. A filter shows the files whose path has
+// each of its words, in their folders, open (and lazy folders whose own
+// path matches, kept closed until expanded).
 export function rows() {
   const out = [];
   const words = filterWords();
@@ -247,15 +340,23 @@ export function rows() {
   const walk = (n, depth) => {
     const dirs = [...n.dirs.values()].sort((a, b) => byName(a.path, b.path));
     for (const d of dirs) {
-      if (words.length && !hasMatch(d, matches)) continue;
-      const open = words.length ? true : !!T.open[d.path];
-      out.push({ path: d.path, name: d.path.slice(d.path.lastIndexOf('/') + 1), dir: true, depth, open, ...marks(d) });
+      const childMatch = words.length ? hasMatch(d, matches) : true;
+      const selfMatch = words.length ? (!childMatch && d.lazy && matches(d.path)) : false;
+      if (words.length && !childMatch && !selfMatch) continue;
+      const open = words.length ? childMatch : !!T.open[d.path];
+      out.push({
+        path: d.path, name: d.path.slice(d.path.lastIndexOf('/') + 1), dir: true, depth, open,
+        ...marks(d), lazy: !!d.lazy, loading: !!T.loadingDirs[d.path],
+      });
       if (open) walk(d, depth + 1);
     }
     const files = n.files.filter((f) => !words.length || matches(f.path)).sort((a, b) => byName(a.path, b.path));
     for (const f of files) {
-      out.push({ path: f.path, name: f.path.slice(f.path.lastIndexOf('/') + 1), dir: false, depth,
-        git: f.git || '', errors: f.errors || 0, dirty: isDirty(f.path), action: f.action || '', actions: f.actions || 0 });
+      out.push({
+        path: f.path, name: f.path.slice(f.path.lastIndexOf('/') + 1), dir: false, depth,
+        git: f.git || '', ignored: !!f.ignored, errors: f.errors || 0,
+        dirty: isDirty(f.path), action: f.action || '', actions: f.actions || 0,
+      });
     }
   };
   walk(tree(), 0);
@@ -264,7 +365,7 @@ export function rows() {
 
 function hasMatch(n, matches) {
   for (const f of n.files) if (matches(f.path)) return true;
-  for (const d of n.dirs.values()) if (hasMatch(d, matches)) return true;
+  for (const d of n.dirs.values()) if ((d.lazy && matches(d.path)) || hasMatch(d, matches)) return true;
   return false;
 }
 
@@ -327,9 +428,29 @@ export function fileIcon(name, dir, open) {
 
 function rowPaths() { return new Set(rows().map((r) => r.path)); }
 
-// filesIn counts the files under folder path.
-function filesIn(path) { return T.files.filter((f) => f.path.startsWith(path + '/')).length; }
-const isFolder = (path) => T.dirs.includes(path) || T.files.some((f) => f.path.startsWith(path + '/'));
+function allFiles() {
+  const out = [...T.files];
+  for (const e of Object.values(T.dirEntries)) {
+    if (e.files && e.files.length) out.push(...e.files);
+  }
+  return out;
+}
+
+function findFile(path) {
+  const f = T.files.find((x) => x.path === path);
+  if (f) return f;
+  for (const e of Object.values(T.dirEntries)) {
+    const hit = (e.files || []).find((x) => x.path === path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// filesIn counts the loaded files under folder path.
+function filesIn(path) { return allFiles().filter((f) => f.path.startsWith(path + '/')).length; }
+const isFolder = (path) => T.dirs.includes(path) || T.lazyDirs.includes(path) || path in T.dirEntries
+  || Object.values(T.dirEntries).some((e) => (e.dirs || []).includes(path))
+  || allFiles().some((f) => f.path.startsWith(path + '/'));
 
 // ---- showing ----
 
@@ -440,11 +561,14 @@ export function reveal(file, centre) {
   T.centre = { path: file, always: !!centre };
   const parts = file.split('/');
   let changed = false;
+  let needLazy = false;
   for (let i = 1; i < parts.length; i++) {
     const d = parts.slice(0, i).join('/');
     if (!T.open[d]) { T.open[d] = true; changed = true; }
+    if (T.loaded && underLazy(d) && !T.dirEntries[d]) needLazy = true;
   }
   if (changed) keep();
+  if (needLazy) loadOpenLazyDirs(seq);
 }
 
 // ---- opening ----
@@ -463,7 +587,7 @@ export async function openFile(file, opts = {}) {
     }
   }
   if (!SRC.shown && hooks.toggleSource) hooks.toggleSource();
-  const f = T.files.find((x) => x.path === file);
+  const f = findFile(file);
   const action = (f && f.action) || opts.action || (S.view && S.view.file === file && S.sel);
   // The file goes with the action, which a compile since the files were
   // listed may have renamed (the tree re-lists them only while it shows).
@@ -490,8 +614,12 @@ function move(n) {
 const current = () => rows().find((r) => r.path === T.cursor);
 
 function setOpen(path, open) {
-  if (open) T.open[path] = true;
-  else delete T.open[path];
+  if (open) {
+    T.open[path] = true;
+    if (isLazyPath(path) && !T.dirEntries[path] && !T.loadingDirs[path]) loadDir(path);
+  } else {
+    delete T.open[path];
+  }
   keep();
 }
 

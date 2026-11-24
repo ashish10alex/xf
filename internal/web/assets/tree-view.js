@@ -27,6 +27,7 @@ function Row({ r, cur, focused }) {
   const dropIn = drag && drag.over && r.path.startsWith(drag.over + '/');
   const cls = 'tree-row fi fi-' + tr.fileIcon(r.name, r.dir, r.open)
     + (r.dir ? ' dir' : '')
+    + (r.ignored ? ' ignored' : '')
     + (cur ? ' cur' : '')
     + (cur && focused ? ' focused' : '')
     + (!r.dir && r.path === SRC.file ? ' active' : '')
@@ -35,7 +36,7 @@ function Row({ r, cur, focused }) {
     + (dragging ? ' dragging' : '')
     + (dropTarget ? ' drop-target' : '')
     + (dropIn ? ' drop-in' : '');
-  const why = [r.path, r.git && gitWord[r.git], r.errors && r.errors + ' error' + (r.errors === 1 ? '' : 's'), r.actions && r.actions + ' action' + (r.actions === 1 ? '' : 's')].filter(Boolean).join(' · ');
+  const why = [r.path, r.git && gitWord[r.git], r.ignored && (T.git ? 'gitignored' : 'ignored'), r.errors && r.errors + ' error' + (r.errors === 1 ? '' : 's'), r.actions && r.actions + ' action' + (r.actions === 1 ? '' : 's')].filter(Boolean).join(' · ');
   return html`<div class=${cls} title=${why} style=${'padding-left:' + (0.5 + r.depth * 1.5) + 'ch'}
       draggable=${!T.prompt}
       onMouseDown=${(e) => { if (e.button === 0) { e.stopPropagation(); if (S.focus !== 'tree') { setFocus('tree'); redraw(); } } }}
@@ -65,6 +66,7 @@ function Row({ r, cur, focused }) {
       ref=${(el) => { if (el && cur) nearest(el); }}>
     <span class="tree-caret">${r.dir ? (r.open ? '▾' : '▸') : ''}</span>
     <span class="tree-name">${r.name}${r.dir ? '/' : ''}</span>
+    ${r.loading && html`<span class="dim">…</span>`}
     ${r.dirty && html`<span class="tree-dirty" title="unsaved">●</span>`}
     ${r.errors > 0 && html`<span class="tree-err">${r.errors}</span>`}
     ${r.git && html`<span class="tree-git">${r.git}</span>`}

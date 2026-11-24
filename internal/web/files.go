@@ -27,6 +27,8 @@ import (
 const (
 	// maxTreeFiles bounds the files listed.
 	maxTreeFiles = 20000
+	// maxTreeDirEntries bounds the entries listed for one expanded lazy folder.
+	maxTreeDirEntries = 5000
 	// filesTimeout bounds listing the files.
 	filesTimeout = 10 * time.Second
 	// filesDebounce is how long the watcher waits for a burst of changes
@@ -37,6 +39,10 @@ const (
 // treeSkip are the folders a project's walk leaves out when git can't list
 // its files: build output, packages and logs.
 var treeSkip = []string{".git", "node_modules", "target", "dbt_packages", "logs"}
+
+// lazyWalkSkip are the heavy/generated folders a non-git file tree walk
+// keeps collapsed and lazy-loaded (dimmed) rather than walking eagerly.
+var lazyWalkSkip = []string{"node_modules", "target", "dbt_packages", "logs", ".venv", "venv", "__pycache__"}
 
 // treeSpec is what the tree's watcher watches: every file and folder,
 // outside the folders treeSkip names at the root (and, as every watch,
@@ -49,6 +55,8 @@ type fileRow struct {
 	// Git is the file's git status: M changed, A added, U untracked, C in
 	// conflict; "" unchanged.
 	Git string `json:"git,omitempty"`
+	// Ignored says the file is gitignored (or inside a skipped folder).
+	Ignored bool `json:"ignored,omitempty"`
 	// Action is the file's first action, which opening it selects, and
 	// Actions how many it has.
 	Action  project.ActionID `json:"action,omitempty"`
@@ -62,51 +70,171 @@ type filesView struct {
 	Files []fileRow `json:"files"`
 	// Dirs are the folders without files, which the files don't show.
 	Dirs []string `json:"dirs"`
+	// LazyDirs are ignored (or skipped) folders whose contents are listed
+	// on demand via /api/files/dir when expanded in the tree.
+	LazyDirs []string `json:"lazyDirs,omitempty"`
 	// Git says the files are git's; else the project was walked.
 	Git bool `json:"git"`
 	// Truncated says more files were left out than maxTreeFiles.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-// files answers with the tree.
+// dirView is the immediate contents of one lazy folder (/api/files/dir).
+type dirView struct {
+	Files []fileRow `json:"files"`
+	// Dirs are the immediate subfolders, each itself lazy until expanded.
+	Dirs      []string `json:"dirs"`
+	Truncated bool     `json:"truncated,omitempty"`
+}
+
+// files answers with the tree. With ignored=1 (used by the file explorer),
+// gitignored files and folders are included too, with collapsed ignored
+// folders returned in LazyDirs so large trees (node_modules, .venv, target)
+// expand on demand. Without ignored=1 (used by cmd+p), only non-ignored
+// project files are returned.
 func (p *projectState) files(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), filesTimeout)
 	defer cancel()
 	root := p.deps.Root
+	includeIgnored := r.URL.Query().Get("ignored") == "1"
 	files, dirs, isGit, err := gitFiles(ctx, root)
-	if err != nil {
-		files, dirs, err = walkFiles(root)
+	var igFiles, lazyDirs []string
+	if err == nil && includeIgnored {
+		var igAllDirs map[string]bool
+		igFiles, lazyDirs, igAllDirs = gitIgnored(ctx, root, files)
+		if len(igAllDirs) > 0 {
+			dirs = slices.DeleteFunc(dirs, func(d string) bool { return igAllDirs[d] })
+		}
+	} else if err != nil {
+		if includeIgnored {
+			files, dirs, lazyDirs, err = walkTreeFiles(root)
+		} else {
+			files, dirs, err = walkFiles(root)
+		}
 		isGit = false
 	}
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	v := filesView{Files: make([]fileRow, 0, min(len(files), maxTreeFiles)), Dirs: dirs, Git: isGit}
+	total := len(files) + len(igFiles)
+	v := filesView{
+		Files:    make([]fileRow, 0, min(total, maxTreeFiles)),
+		Dirs:     nonNil(dirs),
+		LazyDirs: lazyDirs,
+		Git:      isGit,
+	}
 	if len(files) > maxTreeFiles {
-		files, v.Truncated = files[:maxTreeFiles], true
+		files, igFiles, v.Truncated = files[:maxTreeFiles], nil, true
+	} else if len(files)+len(igFiles) > maxTreeFiles {
+		igFiles, v.Truncated = igFiles[:maxTreeFiles-len(files)], true
 	}
 	var status map[string]string
 	if isGit {
 		status = gitStatus(ctx, root)
 	}
 	byFile := p.fileActions()
+	errs := p.fileErrors()
+	addRow := func(f string, ignored bool) {
+		row := fileRow{Path: f, Ignored: ignored, Errors: errs[f]}
+		if !ignored {
+			row.Git = status[f]
+		}
+		if fa, ok := byFile[f]; ok {
+			row.Action, row.Actions = fa.first, fa.count
+		}
+		v.Files = append(v.Files, row)
+	}
+	for _, f := range files {
+		addRow(f, false)
+	}
+	for _, f := range igFiles {
+		addRow(f, true)
+	}
+	if len(igFiles) > 0 {
+		slices.SortFunc(v.Files, func(a, b fileRow) int { return cmp.Compare(a.Path, b.Path) })
+	}
+	writeJSON(w, v)
+}
+
+// listDir answers with the immediate files and subfolders of a folder in
+// the project, used when expanding a lazy ignored folder in the file tree.
+func (p *projectState) listDir(w http.ResponseWriter, r *http.Request) {
+	dir := strings.TrimSuffix(r.URL.Query().Get("path"), "/")
+	at, err := p.projectPath(dir)
+	if err != nil {
+		sourceError(w, err)
+		return
+	}
+	root, err := filepath.EvalSymlinks(p.deps.Root)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	real, err := filepath.EvalSymlinks(at)
+	if err != nil || !inside(root, real) {
+		sourceError(w, errNotSource)
+		return
+	}
+	fi, err := os.Stat(real)
+	if err != nil || !fi.IsDir() {
+		sourceError(w, errNotSource)
+		return
+	}
+	entries, err := os.ReadDir(real)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	byFile := p.fileActions()
+	errs := p.fileErrors()
+	v := dirView{Files: []fileRow{}, Dirs: []string{}}
+	count := 0
+	for _, e := range entries {
+		name := e.Name()
+		if strings.EqualFold(name, ".git") {
+			continue
+		}
+		if count >= maxTreeDirEntries {
+			v.Truncated = true
+			break
+		}
+		rel := dir + "/" + name
+		isDir := e.IsDir()
+		if !isDir && e.Type()&os.ModeSymlink != 0 {
+			if target, err := filepath.EvalSymlinks(filepath.Join(real, name)); err == nil && inside(root, target) {
+				if tfi, err := os.Stat(target); err == nil && tfi.IsDir() {
+					isDir = true
+				}
+			}
+		}
+		if isDir {
+			v.Dirs = append(v.Dirs, rel)
+		} else {
+			row := fileRow{Path: rel, Ignored: true, Errors: errs[rel]}
+			if fa, ok := byFile[rel]; ok {
+				row.Action, row.Actions = fa.first, fa.count
+			}
+			v.Files = append(v.Files, row)
+		}
+		count++
+	}
+	slices.Sort(v.Dirs)
+	slices.SortFunc(v.Files, func(a, b fileRow) int { return cmp.Compare(a.Path, b.Path) })
+	writeJSON(w, v)
+}
+
+// fileErrors counts the last compile's errors in each file.
+func (p *projectState) fileErrors() map[string]int {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	errs := map[string]int{}
 	for _, e := range p.st.Errors {
 		if e.FileName != "" {
 			errs[filepath.ToSlash(e.FileName)]++
 		}
 	}
-	p.mu.Unlock()
-	for _, f := range files {
-		row := fileRow{Path: f, Git: status[f], Errors: errs[f]}
-		if fa, ok := byFile[f]; ok {
-			row.Action, row.Actions = fa.first, fa.count
-		}
-		v.Files = append(v.Files, row)
-	}
-	writeJSON(w, v)
+	return errs
 }
 
 // actionOfFile answers with the first action of the file named, as the tree
@@ -249,6 +377,65 @@ func gitStatus(ctx context.Context, root string) map[string]string {
 	return st
 }
 
+// gitIgnored lists the gitignored files under root and the collapsed ignored
+// folders (lazyDirs) that git did not descend into, plus allDirs (every folder
+// entry git emitted with a trailing slash). normalFiles must be sorted.
+func gitIgnored(ctx context.Context, root string, normalFiles []string) (files, lazyDirs []string, allDirs map[string]bool) {
+	out, err := cmdrun.Git(ctx, root, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory").Output()
+	if err != nil {
+		return nil, nil, nil
+	}
+	seenFiles := map[string]bool{}
+	allDirs = map[string]bool{}
+	var rawDirs []string
+	for e := range strings.SplitSeq(string(out), "\x00") {
+		if e == "" {
+			continue
+		}
+		if strings.HasSuffix(e, "/") {
+			d := strings.TrimSuffix(e, "/")
+			if d == "" || isGitMetaPath(d) || allDirs[d] {
+				continue
+			}
+			allDirs[d] = true
+			rawDirs = append(rawDirs, d)
+			continue
+		}
+		if isGitMetaPath(e) || seenFiles[e] {
+			continue
+		}
+		if _, found := slices.BinarySearch(normalFiles, e); found {
+			continue
+		}
+		seenFiles[e] = true
+		files = append(files, e)
+	}
+	slices.Sort(files)
+	slices.Sort(rawDirs)
+	for _, d := range rawDirs {
+		prefix := d + "/"
+		if hasChildPrefix(normalFiles, prefix) || hasChildPrefix(files, prefix) || hasChildPrefix(rawDirs, prefix) {
+			continue
+		}
+		lazyDirs = append(lazyDirs, d)
+	}
+	return files, lazyDirs, allDirs
+}
+
+func hasChildPrefix(sorted []string, prefix string) bool {
+	i, _ := slices.BinarySearch(sorted, prefix)
+	return i < len(sorted) && strings.HasPrefix(sorted[i], prefix)
+}
+
+func isGitMetaPath(rel string) bool {
+	for part := range strings.SplitSeq(rel, "/") {
+		if strings.EqualFold(part, ".git") {
+			return true
+		}
+	}
+	return false
+}
+
 // walkFiles lists the files under root when git can't: every one outside
 // the folders treeSkip names and dot folders, sorted, with the folders
 // that hold no file.
@@ -282,6 +469,48 @@ func walkFiles(root string) (files, dirs []string, err error) {
 	})
 	slices.Sort(files)
 	return files, nonNil(dirs), err
+}
+
+// walkTreeFiles lists the files under root for the file explorer outside a
+// git repository: dot-folders (other than .git) are walked and shown, while
+// heavy/generated folders in lazyWalkSkip are returned in lazyDirs so they
+// show dimmed and expand on demand.
+func walkTreeFiles(root string) (files, dirs, lazyDirs []string, err error) {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == root {
+				return err
+			}
+			return nil
+		}
+		if p == root {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			name := d.Name()
+			if strings.EqualFold(name, ".git") {
+				return filepath.SkipDir
+			}
+			if slices.Contains(lazyWalkSkip, name) {
+				lazyDirs = append(lazyDirs, rel)
+				return filepath.SkipDir
+			}
+			if entries, err := os.ReadDir(p); err == nil && len(entries) == 0 {
+				dirs = append(dirs, rel)
+			}
+			return nil
+		}
+		if len(files) > maxTreeFiles {
+			return filepath.SkipAll
+		}
+		files = append(files, rel)
+		return nil
+	})
+	slices.Sort(files)
+	slices.Sort(lazyDirs)
+	return files, nonNil(dirs), lazyDirs, err
 }
 
 // watchFiles tells the pages when files under the root come, go or

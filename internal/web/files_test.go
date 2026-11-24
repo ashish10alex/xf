@@ -106,6 +106,121 @@ func TestFilesFromGit(t *testing.T) {
 	if slices.Sort(v.Dirs); !slices.Equal(v.Dirs, []string{"definitions/empty", "docs/empty"}) {
 		t.Errorf("dirs = %v, want [definitions/empty docs/empty]", v.Dirs)
 	}
+	if len(v.LazyDirs) != 0 {
+		t.Errorf("default /api/files returned lazyDirs = %v", v.LazyDirs)
+	}
+}
+
+// With ignored=1 (used by the file explorer), /api/files includes gitignored
+// files marked Ignored and collapsed ignored folders in LazyDirs, while
+// /api/files/dir expands a lazy folder one level at a time and refuses .git
+// and escapes outside the project.
+func TestFilesFromGitWithIgnoredAndLazyDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	root := filepath.Join(repo, "df")
+	writeTree(t, root, map[string]string{
+		".gitignore":                 "node_modules/\n*.log\n.env\ntarget/\n",
+		"definitions/orders.sqlx":    "SELECT 1\n",
+		".xf/config.json":            "{}\n",
+		".xf/tmp/.gitignore":         "*\n",
+		".xf/tmp/scratch_1.sql":      "SELECT 1\n",
+		".xf/tmp/sub/deep.sql":       "SELECT 2\n",
+		".env":                       "SECRET=1\n",
+		"debug.log":                  "w\n",
+		"node_modules/pkg/index.js":  "z\n",
+		"node_modules/.bin/tool":     "sh\n",
+		"node_modules/top.txt":       "t\n",
+		"target/compiled/orders.sql": "SELECT 1\n",
+	})
+	git("add", "df/.gitignore", "df/definitions/orders.sqlx", "df/.xf/config.json")
+	git("commit", "-q", "-m", "init")
+	if err := os.MkdirAll(filepath.Join(root, "definitions", "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, ts, c := newTest(t, frontend.Deps{Root: root, Engine: newFakeEngine(testGraph())})
+
+	// Without ignored=1 (cmd+p): ignored files and lazyDirs are omitted.
+	var plain filesView
+	getJSON(t, c, ts.URL+"/api/files", &plain)
+	plainRows := rowsByPath(plain)
+	if _, ok := plainRows[".env"]; ok {
+		t.Errorf("plain /api/files included .env")
+	}
+	if len(plain.LazyDirs) != 0 {
+		t.Errorf("plain /api/files returned lazyDirs = %v", plain.LazyDirs)
+	}
+
+	// With ignored=1 (file explorer): ignored files are included and marked,
+	// collapsed ignored folders appear in LazyDirs without recursing into them.
+	var v filesView
+	getJSON(t, c, ts.URL+"/api/files?ignored=1", &v)
+	rows := rowsByPath(v)
+	for _, wantIgnored := range []string{".env", ".xf/tmp/.gitignore", ".xf/tmp/scratch_1.sql", "debug.log"} {
+		r, ok := rows[wantIgnored]
+		if !ok || !r.Ignored || r.Git != "" {
+			t.Errorf("%s = %+v (ok=%v), want Ignored=true Git=''", wantIgnored, r, ok)
+		}
+	}
+	for _, wantNormal := range []string{".gitignore", ".xf/config.json", "definitions/orders.sqlx"} {
+		r, ok := rows[wantNormal]
+		if !ok || r.Ignored {
+			t.Errorf("%s = %+v (ok=%v), want Ignored=false", wantNormal, r, ok)
+		}
+	}
+	if _, ok := rows["node_modules/pkg/index.js"]; ok {
+		t.Error("node_modules was eagerly walked instead of lazy")
+	}
+	if !slices.Equal(v.LazyDirs, []string{".xf/tmp/sub", "node_modules", "target"}) {
+		t.Errorf("lazyDirs = %v, want [.xf/tmp/sub node_modules target]", v.LazyDirs)
+	}
+	// .xf/tmp was expanded by git, so it should not also be in empty Dirs.
+	if slices.Contains(v.Dirs, ".xf/tmp") {
+		t.Errorf("dirs still contains .xf/tmp: %v", v.Dirs)
+	}
+	if !slices.Contains(v.Dirs, "definitions/empty") {
+		t.Errorf("dirs missing definitions/empty: %v", v.Dirs)
+	}
+
+	// Expanding a lazy folder via /api/files/dir returns only its immediate children.
+	var nm dirView
+	getJSON(t, c, ts.URL+"/api/files/dir?path=node_modules", &nm)
+	if !slices.Equal(nm.Dirs, []string{"node_modules/.bin", "node_modules/pkg"}) {
+		t.Errorf("node_modules dirs = %v, want [node_modules/.bin node_modules/pkg]", nm.Dirs)
+	}
+	if len(nm.Files) != 1 || nm.Files[0].Path != "node_modules/top.txt" || !nm.Files[0].Ignored {
+		t.Errorf("node_modules files = %+v", nm.Files)
+	}
+
+	// Expanding a nested lazy folder works too.
+	var pkg dirView
+	getJSON(t, c, ts.URL+"/api/files/dir?path="+url.QueryEscape("node_modules/pkg"), &pkg)
+	if len(pkg.Dirs) != 0 || len(pkg.Files) != 1 || pkg.Files[0].Path != "node_modules/pkg/index.js" {
+		t.Errorf("node_modules/pkg = %+v", pkg)
+	}
+
+	// .git and escapes outside root are refused.
+	for _, bad := range []string{"", ".git", "../outside", "definitions/orders.sqlx", "no_such_dir"} {
+		resp, err := c.Get(ts.URL + "/api/files/dir?path=" + url.QueryEscape(bad))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			t.Errorf("/api/files/dir?path=%q succeeded", bad)
+		}
+	}
 }
 
 // A file's first action is the one the tree lists for it, and a file with
@@ -147,6 +262,28 @@ func TestFilesWalked(t *testing.T) {
 	}
 	if !slices.Equal(files, []string{"README.md", "definitions/orders.sqlx"}) || !slices.Equal(dirs, []string{"includes"}) {
 		t.Errorf("files = %v, dirs = %v", files, dirs)
+	}
+
+	// In tree mode (ignored=1), non-git projects show dot-folders (except .git)
+	// and return heavy build/package folders in lazyDirs.
+	writeTree(t, root, map[string]string{
+		".env":              "A=1\n",
+		".venv/lib/site.py": "x\n",
+		".git/HEAD":         "ref\n",
+	})
+	tFiles, tDirs, tLazy, err := walkTreeFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFiles := []string{".env", ".vscode/settings.json", "README.md", "definitions/orders.sqlx"}
+	if !slices.Equal(tFiles, wantFiles) {
+		t.Errorf("walkTreeFiles files = %v, want %v", tFiles, wantFiles)
+	}
+	if !slices.Equal(tDirs, []string{"includes"}) {
+		t.Errorf("walkTreeFiles dirs = %v, want [includes]", tDirs)
+	}
+	if !slices.Equal(tLazy, []string{".venv", "node_modules", "target"}) {
+		t.Errorf("walkTreeFiles lazyDirs = %v, want [.venv node_modules target]", tLazy)
 	}
 }
 

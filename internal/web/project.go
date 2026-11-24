@@ -775,6 +775,7 @@ func (s *Server) projectRoutes(mux *http.ServeMux) {
 		}
 	})
 	route("GET /api/files", (*projectState).files)
+	route("GET /api/files/dir", (*projectState).listDir)
 	route("GET /api/files/action", (*projectState).actionOfFile)
 	route("POST /api/files/new", (*projectState).newFile)
 	route("POST /api/files/rename", (*projectState).renameFile)
