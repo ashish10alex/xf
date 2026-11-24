@@ -78,6 +78,7 @@ while IFS=$'\t' read -r id url title; do
   fi
   echo "focus $id $url" >> "$log"
   osascript -e "tell application \"Google Chrome\"" \
+    -e "set minimized of window id $id to false" \
     -e "set index of window id $id to 1" \
     -e "activate" \
     -e "end tell" >/dev/null
