@@ -27,7 +27,15 @@ import { vimKey } from './editor.js';
 // @codemirror/merge's own views do, so a big file never stalls typing.
 const diffConfig = { scanLimit: 500, timeout: 200 };
 
-const textOf = (s) => (typeof s === 'string' ? cm.Text.of(s.split('\n')) : s);
+// textOf is s as a Text: the editor's Text as it is, and a string split
+// once. The last string's Text is kept, as hunksOf gets the same base on
+// each keystroke while a peek or diff is open.
+let lastText = { str: null, text: null };
+export function textOf(s) {
+  if (typeof s !== 'string') return s;
+  if (lastText.str !== s) lastText = { str: s, text: cm.Text.of(s.split('\n')) };
+  return lastText.text;
+}
 
 // hunksOf are the hunks that make base into text (a string or the
 // editor's Text); null when there is no base.
