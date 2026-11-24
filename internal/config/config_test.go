@@ -389,6 +389,9 @@ func TestWebAutoExitSecondsIsTheUsers(t *testing.T) {
 	if !UserOnly(KeyPane2Tab) {
 		t.Error("pane2Tab isn't user-only")
 	}
+	if !UserOnly(KeyPanelPosition) {
+		t.Error("panelPosition isn't user-only")
+	}
 	if !UserOnly(KeyWrapLines) {
 		t.Error("wrapLines isn't user-only")
 	}
@@ -454,6 +457,7 @@ func TestCheck(t *testing.T) {
 		{KeyWebAutoExitSeconds, "0", true}, {KeyWebAutoExitSeconds, "45", true}, {KeyWebAutoExitSeconds, "-5", false},
 		{KeyWebOpenProjectIn, "same-tab", true}, {KeyWebOpenProjectIn, "new-tab", true}, {KeyWebOpenProjectIn, "window", false},
 		{KeyPane2Tab, "sql", true}, {KeyPane2Tab, "columns", true}, {KeyPane2Tab, "lineage", false},
+		{KeyPanelPosition, "bottom", true}, {KeyPanelPosition, "right", true}, {KeyPanelPosition, "left", false},
 		{KeyWrapLines, "true", true}, {KeyWrapLines, "false", true}, {KeyWrapLines, "on", false},
 		{KeyVimMode, "true", true}, {KeyVimMode, "false", true}, {KeyVimMode, "on", false},
 		{KeyEditor, "code", true}, {"nope", "x", false},

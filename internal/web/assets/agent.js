@@ -8,7 +8,7 @@
 // discards, closing the project, quitting xf web) unless its opts say
 // allowDangerous: the user's yes is the agent's to get first.
 
-import { S, hooks, redraw, handleKey, keyName, selectAction, setFocus, openPalette, openScratchPalette, setPaletteQuery, paletteList, paletteSettled, pickFromPalette, leaveOverlay, paletteCommands, afterRedraw, toggles, running, rightShown } from './state.js';
+import { S, hooks, redraw, handleKey, keyName, selectAction, setFocus, openPalette, openScratchPalette, setPaletteQuery, paletteList, paletteSettled, pickFromPalette, leaveOverlay, paletteCommands, afterRedraw, toggles, running, rightShown, panelRight } from './state.js';
 import { diagLines, describe, note } from './diag.js';
 import { SET } from './settings.js';
 import { SC } from './scratch.js';
@@ -45,7 +45,7 @@ export function snapshot() {
     selected: S.sel, view: v ? { id: v.id, name: v.name, file: v.file } : null, plainFile: S.plainFile,
     source: { shown: SRC.shown, file: SRC.file, dirty: SRC.dirty, stale: SRC.stale, loading: SRC.loading, editing: SRC.editing, inserting: SRC.inserting, conflict: !!SRC.conflict, error: SRC.error, vim: vimOn() },
     flags: toggles(), running: running(),
-    panes: { zoomed: S.zoomed, pane2: S.mode === 'project' && rightShown(), lineage: S.lineageOpen, columns: S.cols.shown, log: S.showLog ? S.logTab : '', column: TREE.shown ? TREE.view : '' },
+    panes: { zoomed: S.zoomed, pane2: S.mode === 'project' && rightShown(), lineage: S.lineageOpen, columns: S.cols.shown, log: S.showLog ? S.logTab : '', panelPosition: panelRight() ? 'right' : 'bottom', column: TREE.shown ? TREE.view : '' },
     flash: S.flash, compile: st ? { errors: st.errors || 0, warnings: st.warnings || 0, dryRunErrors: st.dryRunErrors || 0 } : null,
     palette: S.overlay === 'palette' ? { query: S.palette.query, cursor: S.palette.cursor, items: paletteList().slice(0, 20).map(label) } : null,
     menu: menuItems(),

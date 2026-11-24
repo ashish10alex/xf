@@ -1408,6 +1408,25 @@ function toggleLineage() {
   setFocus('lineage');
 }
 
+// panelRight says panelPosition is right: the log/terminal panel sits on the
+// right of the workspace (and of the Checks page's report) instead of
+// underneath.
+export const panelRight = () => !!(S.boot && S.boot.panelPosition === 'right');
+
+// togglePanelPosition moves the panel between bottom and right, saving it to
+// the user's config so every open tab follows.
+export async function togglePanelPosition() {
+  const next = panelRight() ? 'bottom' : 'right';
+  if (S.boot) S.boot.panelPosition = next;
+  redraw();
+  try {
+    await post('/api/settings', { level: 'user', key: 'panelPosition', value: next });
+    say('panel moved to the ' + next);
+  } catch (e) {
+    say('panel moved to the ' + next + ' (this tab only: ' + e.message + ')');
+  }
+}
+
 // togglePanel is ⌘j (ctrl+j off a Mac), as VS Code's: it hides the log
 // pane, or shows it again on the tab it showed last, the terminal's too,
 // with the keys.
@@ -2154,7 +2173,8 @@ function commands() {
   if (S.run && S.run.url) add('Open: run in browser', 'u', () => openURL(S.run.url, 'the workflow invocation'));
   if (v && v.hasIncremental) toggle('View: incremental SQL', S.incremental, 'i', toggleIncremental);
   toggle('View: columns', S.cols.shown, 'c', toggleColumns);
-  toggle('View: bottom panel', S.showLog, onMac ? '⌘j' : 'ctrl+j', togglePanel);
+  toggle(panelRight() ? 'View: panel (right)' : 'View: bottom panel', S.showLog, onMac ? '⌘j' : 'ctrl+j', togglePanel);
+  add(panelRight() ? 'View: move panel to bottom' : 'View: move panel to right', '', togglePanelPosition);
   toggle('View: log', S.showLog && S.logTab !== 'term', 'L', toggleLog);
   if (S.caps.terminal) {
     toggle('View: terminal', S.showLog && S.logTab === 'term', termKeyLabel, toggleTerm);

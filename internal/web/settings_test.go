@@ -44,7 +44,7 @@ func (f *fakeSettings) hook() *Settings {
 				v.Levels = append(v.Levels, SettingsLevel{Level: "project", Path: ".xf/config.json"})
 			}
 			userFile, projectFile := f.fileKeys("user"), f.fileKeys("project")
-			for _, k := range []string{config.KeySourceAutosaveMs, config.KeyDbtTarget, config.KeyWebTheme, config.KeyAutoHidePane2, config.KeyPane2Tab, config.KeyWrapLines, config.KeyVimMode} {
+			for _, k := range []string{config.KeySourceAutosaveMs, config.KeyDbtTarget, config.KeyWebTheme, config.KeyAutoHidePane2, config.KeyPane2Tab, config.KeyPanelPosition, config.KeyWrapLines, config.KeyVimMode} {
 				sk := SettingKey{Key: k, Live: k != config.KeyDbtTarget, UserOnly: config.UserOnly(k), From: "default"}
 				if val, ok := f.user[k]; ok {
 					sk.User, sk.Value, sk.From = &val, val, "~/.config/xf/config.json"
@@ -204,6 +204,34 @@ func TestSettingsPane2Tab(t *testing.T) {
 	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
 	if boot.Pane2Tab != "columns" {
 		t.Errorf("boot pane2Tab = %q after setting columns", boot.Pane2Tab)
+	}
+}
+
+// panelPosition is bottom unless a file says right, and every page is told of
+// a change at once.
+func TestSettingsPanelPosition(t *testing.T) {
+	f := &fakeSettings{user: map[string]string{}, project: map[string]string{}}
+	opens := 0
+	s, ts, c := newSettingsTest(t, f, &opens)
+	events := openEvents(t, c, ts.URL, "proj")
+	var boot projectBoot
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
+	if boot.PanelPosition != "bottom" {
+		t.Errorf("boot panelPosition = %q with nothing set, want the default, bottom", boot.PanelPosition)
+	}
+
+	postJSON(t, c, ts.URL+"/api/settings", map[string]any{"level": "user", "key": config.KeyPanelPosition, "value": "right"}, nil)
+	events.until(t, "settings", `"panelPosition":"right"`)
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
+	if boot.PanelPosition != "right" {
+		t.Errorf("boot panelPosition = %q after setting right", boot.PanelPosition)
+	}
+
+	postJSON(t, c, ts.URL+"/api/settings", map[string]any{"level": "user", "key": config.KeyPanelPosition, "unset": true}, nil)
+	events.until(t, "settings", `"panelPosition":"bottom"`)
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
+	if boot.PanelPosition != "bottom" {
+		t.Errorf("boot panelPosition = %q after unsetting, want bottom", boot.PanelPosition)
 	}
 }
 

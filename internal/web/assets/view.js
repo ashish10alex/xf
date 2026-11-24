@@ -812,6 +812,22 @@ function termTabs(checks) {
   return out;
 }
 
+// panelPosBtn is the title bar's button that moves the panel between bottom
+// and right, matching VS Code's panel position toggle.
+function panelPosBtn(hidden) {
+  if (hidden) return null;
+  const right = st.panelRight();
+  const tip = right ? 'Move panel to bottom' : 'Move panel to right';
+  return html`<span class="tab-btn panel-pos-btn" role="button" title=${tip} aria-label=${tip}
+    onMouseDown=${(e) => { e.stopPropagation(); e.preventDefault(); st.togglePanelPosition(); }}>
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3" />
+      ${right
+        ? html`<rect x="2" y="9.5" width="12" height="3.5" fill="currentColor" opacity="0.8" />`
+        : html`<rect x="10" y="3" width="4" height="10" fill="currentColor" opacity="0.8" />`}
+    </svg></span>`;
+}
+
 function LogPane() {
   const r = S.run;
   const focused = S.focus === 'log';
@@ -850,8 +866,10 @@ function LogPane() {
     rest = [r.label, r.title].filter(Boolean).join(' · ');
     if (r.running) rest += r.cancelling ? (r.api ? ' · ctrl+c stops watching' : ' · ctrl+c force-kills') : ' · ctrl+c cancels';
   }
-  return html`<${Pane} id="log" focused=${focused} cls="log-pane" style=${sized('log', S.zoomed)}
+  const logRight = st.panelRight();
+  return html`<${Pane} id="log" focused=${focused} cls="log-pane" style=${logRight ? sizedRight('logRight', S.zoomed) : sized('log', S.zoomed)}
       title=${html`${title}${rest ? html`<span class="dim"> · ${rest}</span>` : ''}`}
+      tabs=${panelPosBtn(S.zoomed)}
       note=${r && r.url ? html`<a href=${r.url} target="_blank" rel="noopener">u workflow invocation ↗</a>` : ''}>${body}<//>`;
 }
 
@@ -1243,7 +1261,7 @@ function Palette() {
 function helpSections() {
   const c = S.caps;
   const global = [[st.paletteKey, st.paletteKeyMovesDown ? 'find file (again: down the list)' : 'find file'], ['# in it', 'find action'], ['/', 'search the focused pane'], ['$kind', 'find one kind'], [st.commandsKey + ' or >', 'commands'], [']', 'next action in file'], ['[', 'prev action in file'],
-    [st.saveKey, 'save and compile'], ['i', 'incremental/full'], ['E', 'show/hide source'], ['ctrl+,', 'settings and project info'], ['s', 'scratch query from this model'], ...(c.scratch ? [[previewKeyLabel, 'preview the selected action\'s rows (log pane\'s preview tab)']] : []), ['e', 'errors'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the bottom panel, on its last tab'], [st.termKeyLabel, 'show/hide terminal'], ['ctrl+shift+`', 'new terminal, in a tab of its own'], [st.termCloseLabel + ' in it', 'close that terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
+    [st.saveKey, 'save and compile'], ['i', 'incremental/full'], ['E', 'show/hide source'], ['ctrl+,', 'settings and project info'], ['s', 'scratch query from this model'], ...(c.scratch ? [[previewKeyLabel, 'preview the selected action\'s rows (log pane\'s preview tab)']] : []), ['e', 'errors'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the panel (bottom or right), on its last tab'], [st.termKeyLabel, 'show/hide terminal'], ['ctrl+shift+`', 'new terminal, in a tab of its own'], [st.termCloseLabel + ' in it', 'close that terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
   if (c.branches) global.push(['B', 'switch branch']);
   if (c.follow) global.push(['F', 'follow editor on/off']);
   if (c.open) global.push(['o', 'open in editor']);
@@ -1257,8 +1275,8 @@ function helpSections() {
   if (c.check) run.push(['K', 'check the model on the Databricks SQL warehouse (starts it when stopped)']);
   if (c.run) run.push(['d', 'deps'], ['D', 'dependents'], ['f', 'full refresh']);
   if (c.api) run.push(['a', 'run via Dataform API']);
-  const panes = [[st.onMac ? '⌘b' : 'ctrl+b', 'show/hide the file tree'], ['ctrl+g', 'show/hide source control'], [st.projectsKey, 'show/hide open projects'], [st.revealKey, 'show the open file in the file tree'], [search.searchKey + (st.onMac ? '/ctrl+shift+f' : ''), 'search in files'], ['F4/shift+F4', 'next/prev search match'], ['ctrl+0', 'file tree / source control / search'], ['ctrl+1', 'source (left)'], ['ctrl+2', 'inspector / sql (right)'], ['ctrl+3', 'log (bottom)'], [st.rightKey(), 'show/hide pane 2 (right)'],
-    ['z', 'zoom pane'], ['esc', 'unzoom'], ['O', 'lineage tab (again: the sql)'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the bottom panel, on its last tab'], [st.termKeyLabel, 'show/hide terminal'], ['ctrl+shift+`', 'new terminal, in a tab of its own'], [st.termCloseLabel + ' in it', 'close that terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
+  const panes = [[st.onMac ? '⌘b' : 'ctrl+b', 'show/hide the file tree'], ['ctrl+g', 'show/hide source control'], [st.projectsKey, 'show/hide open projects'], [st.revealKey, 'show the open file in the file tree'], [search.searchKey + (st.onMac ? '/ctrl+shift+f' : ''), 'search in files'], ['F4/shift+F4', 'next/prev search match'], ['ctrl+0', 'file tree / source control / search'], ['ctrl+1', 'source (left)'], ['ctrl+2', 'inspector / sql (right)'], ['ctrl+3', st.panelRight() ? 'panel (right)' : 'log (bottom)'], [st.rightKey(), 'show/hide pane 2 (right)'],
+    ['z', 'zoom pane'], ['esc', 'unzoom'], ['O', 'lineage tab (again: the sql)'], ...(c.terminal ? [['ctrl+j/⌘j', 'show/hide the panel (bottom or right), on its last tab'], [st.termKeyLabel, 'show/hide terminal'], ['ctrl+shift+`', 'new terminal, in a tab of its own'], [st.termCloseLabel + ' in it', 'close that terminal'], [st.onMac ? '⌘z/⌥z in it' : 'alt+z in it', 'zoom terminal'], ['L', 'show/hide log']] : [['ctrl+j/⌘j', 'show/hide log']])];
   const target = [['u', 'open in ' + st.tablesSite()], ['y', 'copy `table` name'], ['Y', 'copy file path (again: absolute)']];
   const log = [['g', 'top'], ['G', 'bottom'], ['u', 'open run in browser'], ['y', 'copy the run\'s command for a terminal']];
   if (c.history || c.terminal) log.push([(st.onMac ? '⌥⌘→/t' : 'ctrl+alt+→/t'), 'next tab: ' + [...(c.history ? ['log', 'jobs', 'history'] : ['log']), ...(c.terminal ? ['each terminal'] : [])].join(', ') + (st.onMac ? ' (⌥⌘← back; from the terminal too)' : ' (ctrl+alt+← back; from the terminal too)')]);
@@ -1687,14 +1705,17 @@ function ChecksPage() {
       <button class="run-btn" disabled=${o.loading} onClick=${key('c')}><kbd>c</kbd> Check again</button>
       <button class="link set-close" title="Close (ctrl+q)" onClick=${() => { st.closeChecks(); redraw(); }}>× close</button>
     </header>
-    <div class="checks-main">
-      <div class="changed-head"><${CheckHeader} which=${which} o=${o} verb=${which === 'impact'
-        ? (w) => `checking the column impact of ${w} against ${S.boot.defaultBranch}…`
-        : (w) => `estimating what ${w} changes against ${S.boot.defaultBranch} would scan…`} /></div>
-      ${which === 'impact' ? html`<${ImpactReport} o=${o} />` : html`<${CostReport} o=${o} />`}
-      <${GitLine} verb="check" />
+    <div class=${'checks-body' + (st.panelRight() && !zoomed ? ' panel-right' : '')}>
+      <div class="checks-main">
+        <div class="changed-head"><${CheckHeader} which=${which} o=${o} verb=${which === 'impact'
+          ? (w) => `checking the column impact of ${w} against ${S.boot.defaultBranch}…`
+          : (w) => `estimating what ${w} changes against ${S.boot.defaultBranch} would scan…`} /></div>
+        ${which === 'impact' ? html`<${ImpactReport} o=${o} />` : html`<${CostReport} o=${o} />`}
+        <${GitLine} verb="check" />
+      </div>
+      ${S.caps.terminal && S.checksTerm && st.panelRight() && !zoomed && html`<${PanelVSplitter} id="checksTermRight" paneSelector=".checks-term" containerSelector=".checks-body" />`}
+      ${S.caps.terminal && S.checksTerm && html`<${ChecksTerm} />`}
     </div>
-    ${S.caps.terminal && S.checksTerm && html`<${ChecksTerm} />`}
     <div class="footer set-footer"><${Keys} list=${footerKeys} />
       <span class="spacer"></span>${S.flash && html`<span class="warn">${S.flash}</span>`}</div>
     ${S.overlay === 'prod' && S.prod && html`<${ProdPrompt} />`}
@@ -1708,8 +1729,10 @@ function ChecksPage() {
 function ChecksTerm() {
   const focus = st.takeChecksTermFocus();
   const zoomKey = st.onMac ? '⌘z' : 'alt+z';
-  return html`<${Pane} cls="checks-term" focused=${st.termFocused()}
-      title=${html`${termTabs(true)}<span class="dim"> · ${zoomKey} ${S.checksTermZoomed ? 'unzooms' : 'zooms'} · ${st.termKeyLabel} hides</span>`}>
+  const right = st.panelRight() && !S.checksTermZoomed;
+  return html`<${Pane} cls="checks-term" focused=${st.termFocused()} style=${right ? sizedRight('checksTermRight', false) : ''}
+      title=${html`${termTabs(true)}<span class="dim"> · ${zoomKey} ${S.checksTermZoomed ? 'unzooms' : 'zooms'} · ${st.termKeyLabel} hides</span>`}
+      tabs=${panelPosBtn(S.checksTermZoomed)}>
     <div class="checks-term-body" onfocusin=${() => redraw()} onfocusout=${() => redraw()}><${TermBody} focused=${focus} /></div><//>`;
 }
 
@@ -2129,6 +2152,11 @@ function sized(id, fill) {
   return h && !fill ? `flex:0 1 ${h}px;max-height:none` : '';
 }
 
+function sizedRight(id, fill) {
+  const w = st.paneSize(id);
+  return w && !fill ? `flex:0 1 ${w}px;max-width:none` : '';
+}
+
 // Splitter is the handle between two stacked panes, which drags the size
 // of the pane id: the one above it, or with below the one under it. A
 // double-click gives the pane its own size back.
@@ -2173,6 +2201,34 @@ function VSplitter() {
       const move = (ev) => {
         const pct = ((ev.clientX - rect.left) / rect.width) * 100;
         st.setPaneSize('source', Math.round(Math.min(Math.max(pct, 25), 75)));
+        redraw();
+      };
+      const up = () => {
+        document.body.classList.remove('v-resizing');
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+    }}><span></span></div>`;
+}
+
+// PanelVSplitter is the vertical handle beside the panel when panelPosition
+// is right, dragging its width from the left edge.
+function PanelVSplitter({ id = 'logRight', paneSelector = '[data-pane="log"]', containerSelector = '.body' }) {
+  return html`<div class="v-splitter panel-v-splitter" title="drag to resize · double-click to reset"
+    onDblClick=${() => { st.setPaneSize(id, 0); redraw(); }}
+    onMouseDown=${(e) => {
+      e.preventDefault();
+      const pane = document.querySelector(paneSelector);
+      const box = document.querySelector(containerSelector);
+      if (!pane || !box) return;
+      const x0 = e.clientX, w0 = pane.getBoundingClientRect().width;
+      const max = Math.max(220, box.getBoundingClientRect().width - 260);
+      document.body.classList.add('v-resizing');
+      const move = (ev) => {
+        const dx = x0 - ev.clientX;
+        st.setPaneSize(id, Math.round(Math.min(Math.max(w0 + dx, 220), max)));
         redraw();
       };
       const up = () => {
@@ -2257,14 +2313,15 @@ function Project() {
     ${S.caps.run && !(S.view && S.view.external) && panes.run}
     ${panes.sql}
   <//>`;
+  const logRight = st.panelRight();
   let body;
   if (S.zoomed && panes[S.focus]) {
     body = html`<div class="body zoomed">${panes[S.focus]}</div>`;
   } else {
-    body = html`<div class="body">
+    body = html`<div class=${'body' + (logRight ? ' panel-right' : '')}>
       ${!SRC.shown ? rightPane : st.rightShown() ? html`<div class="workspace">${panes.source}<${VSplitter} />${rightPane}</div>`
         : html`<div class="workspace right-hidden">${panes.source}</div>`}
-      ${S.showLog && html`<${Splitter} id="log" below=${true} />`}
+      ${S.showLog && (logRight ? html`<${PanelVSplitter} />` : html`<${Splitter} id="log" below=${true} />`)}
       ${S.showLog && panes.log}
     </div>`;
   }

@@ -123,6 +123,7 @@ type settingsEvent struct {
 	DiffStyle        string            `json:"diffStyle"`
 	AutoHidePane2    bool              `json:"autoHidePane2"`
 	Pane2Tab         string            `json:"pane2Tab"`
+	PanelPosition    string            `json:"panelPosition"`
 	WrapLines        bool              `json:"wrapLines"`
 	VimMode          bool              `json:"vimMode"`
 	// OpenIn is webOpenProjectIn: same-tab or new-tab.
@@ -145,6 +146,15 @@ func pane2TabOf(v string) string {
 		return v
 	}
 	return config.Pane2SQL
+}
+
+// panelPositionOf is the panelPosition the page is told: bottom unless set to
+// right.
+func panelPositionOf(v string) string {
+	if v == config.PanelRight {
+		return v
+	}
+	return config.PanelBottom
 }
 
 // reopenValues are the values in use of the keys that apply on reopen.
@@ -476,7 +486,7 @@ func changedKeys(was, now []byte) []string {
 
 func (s *Server) settingsEventOf(v SettingsView) settingsEvent {
 	ms, _ := strconv.Atoi(valueOf(v, config.KeySourceAutosaveMs))
-	return settingsEvent{SourceAutosaveMs: autosaveMs(ms), VimKeys: vimKeysOf(v), DiffStyle: diffStyleOf(valueOf(v, config.KeyDiffStyle)), AutoHidePane2: valueOf(v, config.KeyAutoHidePane2) != "false", Pane2Tab: pane2TabOf(valueOf(v, config.KeyPane2Tab)), WrapLines: valueOf(v, config.KeyWrapLines) == "true", VimMode: valueOf(v, config.KeyVimMode) == "true", OpenIn: s.openIn()}
+	return settingsEvent{SourceAutosaveMs: autosaveMs(ms), VimKeys: vimKeysOf(v), DiffStyle: diffStyleOf(valueOf(v, config.KeyDiffStyle)), AutoHidePane2: valueOf(v, config.KeyAutoHidePane2) != "false", Pane2Tab: pane2TabOf(valueOf(v, config.KeyPane2Tab)), PanelPosition: panelPositionOf(valueOf(v, config.KeyPanelPosition)), WrapLines: valueOf(v, config.KeyWrapLines) == "true", VimMode: valueOf(v, config.KeyVimMode) == "true", OpenIn: s.openIn()}
 }
 
 // vimKeysOf are the vim keys in use in v, by key.
@@ -533,6 +543,7 @@ func (p *projectState) applySettings(v SettingsView, changed ...string) {
 	off := p.pythonServer == config.PythonOff
 	p.autoHidePane2 = valueOf(v, config.KeyAutoHidePane2) != "false"
 	p.pane2Tab = valueOf(v, config.KeyPane2Tab)
+	p.panelPosition = valueOf(v, config.KeyPanelPosition)
 	p.wrapLines = valueOf(v, config.KeyWrapLines) == "true"
 	p.vimMode = valueOf(v, config.KeyVimMode) == "true"
 	p.mu.Unlock()

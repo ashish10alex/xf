@@ -147,6 +147,8 @@ type projectState struct {
 	autoHidePane2 bool
 	// pane2Tab is the tab pane 2 starts on (see Project.Pane2Tab).
 	pane2Tab string
+	// panelPosition is where the panel sits (see Project.PanelPosition).
+	panelPosition string
 	// wrapLines wraps long lines in the editors (see Project.WrapLines).
 	wrapLines bool
 	// vimMode gives the editors vim's keys (see Project.VimMode).
@@ -512,6 +514,9 @@ type projectBoot struct {
 	// Pane2Tab is the tab pane 2 starts on in a new browser tab: sql or
 	// columns.
 	Pane2Tab string `json:"pane2Tab"`
+	// PanelPosition is where the panel (log, jobs, history, preview and
+	// terminal) sits: bottom or right.
+	PanelPosition string `json:"panelPosition"`
 	// WrapLines wraps long lines in the page's editors.
 	WrapLines bool `json:"wrapLines"`
 	// VimMode gives the page's editors vim's keys.
@@ -621,6 +626,7 @@ func (p *projectState) boot() *projectBoot {
 		DiffStyle:        diffStyleOf(p.diffStyle),
 		AutoHidePane2:    p.autoHidePane2,
 		Pane2Tab:         pane2TabOf(p.pane2Tab),
+		PanelPosition:    panelPositionOf(p.panelPosition),
 		WrapLines:        p.wrapLines,
 		VimMode:          p.vimMode,
 	}

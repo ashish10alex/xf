@@ -198,6 +198,9 @@ type Project struct {
 	// Pane2Tab is the tab pane 2 starts on in a new browser tab:
 	// "columns", or "" or "sql" for sql.
 	Pane2Tab string
+	// PanelPosition is where the panel (log, jobs, history, preview and
+	// terminal) sits: "right", or "" or "bottom" for bottom.
+	PanelPosition string
 	// WrapLines wraps long lines in the page's editors.
 	WrapLines bool
 	// VimMode gives the page's editors vim's keys.

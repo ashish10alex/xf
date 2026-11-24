@@ -345,6 +345,7 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 	p.SqlfluffBin, p.SqlfluffConfig = settings.SqlfluffBin, settings.SqlfluffConfig
 	p.AutoHidePane2 = settings.AutoHidePane2 != "false"
 	p.Pane2Tab = settings.Pane2Tab
+	p.PanelPosition = settings.PanelPosition
 	p.WrapLines = settings.WrapLines == "true"
 	p.VimMode = settings.VimMode == "true"
 	p.VimKeys = vimKeys(settings.Settings)

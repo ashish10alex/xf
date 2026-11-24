@@ -447,7 +447,7 @@ body.resizing { cursor: row-resize; user-select: none; }
 /* When the source pane is open it takes the full height on the left while
    actions, lineage, run and the compiled SQL stack on the right; the log
    spans the full width underneath both. */
-.workspace { flex: 1 1 0; min-height: 0; display: flex; flex-direction: row; gap: 0; overflow: hidden; }
+.workspace { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: row; gap: 0; overflow: hidden; }
 .workspace > .source-pane { flex: 0 0 50%; min-width: 240px; max-width: calc(100% - 280px); min-height: 0; margin: 9px 0 0; }
 .workspace.right-hidden > .source-pane { flex: 1 1 auto; max-width: none; }
 .v-splitter {
@@ -482,8 +482,15 @@ body.v-resizing { cursor: col-resize; user-select: none; }
   .workspace > .source-pane { flex: 1 1 50% !important; max-width: none; min-width: 0; }
   .v-splitter { display: none; }
   .right-col { flex: 1 1 50%; overflow: visible; }
+  .body.panel-right { flex-direction: column; }
+  .body.panel-right > .log-pane { flex: 0 1 30% !important; min-width: 0; min-height: 110px; }
+  .checks-body.panel-right { flex-direction: column; }
+  .checks-body.panel-right > .checks-term { flex: 0 0 38% !important; min-width: 0; min-height: 140px; margin: 14px 18px 8px; }
 }
 .log-pane { flex: 0 1 30%; min-height: 110px; }
+.body.panel-right { flex-direction: row; }
+.body.panel-right > .log-pane { flex: 0 1 36%; min-width: 220px; min-height: 0; }
+.panel-pos-btn { margin-left: auto; display: inline-flex; align-items: center; flex: none; }
 /* The preview tab: Scratch's result panel, filling the log pane. */
 .pv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; margin: -6px 0 -4px; }
 .pv-body.sc-result { overflow: hidden; }
@@ -1005,7 +1012,7 @@ mark.cur { background: var(--amber); color: var(--bg); }
   /* The page grows with what it holds, so these panes get a height of
      their own and scroll inside it: a long log or query would otherwise
      push the footer's keys far below. A zoomed pane leaves room for them. */
-  .sql-pane, .log-pane, .source-pane { flex: none !important; height: 60vh; height: 60dvh; min-height: 0; }
+  .sql-pane, .log-pane, .body.panel-right > .log-pane, .source-pane { flex: none !important; height: 60vh; height: 60dvh; min-height: 0; }
   .workspace, .right-col { flex: none; overflow: visible; }
   .body.zoomed > .pane { flex: none; height: calc(100vh - 230px); height: calc(100dvh - 230px); }
   .splitter { display: none; }
@@ -2097,12 +2104,17 @@ body.sc-dragging { user-select: none; cursor: grabbing !important; }
 .checks-page .set-top .run-btn:disabled { opacity: 0.45; cursor: default; }
 .checks-page .set-tabs .tab kbd { margin-right: 4px; }
 .checks-page .set-tabs .tab-key { display: inline-flex; align-items: center; padding: 0 6px 0 8px; border-right: 1px solid var(--rule); color: var(--dim); }
+.checks-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.checks-body.panel-right { flex-direction: row; }
 .checks-main { flex: 1; min-height: 0; overflow: auto; padding: 12px 18px 24px; display: flex; flex-direction: column; gap: 6px; }
-/* The terminal ctrl+` shows under the report: the log pane's shells. */
+.checks-body.panel-right > .checks-main { flex: 1 1 0; min-width: 0; }
+/* The terminal ctrl+` shows under (or beside) the report: the log pane's shells. */
 .checks-term { flex: 0 0 38%; min-height: 140px; margin: 14px 18px 8px; }
+.checks-body.panel-right > .checks-term { flex: 0 1 38%; min-width: 240px; min-height: 0; margin: 14px 18px 8px 0; }
+.checks-body.panel-right > .v-splitter { margin-top: 14px; margin-bottom: 8px; }
 .checks-term-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .checks-page.checks-term-zoomed .checks-main { display: none; }
-.checks-page.checks-term-zoomed .checks-term { flex: 1; min-height: 0; }
+.checks-page.checks-term-zoomed .checks-term { flex: 1; min-height: 0; min-width: 0; }
 .checks-main pre { white-space: pre-wrap; font: inherit; margin: 2px 0 6px; padding-left: 2ch; }
 .checks-main .report p { margin: 4px 0; }
 .table-wrap { overflow-x: auto; max-width: 100%; }

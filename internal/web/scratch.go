@@ -972,6 +972,7 @@ func (p *projectState) setScratch(o *Project) {
 	p.sqlfluffBin, p.sqlfluffConfig = o.SqlfluffBin, o.SqlfluffConfig
 	p.autoHidePane2 = o.AutoHidePane2
 	p.pane2Tab = o.Pane2Tab
+	p.panelPosition = o.PanelPosition
 	p.wrapLines = o.WrapLines
 	p.vimMode = o.VimMode
 	p.vimKeys = o.VimKeys

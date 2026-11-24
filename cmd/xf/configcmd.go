@@ -361,6 +361,8 @@ func defaultSetting(key string, l config.Loaded, root string) (value, from strin
 		return "false", "default: upstream tables are read from dev"
 	case config.KeyPane2Tab:
 		return config.Pane2SQL, "default"
+	case config.KeyPanelPosition:
+		return config.PanelBottom, "default"
 	case config.KeyWrapLines:
 		return "false", "default: long lines scroll sideways"
 	case config.KeyVimMode:
