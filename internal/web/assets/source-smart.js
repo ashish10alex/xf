@@ -70,18 +70,29 @@ const isDbtModel = () => !!(SRC.view && SRC.view.lang === 'sql' && S.boot && S.b
 // JINJA is a dbt model's templates, {{ }}, {% %} and {# #}, one not yet
 // closed running to the end.
 const JINJA = /\{\{[\s\S]*?(?:\}\}|$)|\{%[\s\S]*?(?:%\}|$)|\{#[\s\S]*?(?:#\}|$)/g;
+// jinjaTexts holds, per doc, its text with the Jinja blanked and the
+// Jinja's spans, [from, to, closed], read in one pass; an edit makes a new
+// doc, so an entry is never stale.
 const jinjaTexts = new WeakMap();
+
+function jinjaOf(doc) {
+  let e = jinjaTexts.get(doc);
+  if (e === undefined) {
+    const spans = [];
+    JINJA.lastIndex = 0;
+    const text = doc.toString().replace(JINJA, (m, at) => {
+      spans.push([at, at + m.length, /(?:\}\}|%\}|#\})$/.test(m) && m.length > 2]);
+      return m.replace(/[^\n]/g, ' ');
+    });
+    e = { text, spans };
+    jinjaTexts.set(doc, e);
+  }
+  return e;
+}
 
 // jinjaBlanked is a dbt model's text with its Jinja blanked, as sqlText
 // blanks a .sqlx file's JavaScript.
-function jinjaBlanked(state) {
-  let out = jinjaTexts.get(state.doc);
-  if (out === undefined) {
-    out = state.doc.toString().replace(JINJA, (m) => m.replace(/[^\n]/g, ' '));
-    jinjaTexts.set(state.doc, out);
-  }
-  return out;
-}
+const jinjaBlanked = (state) => jinjaOf(state.doc).text;
 
 // sqlOf is the SQL of a .sqlx file or a dbt model, the rest blanked; null
 // for any other file.
@@ -89,12 +100,11 @@ const sqlOf = (state) => (SRC.view && SRC.view.lang === 'sqlx' ? sqlText(state) 
 
 // inTemplate says pos is in a .sqlx file's JavaScript or a dbt model's
 // Jinja, where no SQL is written.
-function inTemplate(state, pos) {
+export function inTemplate(state, pos) {
   if (!isDbtModel()) return inJavaScript(state, pos);
-  for (const m of state.doc.toString().matchAll(JINJA)) {
-    if (m.index >= pos) break;
-    const closed = /(?:\}\}|%\}|#\})$/.test(m[0]) && m[0].length > 2;
-    if (pos < m.index + m[0].length || (!closed && pos === m.index + m[0].length)) return true;
+  for (const [from, to, closed] of jinjaOf(state.doc).spans) {
+    if (from >= pos) break;
+    if (pos < to || (!closed && pos === to)) return true;
   }
   return false;
 }

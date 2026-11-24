@@ -53,7 +53,12 @@ const defaultProject = () => (SC.cur && SC.cur.project) || (SC.defaults && SC.de
 // blank returns sql with its comments and string literals replaced by
 // spaces, as long as they were, so offsets are the same and a keyword in a
 // string is no keyword. Backticked names stay.
+//
+// A completion query blanks the same text several times, so the last
+// answer is kept: the same string again is not read again.
+let blankIn = null, blankOut = '';
 export function blank(sql) {
+  if (sql === blankIn) return blankOut;
   const out = sql.split('');
   const n = sql.length;
   const wipe = (a, b) => { for (let i = a; i < b && i < n; i++) if (out[i] !== '\n') out[i] = ' '; };
@@ -80,7 +85,9 @@ export function blank(sql) {
       wipe(i, j); i = j;
     } else i++;
   }
-  return out.join('');
+  blankIn = sql;
+  blankOut = out.join('');
+  return blankOut;
 }
 
 export const NOT_ALIAS = new Set('where on join left right inner outer cross full natural lateral group order limit union intersect except using window qualify having tablesample pivot unpivot for set select from partition when then else end and or not in is as'.split(' '));

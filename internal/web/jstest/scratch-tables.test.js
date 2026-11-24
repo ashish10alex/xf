@@ -63,3 +63,13 @@ test('a statement reads the tables it names, with their aliases', () => {
   assert.deepEqual(refs('DELETE ds.t d WHERE a'), [['ds.t', 'd']]);
   assert.deepEqual(refs('MERGE ds.t USING ds.s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = 1'), [['ds.t', ''], ['ds.s', '']]);
 });
+
+test('blanking the same text again gives the same text, after another between', () => {
+  const sql = "SELECT 'from x' -- from y\nFROM t /* join z */";
+  const want = 'SELECT ' + ' '.repeat('\'from x\' -- from y'.length) + '\nFROM t ' + ' '.repeat('/* join z */'.length);
+  assert.equal(blank(sql), want);
+  assert.equal(blank(sql), want);
+  assert.equal(blank("SELECT 'a'"), 'SELECT    ');
+  assert.equal(blank((' ' + sql).slice(1)), want);
+  assert.equal(blank("SELECT 'a'"), 'SELECT    ');
+});
