@@ -85,6 +85,9 @@ homebrew_casks:
       token: "{{ .Env.XF_PACKAGES_TOKEN }}"
     # The Mac builds aren't notarized, so Gatekeeper would refuse the
     # quarantined download on its first run.
+    caveats: |
+      To install xf's agent skills for Claude Code, Codex, Antigravity or
+      Cursor, run: xf skills install
     hooks:
       post:
         install: |
@@ -116,7 +119,8 @@ winget:
     installation_notes: >-
       xf keeps a background engine running per project. Before upgrading,
       run `xf stop`, which stops the engines and lists the xf windows still
-      open; quit xf in them first.
+      open; quit xf in them first. To install xf's agent skills for Claude
+      Code, Codex, Antigravity or Cursor, run `xf skills install`.
     ids: [xf]
     # XF_SKIP_WINGET (the repository variable of that name, in the release
     # workflow) leaves winget out while an earlier version's pull request

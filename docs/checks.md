@@ -682,7 +682,31 @@ To run `xf cost` alone in a job, set it up as [Other CI systems](#other-ci-syste
 
 [`skills/xf-checks`](../skills/xf-checks/SKILL.md) is an [Agent Skill](https://agentskills.io) that teaches a coding agent (Claude Code, Codex and others that read skills) to run `xf cost --json` and `xf impact --json` on a branch and read what they report: what to fix, what is a bound, what wasn't checked.
 [`skills/xf-run`](../skills/xf-run/SKILL.md), its companion, starts every run as a free `xf run --dry-run --json` plan.
-Install both with [`skills`](https://github.com/vercel-labs/skills), which asks which agents to add them to, and whether for every project or this one:
+xf installs both, built into it so they match its flags:
+
+```bash
+xf skills install            # for the agents it finds, after asking at a terminal
+xf skills install --project  # in the repository's folders, to commit for the team
+xf skills                    # what each agent has: up to date, out of date, edited
+xf skills uninstall          # remove the ones xf installed
+```
+
+It finds an agent by its folder (`~/.claude`, `~/.codex`, `~/.gemini/config`, `~/.cursor`); `--agent claude,cursor` picks them instead.
+`xf update` updates the skills with xf, and xf web says when an older xf's are still there (`xf skills update`).
+xf marks the `SKILL.md` files it writes, and replaces or removes only those nobody has edited since (`--force` overrides).
+It leaves skills another tool installed to that tool, and skips Claude Code when it has xf's plugin, which carries the same skills.
+
+Agents look for skills here:
+
+| Agent | Every project | One project |
+|---|---|---|
+| Claude Code | `~/.claude/skills/` | `.claude/skills/` |
+| Codex | `~/.agents/skills/` | `.agents/skills/` |
+| Antigravity | `~/.gemini/config/skills/` | `.agents/skills/` |
+| Cursor | `~/.cursor/skills/` | `.cursor/skills/` |
+| T3 Code | where the agent it runs looks | |
+
+For other agents, [`skills`](https://github.com/vercel-labs/skills) installs them, asking which agents to add them to (`npx skills update` updates them):
 
 ```bash
 npx skills add ashish10alex/xf
@@ -695,22 +719,13 @@ In Claude Code, the repository is also a plugin marketplace:
 /plugin install xf@xf
 ```
 
-Without Node, `curl` fetches both into Claude Code's folder for every project; change `$HOME/.claude/skills` for another agent:
+Without xf or Node, `curl` fetches both into Claude Code's folder for every project; change `$HOME/.claude/skills` for another agent:
 
 ```bash
 curl -fsSL --create-dirs "https://xf.dataformtools.com/skills/{xf-checks,xf-run}/SKILL.md" -o "$HOME/.claude/skills/#1/SKILL.md"
 ```
 
-Agents look for skills here:
-
-| Agent | Every project | One project |
-|---|---|---|
-| Claude Code | `~/.claude/skills/` | `.claude/skills/` |
-| Codex | `~/.agents/skills/` | `.agents/skills/` |
-| Antigravity | `~/.gemini/config/skills/` | `.agents/skills/` |
-| T3 Code | where the agent it runs looks | |
-
 A project's folder is shared with its team through git.
 The skill grills you on each critical change before fixing anything, with the agent's own question tool when it has one (T3 Code shows Claude Code's and Codex's), else as a numbered list in its reply.
 Then ask the agent what your branch costs, or whether it breaks anything downstream.
-Install it again when you update xf (`npx skills update`, or the `curl` command again), so it matches the flags of the `xf` you run.
+Skills from `npx skills` or `curl` need installing again when you update xf, so they match the flags of the `xf` you run; `xf update` updates only those xf installed.

@@ -84,7 +84,8 @@ func runUpdate(args []string) error {
 Updates xf to the latest release, the way it was installed: with brew or
 go install when it came from them (scoop and winget print the command to
 run), otherwise by replacing this executable with the release's, checked
-against the release's checksums.txt.
+against the release's checksums.txt. Then the new xf updates the agent
+skills xf installed (xf skills update).
 `)
 	}
 	if help, err := parseArgs(fs, args); help || err != nil {
@@ -97,11 +98,20 @@ against the release's checksums.txt.
 	if err != nil {
 		return fmt.Errorf("can't find this xf's executable: %w", err)
 	}
+	// The path as run, often a link (Homebrew's on PATH), leads to the
+	// new xf after the update; the file it resolves to may be gone.
+	ran := exe
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
 	bi, _ := debug.ReadBuildInfo()
-	return update(os.Stdout, exe, bi, detectInstall(exe, bi))
+	if err := update(os.Stdout, exe, bi, detectInstall(exe, bi)); err != nil {
+		return err
+	}
+	// The skills xf installed match the old xf's flags: the new one
+	// updates them.
+	refreshSkills(os.Stdout, ran)
+	return nil
 }
 
 // update updates the xf at exe, installed by method, writing what it does
@@ -125,7 +135,7 @@ func update(w io.Writer, exe string, bi *debug.BuildInfo, method installMethod) 
 	}
 	// Scoop and winget can't replace an xf.exe that runs, and this one does.
 	if method == installScoop || method == installWinget {
-		_, _ = fmt.Fprintf(w, "xf was installed with %s, which can't replace xf.exe while this xf runs it. To update, run:\n\n  xf stop\n  %s\n", cmd[0], strings.Join(cmd, " "))
+		_, _ = fmt.Fprintf(w, "xf was installed with %s, which can't replace xf.exe while this xf runs it. To update, run:\n\n  xf stop\n  %s\n  xf skills update\n", cmd[0], strings.Join(cmd, " "))
 		return errQuiet
 	}
 	if _, err := exec.LookPath(cmd[0]); err != nil {

@@ -67,6 +67,7 @@ xf --help
 To update later, run `xf update` (or `xf --update`).
 It updates xf the way it was installed: `brew upgrade --cask` for Homebrew, `go install …@latest` for Go, and otherwise replaces `xf` with the latest release after checking it against the release's checksums.
 A build from source says to pull and rebuild instead.
+Then the new xf updates the [agent skills](#for-coding-agents) xf installed.
 The neovim plugin warns you if the `xf` on your `PATH` is older than the plugin.
 
 To build from source, clone the repo and run `go install ./cmd/xf` (or `just install`, with [`just`](https://github.com/casey/just)).
@@ -155,21 +156,15 @@ Elsewhere (Cloud Build, Jenkins), download the release and run `xf check --outpu
 
 [`skills/xf-checks`](skills/xf-checks/SKILL.md) is an [Agent Skill](https://agentskills.io) that has Claude Code, Codex and other agents that read skills run `xf cost --json` and `xf impact --json` on a branch, read the `severity` of each change, and ask you about each critical one before fixing anything.
 [`skills/xf-run`](skills/xf-run/SKILL.md) starts every run as a free `xf run --dry-run --json` plan, and runs it only once you say yes.
-Install both with [`skills`](https://github.com/vercel-labs/skills), which asks which agents to add them to (Claude Code, Codex, Cursor and others that read Agent Skills):
+xf installs both, the ones that match its flags, for the agents it finds (Claude Code, Codex, Antigravity, Cursor), after asking:
 
 ```bash
-npx skills add ashish10alex/xf
+xf skills install
 ```
 
-In Claude Code, the repository is also a plugin marketplace:
-
-```text
-/plugin marketplace add ashish10alex/xf
-/plugin install xf@xf
-```
-
-Without Node, `curl` fetches both for Claude Code; [Agent skill for cost and impact](docs/checks.md#agent-skill-for-cost-and-impact) has the command and where other agents look.
-Install them again when you update xf, so they match its flags.
+`xf update` updates them with xf; `xf skills` shows what each agent has.
+For other agents, [`npx skills add ashish10alex/xf`](https://github.com/vercel-labs/skills) installs them, and in Claude Code the repository is also a plugin marketplace (`/plugin marketplace add ashish10alex/xf`, then `/plugin install xf@xf`).
+[Agent skill for cost and impact](docs/checks.md#agent-skill-for-cost-and-impact) has the details.
 
 ## xf web
 

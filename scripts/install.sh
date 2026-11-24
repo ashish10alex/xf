@@ -56,3 +56,6 @@ case ":$PATH:" in
 *":$dir:"*) ;;
 *) echo "add $dir to your PATH to run xf" ;;
 esac
+# Never a question here: an agent runs this script too, with no one to
+# answer it.
+echo "to install xf's agent skills for Claude Code, Codex, Antigravity or Cursor, run: xf skills install"

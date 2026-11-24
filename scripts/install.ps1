@@ -97,6 +97,7 @@ A company proxy or firewall (such as Zscaler) is probably scanning or blocking t
         Write-Output "added $dir to your PATH; open a new terminal to run xf"
     }
     Write-Output "installed $exe"
+    Write-Output "to install xf's agent skills for Claude Code, Codex, Antigravity or Cursor, run: xf skills install"
 }
 
 try {

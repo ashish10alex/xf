@@ -75,6 +75,8 @@ func main() {
 			run = func() error { return runSearch(args[1:]) }
 		case "update", "-update", "--update":
 			run = func() error { return runUpdate(args[1:]) }
+		case "skills":
+			run = func() error { return runSkills(args[1:]) }
 		case "impact":
 			os.Exit(runImpact(args[1:]))
 		case "cost":

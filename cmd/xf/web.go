@@ -313,6 +313,9 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 	if _, ok := b.(*dbt.Backend); ok {
 		deps.ColumnImpact = client.ColumnImpact
 	}
+	if note := skillsNotice(); note != "" {
+		deps.Notice = strings.TrimPrefix(deps.Notice+"; "+note, "; ")
+	}
 	// The page can change the editor o opens files with, since the one
 	// in $EDITOR is often a terminal editor it can't run.
 	ed := newWebEditor(root, settings)
