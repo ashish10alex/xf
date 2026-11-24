@@ -156,6 +156,7 @@ window.addEventListener('keydown', (e) => {
   if (!(e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && letter(e) === 'q')) return;
   e.preventDefault();
   e.stopPropagation();
+  if (e.repeat) return;
   exitKey();
 }, true);
 

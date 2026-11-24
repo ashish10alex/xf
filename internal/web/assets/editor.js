@@ -256,13 +256,13 @@ const exDefined = new Set();
 // none.
 function defineEx(name, short) {
   if (exDefined.has(name)) return;
-  exDefined.add(name);
   cm.Vim.defineEx(name, short, (adapter, params) => {
     const o = ownerOf(adapter);
     const f = o && o.ex && o.ex[name];
     if (f) f(params);
     else if (o && o.say) o.say('not an editor command here: ' + name);
   });
+  exDefined.add(name);
 }
 
 // ---- format ----

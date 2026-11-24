@@ -6,7 +6,10 @@
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as cm from '../assets/vendor/codemirror.mjs';
 import { S, hooks, openScratchPalette, paletteList } from '../assets/state.js';
+import { scratchExShort } from '../assets/scratch-editor.js';
+import { exitKey } from '../assets/exit.js';
 import {
   SC, activeTab, resetTabs, setEditor, openScratchView, selectScratch,
   newDraft, switchTab, nextScratchTab, switchTabIndex, closeTab, closeOtherTabs,
@@ -424,4 +427,35 @@ test('workspace restore remains backward-compatible with legacy single-tab state
   assert.equal(SC.cur.id, 'scratch_a');
   assert.equal(SC.listOpen, true);
   assert.deepEqual(SC.filters, { 0: 'hi' });
+});
+
+test('every scratch editor ex command short name registers with Vim.defineEx', () => {
+  assert.ok(Object.keys(scratchExShort).length > 0);
+  for (const [name, short] of Object.entries(scratchExShort)) {
+    assert.doesNotThrow(() => cm.Vim.defineEx(name, short, () => {}), `defineEx(${name}, ${short})`);
+  }
+});
+
+test('ctrl+q from multi-tab Scratch returns to the project without closing it', async () => {
+  let closed = 0;
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).includes('/api/close')) closed++;
+    return prevFetch(url, opts);
+  };
+  try {
+    S.mode = 'project';
+    S.overlay = null;
+    await openScratchView('scratch_a');
+    await newDraft();
+    assert.equal(SC.tabs.length, 2);
+    assert.equal(SC.open, true);
+    assert.equal(exitKey(), true);
+    await tick();
+    await tick();
+    assert.equal(SC.open, false);
+    assert.equal(closed, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });

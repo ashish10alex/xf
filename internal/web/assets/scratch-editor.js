@@ -20,6 +20,13 @@ function scopeOf(view) {
   return view.state.doc.toString();
 }
 
+// scratchExShort maps each scratch-editor ex command to its Vim short prefix
+// (each value must be a prefix of its key, or cm.Vim.defineEx throws).
+export const scratchExShort = {
+  run: 'ru', refresh: 'ref', format: 'fo', fmt: 'fmt',
+  bnext: 'bn', bprevious: 'bp', bdelete: 'bd', tabnew: 'tabnew', tabedit: 'tabe',
+};
+
 export function mountEditor(parent, onFocus) {
   const run = () => { runScratch(); return true; };
 
@@ -36,9 +43,10 @@ export function mountEditor(parent, onFocus) {
     // scratch's own autosave.
     ex: {
       run: () => runScratch(), refresh: () => refreshMeta(), format: () => format(), fmt: () => format(),
-      bnext: () => nextScratchTab(1), bprevious: () => nextScratchTab(-1), bdelete: () => closeTab(), tabnew: () => newDraft(),
+      bnext: () => nextScratchTab(1), bprevious: () => nextScratchTab(-1), bdelete: () => closeTab(),
+      tabnew: () => newDraft(), tabedit: () => newDraft(),
     },
-    exShort: { run: 'ru', refresh: 'ref', format: 'fo', fmt: 'fmt', bnext: 'bn', bprevious: 'bp', bdelete: 'bd', tabnew: 'tabe' },
+    exShort: scratchExShort,
     buffer: (dir) => nextScratchTab(dir),
     bufferDelete: () => closeTab(),
     format: () => format(),
