@@ -641,12 +641,12 @@ async function source(context) {
   if (!tok && !fromList && !context.explicit) return null;
   if (fromList) {
     // Tables match by any part of their name, not the editor's prefix, so
-    // the list is filtered here and asked for again at each key.
+    // the list is filtered here, then on the page at each key while the
+    // last part of the name grows; a . or ` starts a new part, and -- a
+    // comment, so CodeMirror asks again.
     const r = await tableOptions(tok, tokStart, clean);
-    const typed = unquote(sql.slice(r.from, pos));
-    const options = byParts(r.options, typed);
-    if (!options.length) return null;
-    return { from: r.from, options, filter: false, getMatch: (o) => o.ranges };
+    const namePart = (text) => /^[\w-]*$/.test(text) && !text.includes('--');
+    return partsResult(r.options, r.from, unquote, namePart, sql.slice(r.from, pos));
   }
   // After a table in FROM, PIVOT and UNPIVOT, while what is typed begins one.
   if (!tok.includes('.') && !tok.startsWith('`') && afterTable(clean, tokStart)) {

@@ -61,3 +61,32 @@ test('update gives null once stillValid goes false, as after a compile', () => {
 test('partsResult is null when nothing matches', () => {
   assert.equal(partsResult(all, from, strip, dollarWord, '$zzz'), null);
 });
+
+// A scratch table name is filtered on the page in the same way while only
+// [\w-] is typed into the last part of the name, and asked for again at a
+// . or ` (a new part), -- (a comment) or a space.
+const namePart = (t) => /^[\w-]*$/.test(t) && !t.includes('--');
+const unquote = (t) => t.replace(/`/g, '');
+
+test('a table name part keeps the result for a longer prefix, hyphens too', () => {
+  const tables = ['events', 'my-events', 'stg_events', 'report'].map((label) => ({ label, detail: 'table', type: 'class', boost: 1 }));
+  const r = partsResult(tables, from, unquote, namePart, '');
+  assert.deepEqual(r.options, byParts(tables, ''));
+  for (const typed of ['e', 'ev', 'my-', 'my-ev', 'my-events', 'stg_e']) {
+    const doc = head + typed;
+    const u = r.update(r, from, doc.length, ctx(doc));
+    assert.ok(u, typed);
+    assert.deepEqual(u.options, byParts(tables, unquote(typed)), typed);
+    assert.equal(u.from, from);
+    assert.equal(u.update, r.update);
+  }
+});
+
+test('a table name part gives null at . ` -- or a space', () => {
+  const tables = ['events'].map((label) => ({ label, detail: 'table', type: 'class', boost: 1 }));
+  const r = partsResult(tables, from, unquote, namePart, 'e');
+  for (const typed of ['ev.', 'ev`', 'ev--', 'ev ', '--']) {
+    const doc = head + typed;
+    assert.equal(r.update(r, from, doc.length, ctx(doc)), null, JSON.stringify(typed));
+  }
+});
