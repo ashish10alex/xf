@@ -106,15 +106,16 @@ function blameShown(view, v, force = true) {
   }
   const ask = (m) => {
     view.dispatch({ effects: m.setBlameInline.of(blameOn) });
-    // A request sent says 'loading' at once; record the HEAD it is for.
+    // 'loading' means a request went out; record the HEAD it is for. A
+    // later error forgets it, so the next recheck asks again. A cached
+    // answer is 'ok' and is not a request.
     const head = hooks.gitHead ? hooks.gitHead() : null;
-    let asking = true, sent = false;
+    const before = blamedHead;
     m.refreshBlame(view, file, base, true, (info) => {
-      if (asking && info && info.state === 'loading') sent = true;
+      if (info && info.state === 'loading' && head != null) blamedHead = head;
+      else if (info && info.state === 'error') blamedHead = before;
       notifyBlame(info);
     }, { force });
-    asking = false;
-    if (sent && head != null) blamedHead = head;
   };
   if (blameMod) { ask(blameMod); return; }
   notifyBlame({ file, state: 'loading', summary: null });
