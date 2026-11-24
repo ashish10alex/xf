@@ -2,7 +2,9 @@
 // dry run of the SQL being edited, and the query job with its pages of
 // rows. The view itself is scratch-view.js; the editor is scratch-editor.js.
 
-import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects, openWarehousePicker, openProfilePicker, openScratchWarehouse, askQuit, projectURL, scratchPopoutURL } from './state.js';
+import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects, openWarehousePicker, openProfilePicker, openScratchWarehouse, askQuit, projectURL, scratchPopoutURL, popoutFeatures } from './state.js';
+
+export { popoutFeatures };
 import { openThemePicker, themeLabel } from './theme.js';
 import { part } from './workspace.js';
 import { vimOn } from './vim-mode.js';
@@ -585,50 +587,6 @@ function takeHandoff(token) {
   } catch {
     return null;
   }
-}
-
-// popoutFeatures builds the window.open feature string for a popped-out Scratch
-// window: placed at dropPos when dragged outside the current window (preserving
-// multi-monitor coordinates), or side-by-side beside the current window otherwise.
-export function popoutFeatures(dropPos, env = {}) {
-  const scr = env.screen || (typeof screen !== 'undefined' ? screen : {});
-  const win = env.window || (typeof window !== 'undefined' ? window : {});
-  const availLeft = Number.isFinite(scr.availLeft) ? scr.availLeft : 0;
-  const availTop = Number.isFinite(scr.availTop) ? scr.availTop : 0;
-  const availW = scr.availWidth || 1440;
-  const availH = scr.availHeight || 900;
-  const winX = Number.isFinite(win.screenX) ? win.screenX : availLeft;
-  const winY = Number.isFinite(win.screenY) ? win.screenY : availTop;
-  const winW = win.outerWidth || availW;
-  const winH = win.outerHeight || Math.round(availH * 0.85);
-  const width = Math.min(Math.max(Math.round(availW * 0.48), 640), Math.min(availW, 1100));
-  const height = Math.min(Math.max(winH, 560), availH);
-
-  let left, top;
-  const outside = dropPos && Number.isFinite(dropPos.screenX) && Number.isFinite(dropPos.screenY) && (
-    dropPos.screenX < winX || dropPos.screenX > winX + winW ||
-    dropPos.screenY < winY || dropPos.screenY > winY + winH
-  );
-  if (outside) {
-    left = Math.round(dropPos.screenX - width / 2);
-    top = Math.round(dropPos.screenY - 24);
-    const onThisScreen = dropPos.screenX >= availLeft && dropPos.screenX <= availLeft + availW &&
-      dropPos.screenY >= availTop && dropPos.screenY <= availTop + availH;
-    if (onThisScreen) {
-      left = Math.min(Math.max(left, availLeft), availLeft + Math.max(availW - width, 0));
-      top = Math.min(Math.max(top, availTop), availTop + Math.max(availH - height, 0));
-    }
-  } else {
-    top = Math.min(Math.max(winY, availTop), availTop + Math.max(availH - height, 0));
-    if (winX + winW + 420 <= availLeft + availW) {
-      left = winX + winW + 8;
-    } else if (winX - availLeft >= 420) {
-      left = availLeft;
-    } else {
-      left = availLeft + Math.max(availW - width, 0);
-    }
-  }
-  return `popup,width=${width},height=${height},left=${left},top=${top}`;
 }
 
 function hydrateTab(st) {

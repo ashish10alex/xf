@@ -2103,6 +2103,9 @@ body.sc-dragging { user-select: none; cursor: grabbing !important; }
    The tables and the words take its width, and a table too wide for a
    phone scrolls sideways in its own box. */
 .checks-page { overflow: hidden; padding: 0; }
+.checks-page .set-top.can-drag { cursor: grab; }
+.checks-page .set-top.can-drag button { cursor: pointer; }
+.checks-page .set-tabs .tab.dragging { opacity: 0.45; }
 .checks-page .set-top h1 .gcp { color: var(--blue); margin-left: 4px; font-weight: 600; }
 .checks-page .set-top .run-btn:disabled { opacity: 0.45; cursor: default; }
 .checks-page .set-tabs .tab kbd { margin-right: 4px; }

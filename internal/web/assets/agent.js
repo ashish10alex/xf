@@ -8,7 +8,7 @@
 // discards, closing the project, quitting xf web) unless its opts say
 // allowDangerous: the user's yes is the agent's to get first.
 
-import { S, hooks, redraw, handleKey, keyName, selectAction, setFocus, openPalette, openScratchPalette, setPaletteQuery, paletteList, paletteSettled, pickFromPalette, leaveOverlay, paletteCommands, afterRedraw, toggles, running, rightShown, panelRight } from './state.js';
+import { S, hooks, redraw, handleKey, keyName, selectAction, setFocus, openPalette, openScratchPalette, openChecksPalette, setPaletteQuery, paletteList, paletteSettled, pickFromPalette, leaveOverlay, paletteCommands, checksCommands, afterRedraw, toggles, running, rightShown, panelRight } from './state.js';
 import { diagLines, describe, note } from './diag.js';
 import { SET } from './settings.js';
 import { SC } from './scratch.js';
@@ -49,7 +49,7 @@ export function snapshot() {
     flash: S.flash, compile: st ? { errors: st.errors || 0, warnings: st.warnings || 0, dryRunErrors: st.dryRunErrors || 0 } : null,
     palette: S.overlay === 'palette' ? { query: S.palette.query, cursor: S.palette.cursor, items: paletteList().slice(0, 20).map(label) } : null,
     menu: menuItems(),
-    checks: S.checks, inspector: !!S.inspector,
+    checks: S.checks, checksPopout: !!S.checksPopout, inspector: !!S.inspector,
     settings: SET.open ? { view: SET.view, tab: SET.tab, query: SET.query, closing: SET.closing } : null,
     scratch: SC.open ? {
       focus: SC.focus, cur: SC.cur && SC.cur.id,
@@ -90,7 +90,7 @@ const risky = [
   [/remove (this )?worktree|^Remove Worktree/i, 'removes a worktree'],
   [/discard|delete|trash|^Buffers: remove|^Revert Change|undo the last replace/i, 'loses changes or files'],
   [/^Git: (commit|amend|push|pull|sync|stash|abort|continue|create)/, 'changes the repository or its remote'],
-  [/^Close (project|scratch|Project)/, 'closes the project'],
+  [/^Close (project|scratch|checks window|Project)/, 'closes the project'],
   [/^Terminal: close/, 'stops a shell and what runs in it'],
 ];
 export const danger = (title) => (risky.find(([re]) => re.test(title)) || [, ''])[1];
@@ -127,9 +127,10 @@ function keyDanger(k, e) {
 // ---- doing ----
 
 function legalCommands() {
-  if (S.mode !== 'project' || SET.open || S.checks || S.inspector || THEME.pick) return [];
+  if (S.mode !== 'project' || SET.open || S.inspector || THEME.pick) return [];
   if (S.overlay && S.overlay !== 'palette') return [];
   if (SC.open) return hooks.scratchCommands ? hooks.scratchCommands() : [];
+  if (S.checks) return checksCommands();
   return paletteCommands();
 }
 
@@ -194,7 +195,9 @@ const ops = {
     if (p.i === undefined) return p;
     // As a pick in the palette: its use is counted, and the keys go back
     // as they do after one.
-    if (SC.open) openScratchPalette(); else openPalette('>');
+    if (SC.open) openScratchPalette();
+    else if (S.checks) openChecksPalette();
+    else openPalette('>');
     const i = paletteList().findIndex((c) => c.title === p.picked);
     pickFromPalette(i);
     redraw();
@@ -202,9 +205,11 @@ const ops = {
   },
   async palette(args = {}, opts) {
     const { query, pick: at } = typeof args === 'string' ? { query: args } : args;
-    if (S.mode !== 'project' || SET.open || S.checks || S.inspector) return { reason: 'no palette here: ' + (layer() || S.mode) };
+    if (S.mode !== 'project' || SET.open || S.inspector) return { reason: 'no palette here: ' + (layer() || S.mode) };
     if (S.overlay !== 'palette') {
-      if (SC.open) { openScratchPalette(); if (query !== undefined) setPaletteQuery(query); } else openPalette(query || '');
+      if (SC.open) { openScratchPalette(); if (query !== undefined) setPaletteQuery(query); }
+      else if (S.checks) { openChecksPalette(); if (query !== undefined) setPaletteQuery(query); }
+      else openPalette(query || '');
       if (S.overlay !== 'palette') { redraw(); return { reason: S.flash || 'the palette did not open' }; }
     } else if (query !== undefined) setPaletteQuery(query);
     await paletteSettled();
@@ -240,7 +245,7 @@ const ops = {
     const was = layer();
     if (was === 'menu') closeMenu();
     else if (S.overlay) { leaveOverlay(); redraw(); }
-    else if (!was || (SC.open && (SC.standalone || SC.popout))) return { reason: was ? (SC.popout ? 'closing the popped-out Scratch closes its window' : 'closing the standalone Scratch closes it all') : 'nothing to close' };
+    else if (!was || (SC.open && (SC.standalone || SC.popout)) || (S.checks && S.checksPopout)) return { reason: was ? (S.checksPopout ? 'closing the popped-out Checks closes its window' : SC.popout ? 'closing the popped-out Scratch closes its window' : 'closing the standalone Scratch closes it all') : 'nothing to close' };
     else exitKey();
     return { closed: was };
   },

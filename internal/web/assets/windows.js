@@ -16,6 +16,7 @@
 // when the list opens, and every 15 seconds while it is in view.
 
 import { S, redraw, keyName, hooks } from './state.js';
+import { importDockedChecks } from './checks.js';
 import { SET } from './settings.js';
 import { SC, scratchSay } from './scratch.js';
 
@@ -41,7 +42,7 @@ const announce = (t) => send({ t, since: me.since, project, label });
 
 // heard is the windows that answered since this one last asked, while
 // it waits for them.
-let heard = null, askTimer = 0, dockWait = null;
+let heard = null, askTimer = 0, dockWait = null, checksDockWait = null;
 
 if (ch) {
   ch.onmessage = ({ data: m }) => {
@@ -84,6 +85,20 @@ if (ch) {
           fn(!!m.ok);
         }
         return;
+      case 'checks-dock':
+        if (m.to === me.id && alive) {
+          importDockedChecks(m.token);
+          comeForward(m.id);
+          send({ t: 'checks-docked', to: m.id, ok: true });
+        }
+        return;
+      case 'checks-docked':
+        if (m.to === me.id && checksDockWait) {
+          const fn = checksDockWait;
+          checksDockWait = null;
+          fn(!!m.ok);
+        }
+        return;
     }
   };
   window.addEventListener('pagehide', () => { if (alive) send({ t: 'bye' }); });
@@ -121,6 +136,7 @@ function labelNow() {
   const and = (what) => (what ? name + ' · ' + what : name);
   if (SET.open) return and('settings');
   if (SC.open) return and('scratch' + (SC.cur && SC.cur.from ? ' · ' + SC.cur.from : ''));
+  if (S.checks) return and(S.checks === 'impact' ? 'column impact' : 'query cost');
   const v = S.view;
   if (v) return and(v.schema ? v.schema + '.' + v.name : v.name || v.file || '');
   return and(S.plainFile);
@@ -294,7 +310,7 @@ export function dockToPeer(projectKey, token) {
   if (!ch) return Promise.resolve(false);
   const peers = windows().filter((w) => !w.self && w.project === projectKey);
   if (!peers.length) return Promise.resolve(false);
-  const target = peers.find((w) => !/ · scratch\b/.test(w.label)) || peers[0];
+  const target = peers.find((w) => !/ · (scratch|column impact|query cost)\b/.test(w.label)) || peers[0];
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       if (dockWait) { dockWait = null; resolve(false); }
@@ -304,8 +320,25 @@ export function dockToPeer(projectKey, token) {
   });
 }
 
+// dockChecksToPeer sends a popped-out Checks window's handoff token to another
+// open window on the same project and resolves true when that window accepts it.
+export function dockChecksToPeer(projectKey, token) {
+  if (!ch) return Promise.resolve(false);
+  const peers = windows().filter((w) => !w.self && w.project === projectKey);
+  if (!peers.length) return Promise.resolve(false);
+  const target = peers.find((w) => !/ · (scratch|column impact|query cost)\b/.test(w.label)) || peers[0];
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (checksDockWait) { checksDockWait = null; resolve(false); }
+    }, 800);
+    checksDockWait = (ok) => { clearTimeout(timer); resolve(ok); };
+    send({ t: 'checks-dock', to: target.id, token });
+  });
+}
+
 // The palette's command finds the list from anywhere.
 hooks.otherWindows = others;
 hooks.windowsOn = windowsOn;
 hooks.openWindows = () => openWindows(document.querySelector('.win-pill'));
 hooks.dockScratchToPeer = dockToPeer;
+hooks.dockChecksToPeer = dockChecksToPeer;

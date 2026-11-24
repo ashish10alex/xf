@@ -4,7 +4,9 @@
 import { openBase } from './branches.js';
 import { showErrorsTab } from './errors-tab.js';
 import { joinOptions } from './prod-options.js';
-import { S, compile, copy, get, hasErrors, hooks, launch, post, redraw, refreshView, running, say, termFocused, toggles } from './state.js';
+import { S, checksPopoutURL, compile, copy, get, hasErrors, hooks, launch, popoutFeatures, post, projectURL, redraw, refreshView, running, say, termFocused, toggles } from './state.js';
+
+export { popoutFeatures };
 
 // R: the Changed Actions.
 export async function openChanged() {
@@ -195,6 +197,9 @@ export async function openCheck(which, refresh) {
   S.overlay = null;
   if (S.checks !== which) S.checksTermZoomed = false;
   S.checks = which;
+  if (S.checksPopout && S.key && typeof history !== 'undefined' && history.replaceState) {
+    history.replaceState(null, '', checksPopoutURL(S.key, which));
+  }
   const prodOnly = which === 'cost' ? !!S.costProdOnly : false;
   const o = S[which] && S[which].api === S.flags.api && S[which].base === S.boot.defaultBranch && !!S[which].prodOnly === prodOnly ? S[which] : { report: null };
   const stale = !!o.report && checkStale(o);
@@ -346,7 +351,7 @@ export function checkKey(which, k) {
       S.costProdOnly = !S.costProdOnly;
       openCheck('cost');
       return;
-    case 'e': if (hasErrors()) { closeChecks(); showErrorsTab(); } return;
+    case 'e': if (!S.checksPopout && hasErrors()) { closeChecks(); showErrorsTab(); } return;
     case 'b': openBase(); return;
     case 'j': case 'down': scrollOverlay(40); return;
     case 'k': case 'up': scrollOverlay(-40); return;
@@ -362,6 +367,198 @@ export function checkKey(which, k) {
 export function scrollOverlay(px) {
   const el = document.querySelector('.overlay .scroll') || document.querySelector('.checks-page .checks-main');
   if (el) el.scrollTop += px;
+}
+
+// ---- popping out Checks into its own window ----
+
+const checksHandoffPrefix = 'xf-web-checks-handoff:';
+const checksHandoffTTL = 60 * 1000;
+
+function pruneChecksHandoffs() {
+  try {
+    const cutoff = Date.now() - checksHandoffTTL;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(checksHandoffPrefix)) continue;
+      let stale = true;
+      try { const v = JSON.parse(localStorage.getItem(k) || 'null'); stale = !v || (v.at || 0) < cutoff; } catch { stale = true; }
+      if (stale) localStorage.removeItem(k);
+    }
+  } catch { /* no storage */ }
+}
+
+function writeChecksHandoff(payload, fallbackPayload) {
+  pruneChecksHandoffs();
+  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try {
+    localStorage.setItem(checksHandoffPrefix + token, JSON.stringify(payload));
+    return token;
+  } catch {
+    if (fallbackPayload) {
+      try { localStorage.setItem(checksHandoffPrefix + token, JSON.stringify(fallbackPayload)); return token; } catch { /* ignore */ }
+    }
+    return '';
+  }
+}
+
+function takeChecksHandoff(token) {
+  if (!token) return null;
+  try {
+    const raw = localStorage.getItem(checksHandoffPrefix + token);
+    localStorage.removeItem(checksHandoffPrefix + token);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function snapshotCheckState(o, light) {
+  if (!o) return null;
+  return {
+    report: light || o.loading || o.err ? null : (o.report || null),
+    api: !!o.api,
+    base: o.base || '',
+    prodOnly: !!o.prodOnly,
+    offset: o.offset || 0,
+  };
+}
+
+function snapshotChecksForHandoff(which, light) {
+  return {
+    at: Date.now(),
+    project: S.key,
+    which,
+    api: !!S.flags.api,
+    costProdOnly: !!S.costProdOnly,
+    checksTerm: !!S.checksTerm,
+    impact: snapshotCheckState(S.impact, light),
+    cost: snapshotCheckState(S.cost, light),
+  };
+}
+
+function applyChecksHandoff(data) {
+  if (!data) return;
+  if (typeof data.api === 'boolean' && S.caps.api) S.flags.api = data.api;
+  if (typeof data.costProdOnly === 'boolean') S.costProdOnly = data.costProdOnly;
+  if (typeof data.checksTerm === 'boolean' && S.caps.terminal) S.checksTerm = data.checksTerm;
+  for (const w of ['impact', 'cost']) {
+    const snap = data[w];
+    if (snap && snap.report) {
+      S[w] = {
+        report: snap.report,
+        loading: false,
+        err: null,
+        progress: '',
+        token: String(++checkToken),
+        api: !!snap.api,
+        base: snap.base || (S.boot && S.boot.defaultBranch) || '',
+        prodOnly: !!snap.prodOnly,
+        offset: snap.offset || 0,
+      };
+    }
+  }
+}
+
+// popoutChecks moves the Checks page (or opens a tab fresh via opts.fresh) into
+// a separate side-by-side browser window. Called synchronously from a
+// click/pointerup/command so window.open keeps browser user activation.
+export function popoutChecks(opts = {}) {
+  const which = opts.which || S.checks || (S.caps.cost ? 'cost' : 'impact');
+  if (!S.key) return false;
+  if (which === 'impact' && !S.caps.impact) { say('column impact is not available'); redraw(); return false; }
+  if (which === 'cost' && !S.caps.cost) { say('query cost is not available'); redraw(); return false; }
+  if (opts.fresh) {
+    const win = window.open(checksPopoutURL(S.key, which), '_blank', popoutFeatures(opts.dropPos));
+    if (!win) { say('the browser blocked the new window: allow pop-ups for xf web'); redraw(); return false; }
+    try { win.opener = null; } catch { /* cross-context */ }
+    return true;
+  }
+  if (S.checksPopout) return false;
+  const token = writeChecksHandoff(snapshotChecksForHandoff(which, false), snapshotChecksForHandoff(which, true));
+  const win = window.open(checksPopoutURL(S.key, which, token), '_blank', popoutFeatures(opts.dropPos));
+  if (!win) {
+    if (token) takeChecksHandoff(token);
+    say('the browser blocked the new window: allow pop-ups for xf web');
+    redraw();
+    return false;
+  }
+  try { win.opener = null; } catch { /* cross-context */ }
+  closeChecks();
+  redraw();
+  return true;
+}
+
+// openChecksPopout boots a popped-out Checks window from a one-time handoff
+// token or opens the requested check tab directly on reload / fresh open.
+export async function openChecksPopout(which, handoffToken) {
+  const data = handoffToken ? takeChecksHandoff(handoffToken) : null;
+  const want = (data && (data.which === 'impact' || data.which === 'cost') ? data.which : which) || 'cost';
+  const tab = S.caps[want] ? want : checksTabs()[0];
+  if (!tab) {
+    S.checksPopout = false;
+    if (S.key && typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', projectURL(S.key));
+    return;
+  }
+  S.checksPopout = true;
+  if (data) applyChecksHandoff(data);
+  await openCheck(tab, false);
+}
+
+// importDockedChecks receives Checks state sent back from a popped-out Checks
+// window over BroadcastChannel and opens the Checks page in this window.
+export async function importDockedChecks(handoffToken) {
+  const data = takeChecksHandoff(handoffToken);
+  if (!data) return;
+  applyChecksHandoff(data);
+  const want = data.which === 'impact' || data.which === 'cost' ? data.which : checksTabs()[0];
+  if (want && S.caps[want]) await openCheck(want, false);
+}
+
+// dockChecks moves a popped-out Checks window back into an open project window
+// and closes the pop-out, or switches this window back to the project view if
+// no other window has the project open.
+export async function dockChecks() {
+  if (!S.checksPopout) return;
+  const which = S.checks || checksTabs()[0] || 'cost';
+  if (hooks.dockChecksToPeer && S.key) {
+    const token = writeChecksHandoff(snapshotChecksForHandoff(which, false), snapshotChecksForHandoff(which, true));
+    if (token) {
+      const ok = await hooks.dockChecksToPeer(S.key, token);
+      if (ok) {
+        if (termFocused()) document.activeElement.blur();
+        if (typeof window !== 'undefined' && window.close) window.close();
+        if (typeof window === 'undefined' || !window.closed) {
+          S.checksPopout = false;
+          if (S.key && typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', projectURL(S.key));
+          closeChecks();
+          redraw();
+        }
+        return;
+      }
+      takeChecksHandoff(token); // clean up unclaimed handoff
+    }
+  }
+  S.checksPopout = false;
+  if (S.key && typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', projectURL(S.key));
+  closeChecks();
+  redraw();
+}
+
+// closeChecksPopout closes a popped-out Checks window without closing the
+// project in other windows.
+export function closeChecksPopout() {
+  if (!S.checksPopout) { closeChecks(); redraw(); return true; }
+  if (termFocused()) document.activeElement.blur();
+  if (typeof window !== 'undefined' && window.close) window.close();
+  // If the browser refused window.close() (e.g. opened as a normal tab), fall
+  // back to showing the project here so ctrl+q never leaves the page stuck.
+  if (typeof window === 'undefined' || !window.closed) {
+    S.checksPopout = false;
+    if (S.key && typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', projectURL(S.key));
+    closeChecks();
+    redraw();
+  }
+  return true;
 }
 
 // The prodCompilerOptions prompt.

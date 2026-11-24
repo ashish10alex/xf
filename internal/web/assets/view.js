@@ -49,7 +49,7 @@ function plainSourceHelp() {
 import { SettingsPage, GearButton } from './settings-view.js';
 import { SET } from './settings.js';
 import { ThemeButton, ThemePicker } from './theme-view.js';
-import { WindowsPill, WindowsList } from './windows-view.js';
+import { WindowsPill, WindowsList, startTearDrag, wasDragged } from './windows-view.js';
 import { windowOf, windowsOn } from './windows.js';
 import { T } from './theme.js';
 
@@ -1160,7 +1160,7 @@ function Palette() {
   const files = st.fileQuery() !== null;
   const pf = files ? st.paletteFilesState() : null;
   const subject = S.view ? ' · ' + (symbols ? (S.view.file || (S.view.schema + '.' + S.view.name)) : (S.view.schema + '.' + S.view.name)) : '';
-  const title = p.scratch ? 'scratch commands' : projects ? 'open projects' : symbols ? 'symbols' + subject : commands ? 'commands' + subject : files ? 'find file' : 'find action';
+  const title = p.scratch ? 'scratch commands' : p.checks ? 'checks commands' : projects ? 'open projects' : symbols ? 'symbols' + subject : commands ? 'commands' + subject : files ? 'find file' : 'find action';
   const kinds = symbols ? st.symbolKinds() : [];
   const total = projects ? S.open.length : symbols ? (p.symbols ? p.symbols.length : 0) : commands ? p.commands.length : files ? (pf.files || []).length : p.total;
   const count = projects ? list.length : symbols ? list.length : commands ? list.length : files ? st.matchedFiles().length : p.found;
@@ -1244,7 +1244,7 @@ function Palette() {
               onHover=${() => { if (p.cursor !== i) { p.cursor = i; redraw(); } }}
               onPick=${() => { st.pickFromPalette(i); redraw(); }} />`))}
     </div>
-    <div class="overlay-keys"><${Keys} list=${p.scratch
+    <div class="overlay-keys"><${Keys} list=${p.scratch || p.checks
       ? [['enter', 'run'], ['↑/↓', 'move'], ['esc', 'cancel']]
       : projects
       ? [['enter', S.openIn === 'new-tab' ? 'open in a new tab' : 'open here'], ['shift+enter', S.openIn === 'new-tab' ? 'open here' : 'open in a new tab'], ['↑/↓', 'move'], ['esc', 'cancel']]
@@ -1293,8 +1293,8 @@ function helpSections() {
   if (c.run) right.push(['T run tags', [['space', 'check/uncheck tag'], ['enter', 'run checked tags'], ['esc', 'd D f a options (again: close)']]]);
   if (c.branches) right.push(['B switch branch', [['enter', 'switch (git switch), or make the branch typed (git switch -c)'], ['shift+enter', 'open the branch beside this one, in a git worktree (a new one asks its name, xf_ first)'], ['ctrl+r', 'fetch origin'], ['esc', 'close']]]);
   if (c.branches && c.changed) right.push(['b compare with (from R, I, C)', [['enter', 'compare with, saved for the project'], ['ctrl+r', 'fetch origin'], ['esc', 'back']]]);
-  if (c.impact || c.cost) right.push([[c.impact && 'I', c.cost && 'C'].filter(Boolean).join('/') + ' checks page', [['y', 'copy report as Markdown'], ['c', 'check again'],
-    ...(c.impact && c.cost ? [['tab', 'Impact/Cost'], ['I/C', 'that tab']] : []), ...(c.api ? [['a', 'working tree/pushed branch']] : []), ...(c.branches ? [['b', 'compare with another branch']] : []), ['j/k', 'scroll'], ['esc', 'back (asks: y goes)']]]);
+  if (c.impact || c.cost) right.push([[c.impact && 'I', c.cost && 'C'].filter(Boolean).join('/') + ' checks page', [[st.commandsKey, 'commands (pop out, dock, recheck, copy, terminal…)'], ['y', 'copy report as Markdown'], ['c', 'check again'],
+    ...(c.impact && c.cost ? [['tab', 'Impact/Cost'], ['I/C', 'that tab']] : []), ...(c.api ? [['a', 'working tree/pushed branch']] : []), ...(c.branches ? [['b', 'compare with another branch']] : []), ['j/k', 'scroll'], ['ctrl+q', 'back (or close pop-out window)']]]);
   right.push([', settings', [['o/s', 'Overview/Settings'], ['j/k', 'move'], ['enter', 'edit, or next choice'], ['h/l', 'choice'], ['x', 'take a key out of the file'], ['c', 'changed only / all'], ['tab', 'Global/Project'], ['/', 'filter'], ['r', 'read the Overview again'], ['R', 'reopen the project'], ['esc', 'back (asks: y goes)']]]);
   right.push(['1 source', !vimOn() ? plainSourceHelp() : [['enter', 'edit (vim keys)'], ['/', 'search (vim)'], ['ctrl+shift+o', 'symbols'], ['ctrl+w/:q', 'leave the editor'], [':w/⌘s', 'save'], [':e!', 'discard changes'], [':format/:fmt' + (vimKey('vimFormat') ? ' ' + vimKey('vimFormat') : ''), 'format the SQL (sqlfluff) and the config block (unsaved; u undoes)'], [vimPair('Hunk'), 'next/prev git change'], [vimKey('vimUndoHunk'), 'undo the git change under the cursor'], [vimKey('vimStageHunk'), 'stage the git change under the cursor (unstage, in a staged difference)'], [vimPair('Error'), 'next/prev error'], [vimKey('vimHover') + '/mouse', 'card of a ref, a function or an includes name (constants.X); ' + vimKey('vimHover') + "'s card (or the mouse's, once clicked in) has the keys: f filters its columns (esc or enter: back to the card), u opens its table in BigQuery, y copies its name, j/k scroll, esc gives the keys back"], [vimKey('vimDefinition') + '/' + (st.onMac ? '⌘' : 'ctrl+') + 'click', 'go to definition'], ['gf/gF', 'go to the file named under the cursor (gF: at the line after it)'], ['ctrl+x ctrl+f', 'complete a file name (insert mode)'], ['gc{motion}/gcc/' + (st.onMac ? '⌘/' : 'ctrl+/'), 'comment out or back in (the motion\'s lines, the line, the selection; also the Scratch editor)'], [vimKey('vimMenu') + '/right-click', 'context menu (shift+right-click: the browser\'s)'], ['ctrl+o/ctrl+i', 'jump back/forward'], ['ctrl+^', 'the file before'], [vimKey('vimBufferNext') + '/' + vimKey('vimBufferPrev') + ' :bn/:bp', 'next/prev buffer (files opened)'], [vimKey('vimBuffers') + ' :ls', 'list buffers'], [vimKey('vimBufferDelete') + ' :bd', 'remove the buffer shown'], [':b N/:bd N', 'go to / remove a buffer'], [vimKey('vimFiles'), 'find a file (as ' + st.paletteKey + ')'], [vimKey('vimFileTree'), 'show/hide the file tree (as ' + (st.onMac ? '⌘b' : 'ctrl+b') + ')'], ['backspace', 'back from gd (outside the editor)']]]);
   if (c.inspector) right.push([st.commandsKey + ' Dependency inspector (a page; the mouse does the rest)', [['tab', 'rows / graph'], ['enter', 'in a filter box: dry run it (the global one: every ticked row); shift+enter: a new line'], [st.onMac ? '⌥⌘←/→' : 'ctrl+alt+←/→', 'the result before / next (rows that have run)'], ['z', 'zoom the section last clicked (rows or graph, result, schema); again to unzoom'], ['ctrl+c', 'cancel the queued and running queries'], ['esc', 'unzoom, or close what is open on the page; in the search box, clear it'], ['ctrl+q', 'back']]]);
@@ -1674,13 +1674,26 @@ const raw = (s) => html`<span dangerouslySetInnerHTML=${{ __html: s || '' }}></s
 // each (ADR 0010). The tables take its width, the words keep to a line
 // you can read.
 function ChecksPage() {
-  useEffect(() => { document.title = 'xf · checks'; return () => { document.title = 'xf · ' + S.boot.name; }; }, []);
   const which = S.checks;
   const o = S[which];
+  useEffect(() => {
+    document.title = S.checksPopout
+      ? `xf · ${S.boot.name} · ${which === 'impact' ? 'column impact' : 'query cost'}`
+      : 'xf · checks';
+    return () => { document.title = 'xf · ' + S.boot.name; };
+  }, [S.checksPopout, which, S.boot && S.boot.name]);
   const tabs = st.checksTabs();
   const key = (k) => () => { st.checksKey(k); redraw(); };
-  const tab = (w, label, k) => html`<button class=${'tab' + (which === w ? ' on' : '')} title=${k + ' · tab goes round'}
-    onClick=${key(k)}><kbd>${k}</kbd> ${label}</button>`;
+  const canPopout = !S.checksPopout;
+  const tearLabel = which === 'impact' ? 'Column impact' : 'Query cost';
+  const onBarDrag = canPopout ? (e) => {
+    if (e.target.closest('button, a, input')) return;
+    startTearDrag(e, { label: tearLabel, threshold: 28, onDetach: (dropPos) => st.popoutChecks({ dropPos }) });
+  } : null;
+  const tab = (w, label, k) => html`<button class=${'tab' + (which === w ? ' on' : '')}
+    title=${k + ' · tab goes round' + (canPopout ? ' · drag out for new window' : '')}
+    onPointerDown=${canPopout ? (e) => startTearDrag(e, { label, threshold: 36, verticalOnly: true, onDetach: (dropPos) => st.popoutChecks({ which: w, dropPos }) }) : null}
+    onClick=${() => { if (!wasDragged()) key(k)(); }}><kbd>${k}</kbd> ${label}</button>`;
   const against = (api, label) => html`<button class=${'tab' + (o.api === api ? ' on' : '')} title="a switches"
     onClick=${o.api === api ? undefined : key('a')}>${label}</button>`;
   const standInMode = (prodOnly, label) => html`<button class=${'tab' + (!!S.costProdOnly === prodOnly ? ' on' : '')} title="p switches between sizing missing prod tables from dev vs prod only"
@@ -1690,12 +1703,13 @@ function ChecksPage() {
   const zoomKey = st.onMac ? '⌘z' : 'alt+z';
   const footerKeys = S.caps.terminal && S.checksTerm && st.termFocused()
     ? [[zoomKey, zoomed ? 'unzoom' : 'zoom'], [st.logTabLabel, 'next tab'], ['ctrl+shift+`', 'new'], [st.termCloseLabel, 'close'], [st.termKeyLabel, 'hide']]
-    : [['j/k', 'scroll'], ...(tabs.length > 1 ? [['tab', 'Impact/Cost']] : []),
-      ...(S.caps.terminal ? [[st.termKeyLabel, 'terminal']] : []), ['ctrl+q', 'back']];
+    : [[st.commandsKey, 'commands'], ['j/k', 'scroll'], ...(tabs.length > 1 ? [['tab', 'Impact/Cost']] : []),
+      ...(S.caps.terminal ? [[st.termKeyLabel, 'terminal']] : []), ['ctrl+q', S.checksPopout ? 'close' : 'back']];
   return html`<div class=${'app checks-page' + (o.api ? ' api' : '') + (zoomed ? ' checks-term-zoomed' : '')}>
-    <header class="set-top">
+    <header class=${'set-top' + (canPopout ? ' can-drag' : '')} onPointerDown=${onBarDrag} title=${canPopout ? 'Drag out to move Checks into its own window' : ''}>
       <h1><span class="badge">XF</span> Checks${o.api && html`<span class="gcp"> · GCP</span>`}</h1>
       <span class="dim">${S.boot.name}</span>
+      ${S.checksPopout && html`<button class="link" title="Move Checks back to the project window" onClick=${() => st.dockChecks()}>↙ dock</button>`}
       ${tabs.length > 1 && html`<span class="set-tabs" role="group" aria-label="Check">${tabs.map((w) => w === 'impact' ? tab(w, 'Column impact', 'I') : tab(w, 'Query cost', 'C'))}</span>`}
       <span class="spacer"></span>
       ${S.caps.branches && html`<button class="link base-link" title="b compares with another branch" onClick=${key('b')}><kbd>b</kbd> vs ${S.boot.defaultBranch}</button>`}
@@ -1703,7 +1717,11 @@ function ChecksPage() {
       ${S.caps.api && html`<span class="set-tabs" role="group" aria-label="Checked from"><span class="tab-key"><kbd>a</kbd></span>${against(false, 'Working tree')}${against(true, 'Pushed branch')}</span>`}
       <button class="run-btn" disabled=${!o.report || o.loading} onClick=${key('y')}><kbd>y</kbd> Copy Markdown</button>
       <button class="run-btn" disabled=${o.loading} onClick=${key('c')}><kbd>c</kbd> Check again</button>
-      <button class="link set-close" title="Close (ctrl+q)" onClick=${() => { st.closeChecks(); redraw(); }}>× close</button>
+      ${canPopout && html`<button class="link sc-popout-btn" title="Move Checks into its own window — click or drag out"
+        onPointerDown=${(e) => startTearDrag(e, { label: tearLabel, threshold: 20, onDetach: (dropPos) => st.popoutChecks({ dropPos }) })}
+        onClick=${() => { if (!wasDragged()) st.popoutChecks(); }}>↗ pop out</button>`}
+      <${WindowsPill} />
+      <button class="link set-close" title=${S.checksPopout ? 'Close window (ctrl+q)' : 'Close (ctrl+q)'} onClick=${() => { if (S.checksPopout) st.closeChecksPopout(); else { st.closeChecks(); redraw(); } }}>× close</button>
     </header>
     <div class=${'checks-body' + (st.panelRight() && !zoomed ? ' panel-right' : '')}>
       <div class="checks-main">
@@ -1718,6 +1736,8 @@ function ChecksPage() {
     </div>
     <div class="footer set-footer"><${Keys} list=${footerKeys} />
       <span class="spacer"></span>${S.flash && html`<span class="warn">${S.flash}</span>`}</div>
+    ${S.overlay === 'palette' && html`<${Palette} />`}
+    ${S.overlay === 'projects' && html`<${Picker} overlay=${true} />`}
     ${S.overlay === 'prod' && S.prod && html`<${ProdPrompt} />`}
     ${S.overlay === 'base' && S.base && html`<${BaseOverlay} />`}
   </div>`;

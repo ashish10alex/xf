@@ -8,7 +8,7 @@ import { diagSetup, drew, drawFailed, note, requestStart } from './diag.js';
 import { T, applyTheme, themeHooks, openThemePicker, themeName } from './theme.js';
 import { part, setWorkspaceRoot, saveWorkspace, workspaceOf, restoreParts, unsavedNow, clearSessionWorkspace } from './workspace.js';
 import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranches, openNewWorktree, readBranch } from './branches.js';
-import { answerProd, askDefer, changedKey, checkKey, deferAskKey, deferOn, onProgress, openChanged, openCost, openImpact, openTags, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleDefer, toggleTag } from './checks.js';
+import { answerProd, askDefer, changedKey, checkKey, closeChecks, closeChecksPopout, deferAskKey, deferOn, dockChecks, onProgress, openChanged, openCheck, openChecksPopout, openCost, openImpact, openTags, popoutChecks, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleChecksTerm, toggleChecksTermZoom, toggleDefer, toggleTag } from './checks.js';
 import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showErrorsTab, sqlTabOn } from './errors-tab.js';
 import { clearHistory, closeTerm, closeWatch, hasTabs, jobsTableKey, loadTerms, logKey, logTabs, newTerm, nextTab, openKept, openURL, openWatch, setTerms } from './log-tabs.js';
 import { askRemoveWorktreeHere, closeScratchPicker, cycleProject, nextOpenProject, openByName, openScratchPicker, openScratchWarehouse, pickScratchWarehouse, pickerKey, readOpenWorktrees, setPickerQuery, stopFind, switchProject } from './picker.js';
@@ -82,6 +82,8 @@ export const S = {
   // checks is the Checks page's tab while the page shows, impact or cost:
   // I and C fill the window, as settings does (ADR 0010).
   checks: null,
+  // checksPopout is true when Checks is open in its own popped-out window.
+  checksPopout: false,
   // checksTerm says the Checks page shows the terminal under its report;
   // checksTermFocus gives it the keys at the next draw, and
   // checksTermZoomed fills the page with it (checks.js).
@@ -195,7 +197,7 @@ function holdFirstDraw() {
 }
 function firstReady() {
   if (!fontsIn) return false;
-  if (S.mode !== 'project' || S.overlay || (hooks.scratchOpen && hooks.scratchOpen())) return true;
+  if (S.mode !== 'project' || S.overlay || S.checks || (hooks.scratchOpen && hooks.scratchOpen())) return true;
   if (S.sel && !(S.view && S.view.id === S.sel)) return false;
   return !(hooks.sourceLoading && hooks.sourceLoading()) && !(hooks.treeLoading && hooks.treeLoading());
 }
@@ -341,6 +343,55 @@ export const projectURL = (key) => '/?project=' + encodeURIComponent(key).replac
 // scratchPopoutURL is a popped-out Scratch window on the project key names,
 // with an optional one-time handoff token for tabs transferred from another window.
 export const scratchPopoutURL = (key, handoff) => projectURL(key) + '&scratch=popout' + (handoff ? '&handoff=' + encodeURIComponent(handoff) : '');
+
+// checksPopoutURL is a popped-out Checks window on the project key names,
+// with the active check tab (impact or cost) and an optional one-time handoff token.
+export const checksPopoutURL = (key, which, handoff) => projectURL(key) + '&checks=' + encodeURIComponent(which || 'cost') + (handoff ? '&handoff=' + encodeURIComponent(handoff) : '');
+
+// popoutFeatures builds the window.open feature string for a popped-out window
+// (Scratch or Checks): placed at dropPos when dragged outside the current window
+// (preserving multi-monitor coordinates), or side-by-side beside the current
+// window otherwise.
+export function popoutFeatures(dropPos, env = {}) {
+  const scr = env.screen || (typeof screen !== 'undefined' ? screen : {});
+  const win = env.window || (typeof window !== 'undefined' ? window : {});
+  const availLeft = Number.isFinite(scr.availLeft) ? scr.availLeft : 0;
+  const availTop = Number.isFinite(scr.availTop) ? scr.availTop : 0;
+  const availW = scr.availWidth || 1440;
+  const availH = scr.availHeight || 900;
+  const winX = Number.isFinite(win.screenX) ? win.screenX : availLeft;
+  const winY = Number.isFinite(win.screenY) ? win.screenY : availTop;
+  const winW = win.outerWidth || availW;
+  const winH = win.outerHeight || Math.round(availH * 0.85);
+  const width = Math.min(Math.max(Math.round(availW * 0.48), 640), Math.min(availW, 1100));
+  const height = Math.min(Math.max(winH, 560), availH);
+
+  let left, top;
+  const outside = dropPos && Number.isFinite(dropPos.screenX) && Number.isFinite(dropPos.screenY) && (
+    dropPos.screenX < winX || dropPos.screenX > winX + winW ||
+    dropPos.screenY < winY || dropPos.screenY > winY + winH
+  );
+  if (outside) {
+    left = Math.round(dropPos.screenX - width / 2);
+    top = Math.round(dropPos.screenY - 24);
+    const onThisScreen = dropPos.screenX >= availLeft && dropPos.screenX <= availLeft + availW &&
+      dropPos.screenY >= availTop && dropPos.screenY <= availTop + availH;
+    if (onThisScreen) {
+      left = Math.min(Math.max(left, availLeft), availLeft + Math.max(availW - width, 0));
+      top = Math.min(Math.max(top, availTop), availTop + Math.max(availH - height, 0));
+    }
+  } else {
+    top = Math.min(Math.max(winY, availTop), availTop + Math.max(availH - height, 0));
+    if (winX + winW + 420 <= availLeft + availW) {
+      left = winX + winW + 8;
+    } else if (winX - availLeft >= 420) {
+      left = availLeft;
+    } else {
+      left = availLeft + Math.max(availW - width, 0);
+    }
+  }
+  return `popup,width=${width},height=${height},left=${left},top=${top}`;
+}
 
 // bootPath asks for the project key names, which opens it.
 const bootPath = (key) => '/api/boot' + (key ? '?project=' + encodeURIComponent(key) : '');
@@ -529,6 +580,8 @@ export async function start() {
   const params = new URLSearchParams(location.search);
   const want = params.get('project') || '';
   const isScratchPopout = params.get('scratch') === 'popout';
+  const checksParam = params.get('checks') || '';
+  const isChecksPopout = checksParam === 'impact' || checksParam === 'cost';
   const handoff = params.get('handoff') || '';
   const said = carried();
   try {
@@ -551,8 +604,14 @@ export async function start() {
         history.replaceState(null, '', scratchPopoutURL(b.key));
         setWorkspaceRoot(b.project.root);
         const ws = workspaceOf(b.project.root);
-        startProject(b.project, null);
+        startProject(b.project, null, true);
         if (hooks.openScratchPopout) hooks.openScratchPopout(handoff, ws && ws.parts.scratch);
+      } else if (isChecksPopout) {
+        if (handoff) clearSessionWorkspace();
+        history.replaceState(null, '', checksPopoutURL(b.key, checksParam));
+        setWorkspaceRoot(b.project.root);
+        startProject(b.project, null, true);
+        openChecksPopout(checksParam, handoff);
       } else {
         if (b.key !== want) history.replaceState(null, '', projectURL(b.key));
         noteShown(b.key);
@@ -605,7 +664,7 @@ window.addEventListener('focus', () => {
 
 // startProject starts the page on project p, and with ws the workspace
 // view this tab kept for it (see viewPart).
-function startProject(p, ws) {
+function startProject(p, ws, popout = false) {
   S.mode = 'project';
   S.boot = p;
   if (hooks.vimKeys) hooks.vimKeys(p.vimKeys);
@@ -630,7 +689,7 @@ function startProject(p, ws) {
   S.rightHidden = readRightHidden();
   S.errHidden = false;
   if (!rightShown() && rightPanes.includes(S.focus)) S.focus = 'source';
-  S.checks = null; S.impact = null; S.cost = null; // another project's checks
+  S.checks = null; S.checksPopout = false; S.impact = null; S.cost = null; // another project's checks
   if (S.inspector && hooks.closeInspector) hooks.closeInspector();
   if (ws) restoreView(ws);
   else pane2Default(p.pane2Tab);
@@ -640,9 +699,11 @@ function startProject(p, ws) {
   if (ws) restoreFocus(ws);
   readBranch();
   if (hooks.forgeStart) hooks.forgeStart();
-  if (p.scratch && (p.scratch.start || p.scratch.standalone) && hooks.startScratch) hooks.startScratch(p.scratch.standalone);
-  if (p.check === 'impact') openImpact(); // xf impact --web
-  else if (p.check === 'cost') openCost(); // xf cost --web
+  if (!popout) {
+    if (p.scratch && (p.scratch.start || p.scratch.standalone) && hooks.startScratch) hooks.startScratch(p.scratch.standalone);
+    if (p.check === 'impact') openImpact(); // xf impact --web
+    else if (p.check === 'cost') openCost(); // xf cost --web
+  }
 }
 
 // The events come over a WebSocket (ADR 0011), each {event, data}: an
@@ -1727,7 +1788,7 @@ export function openPalette(query = '') {
   const keptZoom = termZoomed();
   if (!keptZoom) S.zoomed = false;
   S.overlay = 'palette';
-  S.palette = { ...S.palette, scratch: false, keptZoom, query, cursor: 0, first, firstFiles: firstFiles(), commands: byRecent(commands()), symbols: null, symKind: '', items: [], found: 0, fromEditor: editingSource() };
+  S.palette = { ...S.palette, scratch: false, checks: false, keptZoom, query, cursor: 0, first, firstFiles: firstFiles(), commands: byRecent(commands()), symbols: null, symKind: '', items: [], found: 0, fromEditor: editingSource() };
   if (actionQuery() !== null) findAsked = findActions(true);
   else if (fileQuery() !== null) { startOnPrevious(); fetchFiles(); }
 }
@@ -1738,7 +1799,15 @@ export function openPalette(query = '') {
 // editor it was opened from.
 export function openScratchPalette() {
   S.overlay = 'palette';
-  S.palette = { ...S.palette, scratch: true, keptZoom: false, query: '>', cursor: 0, commands: byRecent(hooks.scratchCommands()), symbols: null, symKind: '', items: [], found: 0, fromEditor: !!(hooks.scratchEditing && hooks.scratchEditing()) };
+  S.palette = { ...S.palette, scratch: true, checks: false, keptZoom: false, query: '>', cursor: 0, commands: byRecent(hooks.scratchCommands()), symbols: null, symKind: '', items: [], found: 0, fromEditor: !!(hooks.scratchEditing && hooks.scratchEditing()) };
+}
+
+// openChecksPalette opens the palette on the Checks page's own commands
+// (checksCommands): pop out / dock, switch tab, recheck, copy Markdown,
+// compare branch, terminal, theme, settings, and closing the page or window.
+export function openChecksPalette() {
+  S.overlay = 'palette';
+  S.palette = { ...S.palette, scratch: false, checks: true, keptZoom: false, query: '>', cursor: 0, commands: byRecent(checksCommands()), symbols: null, symKind: '', items: [], found: 0, fromEditor: false };
 }
 
 // editingSource is whether the source editor has the keys.
@@ -1754,7 +1823,7 @@ export function cancelPalette() {
 
 // symbolQuery is the query after its "@", or null when it lists actions or commands.
 export function symbolQuery() {
-  if (S.palette.scratch) return null;
+  if (S.palette.scratch || S.palette.checks) return null;
   const q = S.palette.query.replace(/^ +/, "");
   return q.startsWith("@") ? q.slice(1) : null;
 }
@@ -1782,7 +1851,7 @@ export async function openSymbols() {
   const fromEditor = S.overlay === "palette" ? S.palette.fromEditor : editingSource();
   S.zoomed = false;
   S.overlay = "palette";
-  S.palette = { ...S.palette, scratch: false, query: "@", cursor: 0, symbols: null, symKind: "", items: [], found: 0, fromEditor };
+  S.palette = { ...S.palette, scratch: false, checks: false, query: "@", cursor: 0, symbols: null, symKind: "", items: [], found: 0, fromEditor };
   redraw();
   await fetchSymbols();
 }
@@ -1840,7 +1909,7 @@ async function findActions(opening) {
 // query after its "#", or one that starts with a "$kind"; null when it
 // lists files, symbols or commands.
 export function actionQuery() {
-  if (S.palette.scratch) return null;
+  if (S.palette.scratch || S.palette.checks) return null;
   const q = S.palette.query.replace(/^ +/, '');
   if (q.startsWith('#')) return q.slice(1);
   return q.startsWith('$') ? q : null;
@@ -1848,7 +1917,7 @@ export function actionQuery() {
 
 // fileQuery is the query when the palette lists files, else null.
 export function fileQuery() {
-  if (S.palette.scratch) return null;
+  if (S.palette.scratch || S.palette.checks) return null;
   const q = S.palette.query.replace(/^ +/, '');
   return /^[#$>@%]/.test(q) ? null : q;
 }
@@ -1949,7 +2018,7 @@ export function rankFiles(files, query, first = []) {
 // projectQuery is the query after its "%", or null when the palette
 // lists something else: the open projects.
 export function projectQuery() {
-  if (S.palette.scratch) return null;
+  if (S.palette.scratch || S.palette.checks) return null;
   const q = S.palette.query.replace(/^ +/, '');
   return q.startsWith('%') ? q.slice(1) : null;
 }
@@ -1976,10 +2045,10 @@ export function openProjectList() {
 }
 
 // commandQuery is the query after its ">", or null when it lists files or
-// actions. Scratch's palette lists only commands, with or without it.
+// actions. Scratch's and Checks' palettes list only commands, with or without it.
 export function commandQuery() {
   const q = S.palette.query.replace(/^ +/, '');
-  if (S.palette.scratch) return q.replace(/^>/, '');
+  if (S.palette.scratch || S.palette.checks) return q.replace(/^>/, '');
   return q.startsWith('>') ? q.slice(1) : null;
 }
 
@@ -2113,6 +2182,48 @@ function countUse(title) {
   post('/api/command', { title }).then((r) => { if (r) S.commandUses = r; }).catch(() => {});
 }
 
+// checksCommands are what the palette lists on the Checks page (cmd+shift+p):
+// Checks' own actions, window pop-out / dock, terminal, theme and settings.
+export function checksCommands() {
+  const out = [];
+  const add = (title, key, run, state) => out.push({ title, key, run, state });
+  const toggle = (title, on, key, f) => add(title, key, f, on ? 'on' : 'off');
+  const which = S.checks;
+  const o = which && S[which];
+  if (!S.checksPopout) {
+    add('Checks: pop out in new window', '', () => popoutChecks(), which === 'impact' ? 'Column impact' : 'Query cost');
+  } else {
+    add('Checks: dock back to project', '', () => dockChecks(), S.boot && S.boot.name);
+  }
+  if (S.caps.impact && which !== 'impact') add('Checks: column impact', 'I', () => openCheck('impact'));
+  if (S.caps.cost && which !== 'cost') add('Checks: query cost', 'C', () => openCheck('cost'));
+  if (o && !o.loading) add('Checks: check again', 'c', () => checkKey(which, 'c'));
+  if (o && o.report && !o.loading) add('Checks: copy report as Markdown', 'y', () => checkKey(which, 'y'));
+  if (S.caps.branches) add('Git: compare with branch', 'b', openBase, 'now ' + (S.boot ? S.boot.defaultBranch : ''));
+  if (S.caps.api && o) toggle('Checks: check pushed branch (Dataform API)', !!o.api, 'a', () => checkKey(which, 'a'));
+  if (which === 'cost' && S.caps.warehouse !== 'databricks' && S.caps.warehouse !== 'snowflake') {
+    toggle('Checks: prod only (ignore dev stand-ins)', !!S.costProdOnly, 'p', () => checkKey('cost', 'p'));
+  }
+  if (!S.checksPopout && hasErrors()) add('Check: show errors', 'e', () => checkKey(which, 'e'));
+  if (S.caps.terminal) {
+    toggle('View: terminal', S.checksTerm, termKeyLabel, () => toggleChecksTerm(true));
+    toggle('View: zoom terminal', S.checksTerm && S.checksTermZoomed, onMac ? '⌘z' : 'alt+z', toggleChecksTermZoom);
+    add(panelRight() ? 'View: move panel to bottom' : 'View: move panel to right', '', togglePanelPosition);
+    add('Terminal: new terminal', 'ctrl+shift+`', newTerm);
+    if (S.checksTerm) add('Terminal: close terminal', termCloseLabel, () => closeTerm());
+  }
+  add('View: colour theme', '', () => openThemePicker('theme'), T.choice.theme === 'auto' ? 'auto' : themeName(T.choice.theme));
+  if (hooks.openSettings) add('View: settings and project info', 'ctrl+,', () => hooks.openSettings());
+  if (hooks.openWindows) add('View: browser windows', '', hooks.openWindows, (hooks.otherWindows() + 1) + ' open');
+  if (S.checksPopout) {
+    add('Close checks window', 'ctrl+q', () => closeChecksPopout());
+  } else {
+    add('Project: switch or add', '', openProjects, S.openIn === 'new-tab' ? 'in a new tab' : 'in this tab');
+    add('Close checks: back to the project', 'ctrl+q', closeChecks, S.boot && S.boot.name);
+  }
+  return out;
+}
+
 // paletteCommands are the commands the palette's ">" would list now,
 // {title, key, run, state}, for agent.js to read and pick from.
 export const paletteCommands = () => commands();
@@ -2167,8 +2278,14 @@ function commands() {
       add('Databricks: choose the SQL warehouse checks run on', '', openWarehousePicker);
     }
   }
-  if (S.caps.impact) add('Check: column impact of changes', 'I', openImpact);
-  if (S.caps.cost) add('Check: query cost of changes', 'C', openCost);
+  if (S.caps.impact) {
+    add('Check: column impact of changes', 'I', openImpact);
+    add('Check: open column impact in new window', '', () => popoutChecks({ which: 'impact', fresh: true }));
+  }
+  if (S.caps.cost) {
+    add('Check: query cost of changes', 'C', openCost);
+    add('Check: open query cost in new window', '', () => popoutChecks({ which: 'cost', fresh: true }));
+  }
   if (S.caps.defer) {
     toggle('Defer to prod', deferOn(), '', toggleDefer);
     if (S.boot.backend !== 'dbt') add('Defer to prod: remove proxy views', '', removeProxies);
@@ -2655,14 +2772,26 @@ export function handleKey(k) {
   // the SQL warehouse picker's while that is open.
   if (S.inspector && S.overlay === 'dbxWarehouse') return hooks.dbxKey ? hooks.dbxKey(k) : true;
   if (S.inspector) return k === 'palette' || k === 'commands' || !hooks.inspectorKey ? true : hooks.inspectorKey(k);
-  // The Checks page has only its own keys, and its prod prompt's.
+  // The Checks page has its own keys, its command palette, and its prompts.
   if (S.checks) {
     if (S.overlay === 'base') return baseKey(k);
     if (S.overlay === 'prod') {
       if (k === 'esc' || k === 'ctrl+c') { answerProd(true); return true; }
       return k === 'palette' || k === 'commands' ? true : false;
     }
-    if (k !== 'palette' && k !== 'commands') checkKey(S.checks, k);
+    if (S.overlay === 'projects') {
+      if (k === 'ctrl+c') { closeOverlay(); return true; }
+      if (k === 'palette' || k === 'commands') return true;
+      pickerKey(k);
+      return true;
+    }
+    if (k === 'commands') {
+      if (S.overlay === 'palette') setPaletteQuery('>');
+      else if (!S.overlay) openChecksPalette();
+      return true;
+    }
+    if (S.overlay === 'palette') return false; // its input handles keys
+    if (k !== 'palette') checkKey(S.checks, k);
     return true;
   }
   // "palette" is paletteKey, named by main.js and the footer's chip;
@@ -3029,7 +3158,7 @@ export { vim, toggleColumns, toggleIncremental, toggleFlag, startRun, toggleLine
 // What other modules take from here, now kept in modules of their own.
 export { cancelWorktreeName, closeBase, fetchBases, fetchBranches, moveBase, moveBranches, nameWorktree, newBranchName, openBase, openBranches, openNewWorktree, openWorktree, pickBase, setBaseQuery, setBranchesQuery, setWorktreeName, switchBranch, worktreeFolder } from './branches.js';
 export { answerDefer, deferGroups, deferOn, toggleDefer } from './checks.js';
-export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, openChanged, openCost, openImpact, openTags, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, takeChecksTermFocus, toggleChecksTerm, toggleChecksTermZoom, toggleTag } from './checks.js';
+export { answerProd, changedCursorRows, changedListed, changedPreview, checkStale, checksKey, checksTabs, closeChecks, closeChecksPopout, dockChecks, openChanged, openCost, openImpact, openTags, popoutChecks, requestChanged, runTags, scrollOverlay, setTagsQuery, tagsRun, takeChecksTermFocus, toggleChecksTerm, toggleChecksTermZoom, toggleTag } from './checks.js';
 export { actOnErrorRow, errorGroups, errorKinds, errorRows, errorsTabShown, pickSQLTab, runFix, runLogFix, showErrorsTab, sqlTabOn } from './errors-tab.js';
 export { activeTerm, termLabel, clearHistory, closeTerm, closeWatch, JOB_COLS, loadTerms, newTerm, jobsRows, jobsShown, logTabs, nextJobsSort, scrollLog, setJobsQuery, shownJobs, sortJobsBy, submitWatch } from './log-tabs.js';
 export { addFound, closeScratchPicker, leaveFind, openScratchPicker, openScratchWarehouse, pickProject, pickScratchWarehouse, pickerKey, setPickerQuery, toggleFound } from './picker.js';

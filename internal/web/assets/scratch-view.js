@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from './vendor/hooks.mjs';
 import htm from './vendor/htm.mjs';
 import { S, redraw, hooks, openProjects, openWarehousePicker, openProfilePicker, commandsKey } from './state.js';
 import { ThemeButton } from './theme-view.js';
-import { WindowsPill } from './windows-view.js';
+import { WindowsPill, startTearDrag, wasDragged } from './windows-view.js';
 import * as sc from './scratch.js';
 import { mountEditor, mountRunSQL } from './scratch-editor.js';
 import { savesWith } from './vim-mode.js';
@@ -40,81 +40,13 @@ function Editor() {
 
 // ---- drag out to a new window ----
 
-let suppressClickUntil = 0;
-const wasDragged = () => Date.now() < suppressClickUntil;
-
-// startTearDrag tracks a pointer drag on a Scratch tab or the Scratch header
-// so pulling it away (or outside the browser window) pops it into its own
-// side-by-side window on release, while keeping normal clicks untouched.
-function startTearDrag(e, { tabKey = '', label = 'Scratch', threshold = 32 }) {
-  if (e.button !== 0) return;
-  const el = e.currentTarget;
-  const startX = e.clientX, startY = e.clientY;
-  const pointerId = e.pointerId;
-  let moved = false, detached = false, ghost = null;
-
-  const ensureGhost = () => {
-    if (ghost) return ghost;
-    ghost = document.createElement('div');
-    ghost.className = 'sc-drag-ghost';
-    document.body.appendChild(ghost);
-    return ghost;
-  };
-  const placeGhost = (ev, isDetached) => {
-    const g = ensureGhost();
-    g.classList.toggle('detached', isDetached);
-    g.textContent = isDetached
-      ? `↗ Drop to open ${label} in new window`
-      : `Drag out to move ${label} to new window`;
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const x = Math.min(Math.max(ev.clientX + 14, 12), Math.max(vw - 280, 12));
-    const y = Math.min(Math.max(ev.clientY + 14, 12), Math.max(vh - 40, 12));
-    g.style.left = x + 'px';
-    g.style.top = y + 'px';
-  };
-  const cleanup = () => {
-    window.removeEventListener('pointermove', onMove, true);
-    window.removeEventListener('pointerup', onUp, true);
-    window.removeEventListener('pointercancel', onCancel, true);
-    window.removeEventListener('keydown', onKey, true);
-    if (el && el.classList) el.classList.remove('dragging');
-    document.body.classList.remove('sc-dragging');
-    if (ghost) { ghost.remove(); ghost = null; }
-    try { if (el && el.hasPointerCapture && el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId); } catch { /* released */ }
-  };
-  const onMove = (ev) => {
-    const dx = ev.clientX - startX, dy = ev.clientY - startY;
-    if (!moved) {
-      if (Math.hypot(dx, dy) < 8) return;
-      moved = true;
-      if (el && el.classList) el.classList.add('dragging');
-      document.body.classList.add('sc-dragging');
-      try { if (el && el.setPointerCapture) el.setPointerCapture(pointerId); } catch { /* unsupported */ }
-    }
-    const outside = ev.clientX < 4 || ev.clientY < 4 || ev.clientX > window.innerWidth - 4 || ev.clientY > window.innerHeight - 4;
-    detached = outside || (tabKey ? Math.abs(dy) > threshold : Math.hypot(dx, dy) > threshold);
-    placeGhost(ev, detached);
-  };
-  const onUp = (ev) => {
-    const didMove = moved, didDetach = detached;
-    cleanup();
-    if (didMove) suppressClickUntil = Date.now() + 250;
-    if (didDetach) {
-      sc.popoutScratch({ tabKey: tabKey || undefined, dropPos: { screenX: ev.screenX, screenY: ev.screenY } });
-    }
-  };
-  const onCancel = () => {
-    if (moved) suppressClickUntil = Date.now() + 250;
-    cleanup();
-  };
-  const onKey = (ev) => {
-    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); onCancel(); }
-  };
-  window.addEventListener('pointermove', onMove, true);
-  window.addEventListener('pointerup', onUp, true);
-  window.addEventListener('pointercancel', onCancel, true);
-  window.addEventListener('keydown', onKey, true);
-}
+const startScratchTearDrag = (e, { tabKey = '', label = 'Scratch', threshold = 32 }) =>
+  startTearDrag(e, {
+    label,
+    threshold,
+    verticalOnly: !!tabKey,
+    onDetach: (dropPos) => sc.popoutScratch({ tabKey: tabKey || undefined, dropPos }),
+  });
 
 // ---- the tab bar ----
 
@@ -144,7 +76,7 @@ function TabBar() {
       const cur = t.cur;
       const tip = [cur.id ? cur.id + '.sql' : 'new scratch', cur.from ? 'from ' + cur.from : '', cur.project ? [cur.project, cur.location].filter(Boolean).join(' · ') : '', canDragTab ? 'drag out for new window' : ''].filter(Boolean).join(' · ');
       return html`<div key=${t.key} ref=${on ? activeRef : null} class=${'sc-tab' + (on ? ' on' : '')} role="tab" aria-selected=${on} title=${tip}
-        onPointerDown=${canDragTab ? (e) => { if (!e.target.closest('.sc-tab-close')) startTearDrag(e, { tabKey: t.key, label: `"${label}"`, threshold: 36 }); } : null}
+        onPointerDown=${canDragTab ? (e) => { if (!e.target.closest('.sc-tab-close')) startScratchTearDrag(e, { tabKey: t.key, label: `"${label}"`, threshold: 36 }); } : null}
         onClick=${() => { if (!wasDragged()) sc.switchTab(t.key); }}
         onAuxClick=${(e) => { if (e.button === 1) { e.preventDefault(); sc.closeTab(t.key); } }}>
         ${state}
@@ -715,7 +647,7 @@ export function ScratchPage() {
   const canPopout = !SC.standalone && !SC.popout;
   const onBarDrag = canPopout ? (e) => {
     if (e.target.closest('button, a, input')) return;
-    startTearDrag(e, { label: 'Scratch', threshold: 28 });
+    startScratchTearDrag(e, { label: 'Scratch', threshold: 28 });
   } : null;
   return html`<div class="app scratch-app">
     <div class=${'status' + (canPopout ? ' can-drag' : '')} onPointerDown=${onBarDrag} title=${canPopout ? 'Drag out to move Scratch into its own window' : ''}>
@@ -730,7 +662,7 @@ export function ScratchPage() {
       ${SC.cur && SC.cur.from && html`<span class="dim"> · from ${SC.cur.from}</span>`}
       <span class="spacer"></span>
       ${canPopout && html`<button class="link sc-popout-btn" title="Move Scratch into its own window — click or drag out"
-        onPointerDown=${(e) => startTearDrag(e, { label: 'Scratch', threshold: 20 })}
+        onPointerDown=${(e) => startScratchTearDrag(e, { label: 'Scratch', threshold: 20 })}
         onClick=${() => { if (!wasDragged()) sc.popoutScratch(); }}>↗ pop out</button>`}
       <${WindowsPill} /><${ThemeButton} />
     </div>

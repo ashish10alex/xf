@@ -13,9 +13,10 @@ import { exitKey } from './exit.js';
 
 // An app window opens at a size the browser picks, so its first page
 // fills the screen. A reload, another page in the same window, or a
-// popped-out Scratch window keeps the size and place it was given.
-const scratchPopout = new URLSearchParams(location.search).get('scratch') === 'popout';
-if (appWindow && newTab && !scratchPopout) {
+// popped-out Scratch or Checks window keeps the size and place it was given.
+const startParams = new URLSearchParams(location.search);
+const isPopoutWindow = startParams.get('scratch') === 'popout' || ['impact', 'cost'].includes(startParams.get('checks'));
+if (appWindow && newTab && !isPopoutWindow) {
   moveTo(screen.availLeft ?? 0, screen.availTop ?? 0);
   resizeTo(screen.availWidth, screen.availHeight);
 }
