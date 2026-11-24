@@ -68,7 +68,12 @@ func refMatches(p Project, want refTarget) []*project.Action {
 // refArgsAt returns the argument text of the ref() or resolve() call that
 // contains offset, and the call's byte range.
 func refArgsAt(src []byte, offset int) (args string, start, end int, ok bool) {
-	for _, m := range refCall.FindAllSubmatchIndex(src, -1) {
+	return refArgsIn(src, refCall.FindAllSubmatchIndex(src, -1), offset)
+}
+
+// refArgsIn is refArgsAt with src's refCall submatches already found.
+func refArgsIn(src []byte, calls [][]int, offset int) (args string, start, end int, ok bool) {
+	for _, m := range calls {
 		if offset >= m[0] && offset <= m[1] {
 			return string(src[m[2]:m[3]]), m[0], m[1], true
 		}

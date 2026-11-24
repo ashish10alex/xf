@@ -42,19 +42,24 @@ var selfCall = regexp.MustCompile(`\bself\s*\(\s*\)`)
 // It returns nil when the cursor is on none of these. Without a graph only
 // literal ids work.
 func TableRefsAt(p Project, file string, src []byte, offset int) []TableRef {
+	return p.tableRefsAt(file, src, offset, newRefScan(src))
+}
+
+// tableRefsAt is TableRefsAt with src's scan shared between offsets.
+func (p Project) tableRefsAt(file string, src []byte, offset int, sc *refScan) []TableRef {
 	if offset < 0 || offset > len(src) {
 		return nil
 	}
 	if p.Dbt {
-		return dbtTableRefsAt(p, file, src, offset)
+		return p.dbtTableRefsIn(file, src, offset, sc)
 	}
-	for _, m := range selfCall.FindAllIndex(src, -1) {
+	for _, m := range sc.selfCalls() {
 		if offset >= m[0] && offset <= m[1] {
 			return p.selfRef(file, m[0], m[1])
 		}
 	}
 
-	if args, start, end, ok := refArgsAt(src, offset); ok {
+	if args, start, end, ok := refArgsIn(src, sc.refCalls(), offset); ok {
 		want, valid := parseRefArgs(args)
 		if !valid {
 			return nil
@@ -66,17 +71,81 @@ func TableRefsAt(p Project, file string, src []byte, offset int) []TableRef {
 		return out
 	}
 
-	inComment := commentChecker(src)
-	for _, m := range bqTable.FindAllIndex(src, -1) {
+	inComment := sc.inComment()
+	for _, m := range sc.bqTables() {
 		if offset < m[0] || offset > m[1] {
 			continue
 		}
-		if isJSFile(file) || inComment(m[0]) || inSpans(jsSpans(src), m[0]) {
+		if isJSFile(file) || inComment(m[0]) || inSpans(sc.jsSpans(), m[0]) {
 			return nil
 		}
 		return []TableRef{p.rawTableRef(src, m[0], m[1])}
 	}
 	return nil
+}
+
+// refScan holds what tableRefsAt finds in a whole file, each found the first
+// time it is needed, so that TableRefs scans the file once and not once per
+// reference.
+type refScan struct {
+	src []byte
+
+	selves, refs, tables [][]int
+	spans                []span
+	tags                 []jinjaTag
+	comment              func(offset int) bool
+
+	doneSelves, doneRefs, doneTables, doneSpans, doneTags bool
+}
+
+func newRefScan(src []byte) *refScan { return &refScan{src: src} }
+
+// selfCalls are src's self() calls.
+func (sc *refScan) selfCalls() [][]int {
+	if !sc.doneSelves {
+		sc.selves, sc.doneSelves = selfCall.FindAllIndex(sc.src, -1), true
+	}
+	return sc.selves
+}
+
+// refCalls are src's ref() and resolve() calls, with their arguments.
+func (sc *refScan) refCalls() [][]int {
+	if !sc.doneRefs {
+		sc.refs, sc.doneRefs = refCall.FindAllSubmatchIndex(sc.src, -1), true
+	}
+	return sc.refs
+}
+
+// bqTables are src's literal project.dataset.table ids.
+func (sc *refScan) bqTables() [][]int {
+	if !sc.doneTables {
+		sc.tables, sc.doneTables = bqTable.FindAllIndex(sc.src, -1), true
+	}
+	return sc.tables
+}
+
+// jsSpans are src's JavaScript parts.
+func (sc *refScan) jsSpans() []span {
+	if !sc.doneSpans {
+		sc.spans, sc.doneSpans = jsSpans(sc.src), true
+	}
+	return sc.spans
+}
+
+// jinjaTags are src's Jinja tags.
+func (sc *refScan) jinjaTags() []jinjaTag {
+	if !sc.doneTags {
+		sc.tags, sc.doneTags = jinjaTags(sc.src), true
+	}
+	return sc.tags
+}
+
+// inComment is src's commentChecker.
+func (sc *refScan) inComment() func(offset int) bool {
+	if sc.comment == nil {
+		sc.comment = commentChecker(sc.src)
+	}
+	return sc.comment
 }
 
 // selfRef is the reference to file's own table at start:end: self(), or
@@ -130,8 +199,9 @@ func TableRefs(p Project, file string, src []byte) []TableRef {
 	}
 	seen := map[key]bool{}
 	var out []TableRef
+	sc := newRefScan(src)
 	add := func(offset int) {
-		for _, r := range TableRefsAt(p, file, src, offset) {
+		for _, r := range p.tableRefsAt(file, src, offset, sc) {
 			k := key{r.Start, r.Target.ID()}
 			if !seen[k] {
 				seen[k] = true

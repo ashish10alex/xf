@@ -1,10 +1,15 @@
 package navigate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/ashish10alex/xf/internal/project"
 )
 
 func TestTableRefsAt(t *testing.T) {
@@ -95,5 +100,167 @@ func TestTableRefsDbt(t *testing.T) {
 	}
 	if len(texts) < 2 || texts[0] != "ref('stg_orders')" || texts[1] != "source('raw', 'customers')" {
 		t.Errorf("TableRefs = %q", texts)
+	}
+}
+
+// tableRefsByOffset is TableRefs built from TableRefsAt the way TableRefs
+// first did it, with the file scanned again for each offset: the reference
+// TableRefs must still match.
+func tableRefsByOffset(p Project, file string, src []byte) []TableRef {
+	var syms []Symbol
+	var selves [][]int
+	if p.Dbt {
+		syms = DbtDocumentSymbols(file, src)
+		selves = thisWord.FindAllIndex(src, -1)
+	} else {
+		syms = DocumentSymbols(file, src)
+		selves = selfCall.FindAllIndex(src, -1)
+	}
+	type key struct {
+		start int
+		id    project.ActionID
+	}
+	seen := map[key]bool{}
+	var out []TableRef
+	add := func(offset int) {
+		for _, r := range TableRefsAt(p, file, src, offset) {
+			k := key{r.Start, r.Target.ID()}
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, r)
+			}
+		}
+	}
+	for _, s := range ReferencesFirst(syms) {
+		if s.Kind == SymbolRef || s.Kind == SymbolTable {
+			add((s.Start + s.End) / 2)
+		}
+	}
+	for _, m := range selves {
+		add(m[0])
+	}
+	slices.SortStableFunc(out, func(a, b TableRef) int { return a.Start - b.Start })
+	return out
+}
+
+// plainLines is how many lines of plain SQL bigSqlx and bigDbt put after each
+// line that may hold a ref.
+const plainLines = 9
+
+// bigSqlx is a Dataform file of about n lines with refs, raw ids, comments,
+// self() and JavaScript.
+func bigSqlx(n int) []byte {
+	var b strings.Builder
+	b.WriteString("config { type: \"table\", description: \"p.q.r\" }\njs { const t = \"js.only.table\"; }\nWITH\n")
+	lines := []string{
+		`  a%d AS (SELECT * FROM ${ref("stg_events")} e`,
+		`  JOIN raw-project.raw.events r USING (id)`,
+		`  -- raw-project.raw.events in a comment %d`,
+		`  /* other-proj.sales.orders %d */`,
+		`  JOIN ${ref("analytics", "stg_events")} USING (id)`,
+		`  JOIN ${ref({name: "events"})} USING (id)`,
+		`  WHERE x > (SELECT 1 FROM ${self()}))`,
+		`  , b%d AS (SELECT ${"in.a.placeholder"} FROM other-proj.sales.orders`,
+		`  JOIN ${resolve("report")} USING (id) // c.d.e`,
+		`  JOIN ${ref("missing_%d")} USING (id)),`,
+	}
+	for i := 0; strings.Count(b.String(), "\n") < n; i++ {
+		line := lines[i%len(lines)]
+		if strings.Contains(line, "%d") {
+			line = fmt.Sprintf(line, i)
+		}
+		b.WriteString(line + "\n")
+		for range plainLines {
+			b.WriteString("    , col_a, col_b + 1 AS col_c, CAST(col_d AS STRING) AS col_e\n")
+		}
+	}
+	b.WriteString("  z AS (SELECT 1)\nSELECT * FROM z")
+	return []byte(b.String())
+}
+
+// bigDbt is a dbt model of about n lines with ref(), source(), {{ this }},
+// raw ids, comments and tags.
+func bigDbt(n int) []byte {
+	var b strings.Builder
+	b.WriteString("{{ config(materialized='table') }}\nwith\n")
+	lines := []string{
+		`  a%d as (select * from {{ ref('stg_orders') }} o`,
+		`  join {{ source('raw', 'customers') }} c on true`,
+		`  join raw-project.raw.events r using (id)`,
+		`  -- other-proj.sales.orders %d`,
+		`  {# in.a.comment #}`,
+		`  {%% set t = 'in.a.tag' %%}`,
+		`  union all select * from {{ this }}`,
+		`  join {{ ref('missing_%d') }} using (id)),`,
+	}
+	for i := 0; strings.Count(b.String(), "\n") < n; i++ {
+		line := lines[i%len(lines)]
+		if strings.Contains(line, "%") {
+			line = fmt.Sprintf(line, i)
+		}
+		b.WriteString(line + "\n")
+		for range plainLines {
+			b.WriteString("    , col_a, col_b + 1 as col_c, cast(col_d as string) as col_e\n")
+		}
+	}
+	b.WriteString("  z as (select 1)\nselect * from z")
+	return []byte(b.String())
+}
+
+func TestTableRefsMatchesTableRefsAt(t *testing.T) {
+	nav := navProject(t)
+	dbtP := dbtProjects(t)["dbt-core"]
+	read := func(rel string) []byte {
+		src, err := os.ReadFile(filepath.Join(nav.Root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return src
+	}
+	tests := []struct {
+		name string
+		p    Project
+		file string
+		src  []byte
+	}{
+		{"TestTableRefs fixture", nav, filepath.Join(nav.Root, report), []byte("SELECT * FROM ${ref(\"stg_events\")} e\n-- raw-project.raw.events\nJOIN raw-project.raw.events r USING (id)\nJOIN ${ref(\"stg_events\")} again\nWHERE x > (SELECT 1 FROM ${self()})")},
+		{"report", nav, filepath.Join(nav.Root, report), read(report)},
+		{"stg_events", nav, filepath.Join(nav.Root, stgEvents), read(stgEvents)},
+		{"generated sqlx", nav, filepath.Join(nav.Root, report), bigSqlx(2000)},
+		{"generated sqlx without a graph", Project{Root: nav.Root}, filepath.Join(nav.Root, report), bigSqlx(200)},
+		{"TestTableRefsDbt fixture", dbtP, filepath.Join(dbtP.Root, "models", "x.sql"), []byte("select * from {{ ref('stg_orders') }} o join {{ source('raw', 'customers') }} c on true\nunion all select * from {{ this }}")},
+		{"generated dbt", dbtP, filepath.Join(dbtP.Root, "models", "x.sql"), bigDbt(2000)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TableRefs(tt.p, tt.file, tt.src)
+			want := tableRefsByOffset(tt.p, tt.file, tt.src)
+			if len(want) == 0 {
+				t.Fatal("the fixture finds no refs")
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("TableRefs gave %d refs, TableRefsAt %d:\n got %+v\nwant %+v", len(got), len(want), got, want)
+			}
+		})
+	}
+}
+
+func BenchmarkTableRefs(b *testing.B) {
+	nav := navProject(b)
+	dbtP := dbtProjects(b)["dbt-core"]
+	for _, bc := range []struct {
+		name string
+		p    Project
+		file string
+		src  []byte
+	}{
+		{"sqlx", nav, filepath.Join(nav.Root, report), bigSqlx(2000)},
+		{"dbt", dbtP, filepath.Join(dbtP.Root, "models", "x.sql"), bigDbt(2000)},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			for b.Loop() {
+				TableRefs(bc.p, bc.file, bc.src)
+			}
+		})
 	}
 }

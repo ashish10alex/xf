@@ -12,7 +12,7 @@ import (
 	"github.com/ashish10alex/xf/internal/project"
 )
 
-func testdata(t *testing.T, parts ...string) string {
+func testdata(t testing.TB, parts ...string) string {
 	t.Helper()
 	p, err := filepath.Abs(filepath.Join(append([]string{"..", "..", "testdata"}, parts...)...))
 	if err != nil {
@@ -21,7 +21,7 @@ func testdata(t *testing.T, parts ...string) string {
 	return p
 }
 
-func loadGraph(t *testing.T, fixture string) *project.Graph {
+func loadGraph(t testing.TB, fixture string) *project.Graph {
 	t.Helper()
 	data, err := os.ReadFile(testdata(t, fixture))
 	if err != nil {
@@ -39,7 +39,7 @@ func loadGraph(t *testing.T, fixture string) *project.Graph {
 }
 
 // navProject is the navigation fixture project with its compiled graph.
-func navProject(t *testing.T) Project {
+func navProject(t testing.TB) Project {
 	t.Helper()
 	return Project{Root: testdata(t, "projects", "navigation"), Graph: loadGraph(t, "navigation.json")}
 }

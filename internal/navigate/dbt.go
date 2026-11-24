@@ -280,7 +280,12 @@ func MacrosAt(p Project, file string, src []byte, offset int) []MacroRef {
 // dbtTableRefsAt is TableRefsAt for a dbt project: {{ this }}, a ref() or
 // source() call, or a literal table outside tags and comments.
 func dbtTableRefsAt(p Project, file string, src []byte, offset int) []TableRef {
-	tags := jinjaTags(src)
+	return p.dbtTableRefsIn(file, src, offset, newRefScan(src))
+}
+
+// dbtTableRefsIn is dbtTableRefsAt with src's scan shared between offsets.
+func (p Project) dbtTableRefsIn(file string, src []byte, offset int, sc *refScan) []TableRef {
+	tags := sc.jinjaTags()
 	for _, t := range tags {
 		if offset < t.Start || offset > t.End {
 			continue
@@ -290,7 +295,7 @@ func dbtTableRefsAt(p Project, file string, src []byte, offset int) []TableRef {
 				return p.selfRef(file, tok.start, tok.end)
 			}
 		}
-		c, ok := callAt(src, offset)
+		c, ok := callInTag(src, t, offset)
 		if !ok {
 			return nil
 		}
@@ -304,8 +309,8 @@ func dbtTableRefsAt(p Project, file string, src []byte, offset int) []TableRef {
 		}
 		return out
 	}
-	inComment := commentChecker(src)
-	for _, m := range bqTable.FindAllIndex(src, -1) {
+	inComment := sc.inComment()
+	for _, m := range sc.bqTables() {
 		if offset < m[0] || offset > m[1] {
 			continue
 		}

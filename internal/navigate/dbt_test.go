@@ -13,7 +13,7 @@ import (
 
 // dbtProjects are the dbt example with its graph as dbt v2 and dbt-core
 // compiled it.
-func dbtProjects(t *testing.T) map[string]Project {
+func dbtProjects(t testing.TB) map[string]Project {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", "..", "examples", "dbt"))
 	if err != nil {

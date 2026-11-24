@@ -313,16 +313,22 @@ func callAt(src []byte, offset int) (jinjaCall, bool) {
 		if offset < t.Start || offset > t.End {
 			continue
 		}
-		var best jinjaCall
-		found := false
-		for _, c := range jinjaCalls(src, t.Start, t.End) {
-			if offset >= c.Start && offset <= c.End && (!found || c.Start >= best.Start) {
-				best, found = c, true
-			}
-		}
-		return best, found
+		return callInTag(src, t, offset)
 	}
 	return jinjaCall{}, false
+}
+
+// callInTag is callAt once the tag that holds offset is known: the first of
+// src's tags whose Start..End holds it.
+func callInTag(src []byte, t jinjaTag, offset int) (jinjaCall, bool) {
+	var best jinjaCall
+	found := false
+	for _, c := range jinjaCalls(src, t.Start, t.End) {
+		if offset >= c.Start && offset <= c.End && (!found || c.Start >= best.Start) {
+			best, found = c, true
+		}
+	}
+	return best, found
 }
 
 // macroDef matches the tag that opens a macro or generic test definition:
