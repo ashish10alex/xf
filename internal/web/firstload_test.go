@@ -17,7 +17,7 @@ import (
 // fits: when one doesn't, raise it by 25 KB.
 const (
 	maxFirstLoadModules = 59
-	maxFirstLoadBytes   = 1_785_000 // 1,767,319 on 2026-11-24
+	maxFirstLoadBytes   = 1_810_000 // 1,789,540 on 2026-11-24
 	maxFirstLoadDepth   = 4         // main.js is 1
 )
 
