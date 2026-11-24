@@ -77,7 +77,7 @@ func TestProjectInfo(t *testing.T) {
 			t.Errorf("%s = %q from %q, but xf config has %q from %q", s.Key, s.Value, s.From, want.value, want.from)
 		}
 	}
-	if got := strings.Join(keys, " "); got != "dbtProdTarget lineageProjects queryHistoryProjects queryHistoryDays queryHistoryMaxGB deferToProd dbtCompileWithHooks databricksWarehouse databricksProfile snowflakeWarehouse snowflakeConnection defaultBranch usdPerTiB editor theme webTheme webThemeLight webThemeDark scratchWarnGB scratchConfirmGB sourceAutosaveMs diffStyle pythonLanguageServer autoHidePane2 pane2Tab panelPosition wrapLines webAutoExitSeconds webOpenProjectIn webBrowser webBrowserProfile forgePollSeconds vimMode" {
+	if got := strings.Join(keys, " "); got != "dbtProdTarget lineageProjects queryHistoryProjects queryHistoryDays queryHistoryMaxGB deferToProd dbtCompileWithHooks databricksWarehouse databricksProfile snowflakeWarehouse snowflakeConnection defaultBranch usdPerTiB editor theme webTheme webThemeLight webThemeDark scratchWarnGB scratchConfirmGB sourceAutosaveMs diffStyle pythonLanguageServer autoHidePane2 pane2Tab panelPosition wrapLines showHiddenFiles webAutoExitSeconds webOpenProjectIn webBrowser webBrowserProfile forgePollSeconds vimMode" {
 		t.Errorf("settings = %s", got)
 	}
 

@@ -347,6 +347,7 @@ func openWebProject(sf *settingFlags, root, name string) (*web.Project, error) {
 	p.Pane2Tab = settings.Pane2Tab
 	p.PanelPosition = settings.PanelPosition
 	p.WrapLines = settings.WrapLines == "true"
+	p.ShowHiddenFiles = settings.ShowHiddenFiles != "false"
 	p.VimMode = settings.VimMode == "true"
 	p.VimKeys = vimKeys(settings.Settings)
 	if dir := sessionDir(); dir != "" {

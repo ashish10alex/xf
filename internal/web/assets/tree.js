@@ -171,10 +171,12 @@ export function refresh() {
   timer = setTimeout(load, 80);
 }
 
+const showHidden = () => !(S.boot && S.boot.showHiddenFiles === false);
+
 async function load() {
   const n = ++seq;
   try {
-    const v = await get('/api/files?ignored=1');
+    const v = await get(showHidden() ? '/api/files?ignored=1' : '/api/files?hidden=0');
     if (n !== seq) return;
     T.files = v.files || [];
     T.dirs = v.dirs || [];

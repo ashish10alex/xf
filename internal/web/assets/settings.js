@@ -741,8 +741,10 @@ hooks.localClipboard = setLocalClipboard;
 hooks.settingsChanged = (ev) => {
   if (S.boot) {
     if (ev.pane2Tab !== S.boot.pane2Tab) pane2Default(ev.pane2Tab);
-    S.boot.sourceAutosaveMs = ev.sourceAutosaveMs; S.boot.vimKeys = ev.vimKeys; S.boot.diffStyle = ev.diffStyle; S.boot.autoHidePane2 = ev.autoHidePane2; S.boot.pane2Tab = ev.pane2Tab; S.boot.panelPosition = ev.panelPosition; S.boot.wrapLines = ev.wrapLines; S.boot.vimMode = ev.vimMode;
+    const hiddenChanged = S.boot.showHiddenFiles !== ev.showHiddenFiles;
+    S.boot.sourceAutosaveMs = ev.sourceAutosaveMs; S.boot.vimKeys = ev.vimKeys; S.boot.diffStyle = ev.diffStyle; S.boot.autoHidePane2 = ev.autoHidePane2; S.boot.pane2Tab = ev.pane2Tab; S.boot.panelPosition = ev.panelPosition; S.boot.wrapLines = ev.wrapLines; S.boot.showHiddenFiles = ev.showHiddenFiles; S.boot.vimMode = ev.vimMode;
     fitFocus();
+    if (hiddenChanged && hooks.filesChanged) hooks.filesChanged();
   }
   if (ev.openIn) S.openIn = ev.openIn;
   setVimKeys(ev.vimKeys);

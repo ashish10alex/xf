@@ -141,6 +141,10 @@ const (
 	// Scratch, the settings' JSON) rather than scrolling them sideways:
 	// "false" (the default) or "true". It is the user's to set.
 	KeyWrapLines = "wrapLines"
+	// KeyShowHiddenFiles shows dotfiles, dot-folders (other than .git) and
+	// gitignored files and folders (dimmed) in xf web's file tree: "true"
+	// (the default) or "false". It is the user's to set.
+	KeyShowHiddenFiles = "showHiddenFiles"
 	// KeyWebAutoExitSeconds is how long xf web waits, once every browser
 	// window has closed, before it stops; 0 is off. It is the user's to
 	// set, as the themes are.
@@ -312,6 +316,7 @@ var Titles = map[string]string{
 	KeyPane2Tab:             "Pane 2 starts on",
 	KeyPanelPosition:        "Panel position",
 	KeyWrapLines:            "Wrap long lines",
+	KeyShowHiddenFiles:      "Show hidden and ignored files",
 	KeyWebAutoExitSeconds:   "Auto-exit delay",
 	KeyWebOpenProjectIn:     "Open projects in",
 	KeyWebBrowser:           "Browser",
@@ -383,6 +388,7 @@ var Defaults = func() map[string]string {
 		KeyPane2Tab:             Pane2SQL,
 		KeyPanelPosition:        PanelBottom,
 		KeyWrapLines:            "false",
+		KeyShowHiddenFiles:      "true",
 		KeyWebAutoExitSeconds:   strconv.Itoa(DefaultWebAutoExitSeconds) + " (off with --allow-host)",
 		KeyWebOpenProjectIn:     OpenSameTab,
 		KeyWebBrowser:           BrowserDefault,
@@ -398,11 +404,11 @@ var Defaults = func() map[string]string {
 }()
 
 // Keys lists every key in the order they are documented.
-var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyLineageProjects, KeyQueryHistoryProjects, KeyQueryHistoryDays, KeyQueryHistoryMaxGB, KeyDeferToProd, KeyUSDPerTiB, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyPanelPosition, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
+var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyLineageProjects, KeyQueryHistoryProjects, KeyQueryHistoryDays, KeyQueryHistoryMaxGB, KeyDeferToProd, KeyUSDPerTiB, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyPanelPosition, KeyWrapLines, KeyShowHiddenFiles, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFileTree, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
-var userKeys = []string{KeyTheme, KeyPane2Tab, KeyPanelPosition, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
+var userKeys = []string{KeyTheme, KeyPane2Tab, KeyPanelPosition, KeyWrapLines, KeyShowHiddenFiles, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
 	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFileTree, KeyVimFormat}
 
 // Flags maps each key to the flag that sets it; the vim keys, the
@@ -547,6 +553,8 @@ type Settings struct {
 	PanelPosition string
 	// WrapLines is "true" to wrap long lines in xf web's editors
 	WrapLines string
+	// ShowHiddenFiles is "false" to hide dotfiles and gitignored files in xf web's file tree
+	ShowHiddenFiles string
 	// VimMode is "true" to give xf web's editors vim's keys
 	VimMode string
 	// WebAutoExitSeconds is seconds, as a whole number
@@ -711,6 +719,8 @@ func (s *Settings) field(key string) *string {
 		return &s.PanelPosition
 	case KeyWrapLines:
 		return &s.WrapLines
+	case KeyShowHiddenFiles:
+		return &s.ShowHiddenFiles
 	case KeyVimMode:
 		return &s.VimMode
 	case KeyWebAutoExitSeconds:
@@ -1007,7 +1017,7 @@ func (l *Loaded) parse(data []byte, shown, base, home string) error {
 // base.
 func valueOf(key string, raw json.RawMessage, base, home string) (string, error) {
 	var v string
-	if key == KeyDbtCompileWithHooks || key == KeyAutoHidePane2 || key == KeyWrapLines || key == KeyVimMode || key == KeyDeferToProd {
+	if key == KeyDbtCompileWithHooks || key == KeyAutoHidePane2 || key == KeyWrapLines || key == KeyShowHiddenFiles || key == KeyVimMode || key == KeyDeferToProd {
 		var b bool
 		if err := json.Unmarshal(raw, &b); err != nil {
 			return "", fmt.Errorf("%s must be true or false, not %s", key, raw)
@@ -1451,7 +1461,7 @@ func CheckFile(data []byte, user bool) (errs, warns []Problem) {
 // that are one, else a string.
 func rawOf(key, value string) json.RawMessage {
 	switch key {
-	case KeyDbtCompileWithHooks, KeyAutoHidePane2, KeyWrapLines, KeyVimMode, KeyDeferToProd:
+	case KeyDbtCompileWithHooks, KeyAutoHidePane2, KeyWrapLines, KeyShowHiddenFiles, KeyVimMode, KeyDeferToProd:
 		if value == "true" || value == "false" {
 			return json.RawMessage(value)
 		}

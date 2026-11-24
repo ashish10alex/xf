@@ -974,6 +974,7 @@ func (p *projectState) setScratch(o *Project) {
 	p.pane2Tab = o.Pane2Tab
 	p.panelPosition = o.PanelPosition
 	p.wrapLines = o.WrapLines
+	p.showHiddenFiles = o.ShowHiddenFiles
 	p.vimMode = o.VimMode
 	p.vimKeys = o.VimKeys
 }

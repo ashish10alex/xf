@@ -97,6 +97,7 @@ func (p *projectState) files(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	root := p.deps.Root
 	includeIgnored := r.URL.Query().Get("ignored") == "1"
+	hideHidden := r.URL.Query().Get("hidden") == "0"
 	files, dirs, isGit, err := gitFiles(ctx, root)
 	var igFiles, lazyDirs []string
 	if err == nil && includeIgnored {
@@ -116,6 +117,12 @@ func (p *projectState) files(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if hideHidden {
+		files = slices.DeleteFunc(files, hasHiddenSegment)
+		dirs = slices.DeleteFunc(dirs, hasHiddenSegment)
+		igFiles = slices.DeleteFunc(igFiles, hasHiddenSegment)
+		lazyDirs = slices.DeleteFunc(lazyDirs, hasHiddenSegment)
 	}
 	total := len(files) + len(igFiles)
 	v := filesView{
@@ -430,6 +437,17 @@ func hasChildPrefix(sorted []string, prefix string) bool {
 func isGitMetaPath(rel string) bool {
 	for part := range strings.SplitSeq(rel, "/") {
 		if strings.EqualFold(part, ".git") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasHiddenSegment reports whether any component of a slash-separated path
+// starts with a dot (e.g. ".gitignore", ".xf/config.json").
+func hasHiddenSegment(rel string) bool {
+	for part := range strings.SplitSeq(rel, "/") {
+		if strings.HasPrefix(part, ".") {
 			return true
 		}
 	}

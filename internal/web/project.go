@@ -151,6 +151,9 @@ type projectState struct {
 	panelPosition string
 	// wrapLines wraps long lines in the editors (see Project.WrapLines).
 	wrapLines bool
+	// showHiddenFiles shows dotfiles and gitignored entries in the file
+	// tree (see Project.ShowHiddenFiles).
+	showHiddenFiles bool
 	// vimMode gives the editors vim's keys (see Project.VimMode).
 	vimMode bool
 	// openedWith are the values in use, when the project opened, of the
@@ -519,6 +522,8 @@ type projectBoot struct {
 	PanelPosition string `json:"panelPosition"`
 	// WrapLines wraps long lines in the page's editors.
 	WrapLines bool `json:"wrapLines"`
+	// ShowHiddenFiles shows dotfiles and gitignored entries in the file tree.
+	ShowHiddenFiles bool `json:"showHiddenFiles"`
 	// VimMode gives the page's editors vim's keys.
 	VimMode bool `json:"vimMode"`
 	// CommandUses are how often the palette's commands were done, which
@@ -628,6 +633,7 @@ func (p *projectState) boot() *projectBoot {
 		Pane2Tab:         pane2TabOf(p.pane2Tab),
 		PanelPosition:    panelPositionOf(p.panelPosition),
 		WrapLines:        p.wrapLines,
+		ShowHiddenFiles:  p.showHiddenFiles,
 		VimMode:          p.vimMode,
 	}
 }

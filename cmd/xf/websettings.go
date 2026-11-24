@@ -96,6 +96,7 @@ var settingMetas = map[string]settingMeta{
 	config.KeyPane2Tab:             {"Editor", "choice", []string{config.Pane2SQL, config.Pane2Columns}, true},
 	config.KeyPanelPosition:        {"Editor", "choice", []string{config.PanelBottom, config.PanelRight}, true},
 	config.KeyWrapLines:            {"Editor", "bool", nil, true},
+	config.KeyShowHiddenFiles:      {"Editor", "bool", nil, true},
 	config.KeyTheme:                {"Appearance", "choice", themes, true},
 	config.KeyWebTheme:             {"Appearance", "choice", webThemes(""), true},
 	config.KeyWebThemeLight:        {"Appearance", "choice", webThemes(webtheme.Light), true},

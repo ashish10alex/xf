@@ -44,7 +44,7 @@ func (f *fakeSettings) hook() *Settings {
 				v.Levels = append(v.Levels, SettingsLevel{Level: "project", Path: ".xf/config.json"})
 			}
 			userFile, projectFile := f.fileKeys("user"), f.fileKeys("project")
-			for _, k := range []string{config.KeySourceAutosaveMs, config.KeyDbtTarget, config.KeyWebTheme, config.KeyAutoHidePane2, config.KeyPane2Tab, config.KeyPanelPosition, config.KeyWrapLines, config.KeyVimMode} {
+			for _, k := range []string{config.KeySourceAutosaveMs, config.KeyDbtTarget, config.KeyWebTheme, config.KeyAutoHidePane2, config.KeyPane2Tab, config.KeyPanelPosition, config.KeyWrapLines, config.KeyShowHiddenFiles, config.KeyVimMode} {
 				sk := SettingKey{Key: k, Live: k != config.KeyDbtTarget, UserOnly: config.UserOnly(k), From: "default"}
 				if val, ok := f.user[k]; ok {
 					sk.User, sk.Value, sk.From = &val, val, "~/.config/xf/config.json"
@@ -183,6 +183,29 @@ func TestSettingsAutoHidePane2(t *testing.T) {
 	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
 	if !boot.AutoHidePane2 {
 		t.Error("boot autoHidePane2 = false with nothing set, want the default, true")
+	}
+}
+
+// showHiddenFiles is on unless the user sets it to false, and applies at once.
+func TestSettingsShowHiddenFiles(t *testing.T) {
+	f := &fakeSettings{user: map[string]string{}, project: map[string]string{}}
+	opens := 0
+	s, ts, c := newSettingsTest(t, f, &opens)
+	events := openEvents(t, c, ts.URL, "proj")
+
+	postJSON(t, c, ts.URL+"/api/settings", map[string]any{"level": "user", "key": config.KeyShowHiddenFiles, "value": "false"}, nil)
+	events.until(t, "settings", `"showHiddenFiles":false`)
+	var boot projectBoot
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
+	if boot.ShowHiddenFiles {
+		t.Error("boot showHiddenFiles = true after setting false")
+	}
+
+	postJSON(t, c, ts.URL+"/api/settings", map[string]any{"level": "user", "key": config.KeyShowHiddenFiles, "unset": true}, nil)
+	events.until(t, "settings", `"showHiddenFiles":true`)
+	getJSON(t, c, ts.URL+"/api/boot?project="+s.startKey, &struct{ Project *projectBoot }{&boot})
+	if !boot.ShowHiddenFiles {
+		t.Error("boot showHiddenFiles = false with nothing set, want the default, true")
 	}
 }
 

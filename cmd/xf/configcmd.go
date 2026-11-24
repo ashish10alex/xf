@@ -365,6 +365,8 @@ func defaultSetting(key string, l config.Loaded, root string) (value, from strin
 		return config.PanelBottom, "default"
 	case config.KeyWrapLines:
 		return "false", "default: long lines scroll sideways"
+	case config.KeyShowHiddenFiles:
+		return "true", "default: hidden and gitignored files show dimmed in the file tree"
 	case config.KeyVimMode:
 		return "false", "default: the usual editor keys"
 	case config.KeyWebOpenProjectIn:

@@ -1427,6 +1427,22 @@ export async function togglePanelPosition() {
   }
 }
 
+const showHiddenFiles = () => !(S.boot && S.boot.showHiddenFiles === false);
+
+async function toggleShowHiddenFiles() {
+  const next = !showHiddenFiles();
+  if (S.boot) S.boot.showHiddenFiles = next;
+  if (hooks.filesChanged) hooks.filesChanged();
+  redraw();
+  const verb = next ? 'showing' : 'hiding';
+  try {
+    await post('/api/settings', { level: 'user', key: 'showHiddenFiles', value: String(next) });
+    say(verb + ' hidden and ignored files');
+  } catch (e) {
+    say(verb + ' hidden and ignored files (this tab only: ' + e.message + ')');
+  }
+}
+
 // togglePanel is ⌘j (ctrl+j off a Mac), as VS Code's: it hides the log
 // pane, or shows it again on the tab it showed last, the terminal's too,
 // with the keys.
@@ -2184,6 +2200,7 @@ function commands() {
   }
   if (hooks.toggleTree) toggle('View: file tree', hooks.treeShown() && !hooks.scmShown() && !hooks.projectsShown(), onMac ? '⌘b' : 'ctrl+b', hooks.toggleTree);
   if (hooks.revealActive) add('View: show the open file in the file tree', revealKey, hooks.revealActive);
+  if (hooks.toggleTree) toggle('View: hidden and ignored files in file tree', showHiddenFiles(), '', toggleShowHiddenFiles);
   if (hooks.toggleProjects) toggle('View: projects', hooks.projectsShown(), projectsKey, hooks.toggleProjects);
   add('View: open projects', '', openProjectList);
   if (hooks.toggleSCM) toggle('View: source control', hooks.scmShown(), 'ctrl+g', hooks.toggleSCM);

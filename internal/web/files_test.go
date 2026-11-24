@@ -162,6 +162,22 @@ func TestFilesFromGitWithIgnoredAndLazyDir(t *testing.T) {
 		t.Errorf("plain /api/files returned lazyDirs = %v", plain.LazyDirs)
 	}
 
+	// With hidden=0 (showHiddenFiles=false): dotfiles, dot-folders and ignored files are omitted.
+	var noHidden filesView
+	getJSON(t, c, ts.URL+"/api/files?hidden=0", &noHidden)
+	noHiddenRows := rowsByPath(noHidden)
+	for _, hidden := range []string{".gitignore", ".xf/config.json", ".env", "debug.log"} {
+		if _, ok := noHiddenRows[hidden]; ok {
+			t.Errorf("/api/files?hidden=0 included %s", hidden)
+		}
+	}
+	if _, ok := noHiddenRows["definitions/orders.sqlx"]; !ok {
+		t.Errorf("/api/files?hidden=0 missing definitions/orders.sqlx")
+	}
+	if len(noHidden.LazyDirs) != 0 {
+		t.Errorf("/api/files?hidden=0 returned lazyDirs = %v", noHidden.LazyDirs)
+	}
+
 	// With ignored=1 (file explorer): ignored files are included and marked,
 	// collapsed ignored folders appear in LazyDirs without recursing into them.
 	var v filesView

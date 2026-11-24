@@ -203,6 +203,9 @@ type Project struct {
 	PanelPosition string
 	// WrapLines wraps long lines in the page's editors.
 	WrapLines bool
+	// ShowHiddenFiles shows dotfiles, dot-folders (other than .git) and
+	// gitignored files and folders (dimmed) in the file tree.
+	ShowHiddenFiles bool
 	// VimMode gives the page's editors vim's keys.
 	VimMode bool
 	// VimKeys are the keys of the editor's own vim commands, by config

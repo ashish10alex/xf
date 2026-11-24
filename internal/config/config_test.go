@@ -395,6 +395,9 @@ func TestWebAutoExitSecondsIsTheUsers(t *testing.T) {
 	if !UserOnly(KeyWrapLines) {
 		t.Error("wrapLines isn't user-only")
 	}
+	if !UserOnly(KeyShowHiddenFiles) {
+		t.Error("showHiddenFiles isn't user-only")
+	}
 	if !UserOnly(KeyVimMode) || Flags[KeyVimMode] != "" || IsVimKey(KeyVimMode) {
 		t.Error("vimMode isn't user-only with no flag, apart from the vim keys")
 	}

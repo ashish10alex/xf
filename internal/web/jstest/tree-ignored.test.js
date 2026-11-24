@@ -4,11 +4,13 @@
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { S } from '../assets/state.js';
+import { S, hooks } from '../assets/state.js';
 import { SRC } from '../assets/source.js';
-import { T, key, rows, clickRow, reveal, loadDir } from '../assets/tree.js';
+import { T, key, rows, clickRow, reveal, loadDir, refresh } from '../assets/tree.js';
+import '../assets/settings.js';
 
 let dirCalls = [];
+let filesCalls = [];
 let dirResponses = {};
 
 globalThis.fetch = async (url) => {
@@ -19,11 +21,20 @@ globalThis.fetch = async (url) => {
     const body = dirResponses[p] || { files: [], dirs: [] };
     return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
   }
+  if (u.pathname === '/api/files') {
+    filesCalls.push(u.pathname + u.search);
+    const hide = u.searchParams.get('hidden') === '0';
+    const body = hide
+      ? { files: [{ path: 'definitions/orders.sqlx' }], dirs: [], git: true }
+      : { files: [{ path: '.env', ignored: true }, { path: 'definitions/orders.sqlx' }], dirs: [], lazyDirs: ['node_modules'], git: true };
+    return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+  }
   return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
 };
 
 beforeEach(() => {
   dirCalls = [];
+  filesCalls = [];
   dirResponses = {
     node_modules: {
       files: [{ path: 'node_modules/top.txt', ignored: true }],
@@ -131,4 +142,21 @@ test('loadDir prunes removed subdirectories from dirEntries on refresh', async (
   dirResponses.node_modules = { files: [{ path: 'node_modules/top.txt', ignored: true }], dirs: [] };
   await loadDir('node_modules');
   assert.equal(T.dirEntries['node_modules/pkg'], undefined);
+});
+
+test('showHiddenFiles setting switches /api/files query and refreshes live on change', async () => {
+  S.boot.showHiddenFiles = true;
+  refresh();
+  await new Promise((r) => setTimeout(r, 110));
+  assert.deepEqual(filesCalls, ['/api/files?ignored=1']);
+  assert.ok(rows().some((r) => r.path === '.env'));
+  assert.ok(rows().some((r) => r.path === 'node_modules'));
+
+  // Flipping showHiddenFiles via settingsChanged refreshes the tree with hidden=0.
+  hooks.settingsChanged({ showHiddenFiles: false });
+  await new Promise((r) => setTimeout(r, 110));
+  assert.deepEqual(filesCalls, ['/api/files?ignored=1', '/api/files?hidden=0']);
+  assert.deepEqual(rows().map((r) => r.path), ['definitions', 'definitions/orders.sqlx'].filter((p) => p === 'definitions'));
+  assert.deepEqual(T.lazyDirs, []);
+  assert.deepEqual(T.dirEntries, {});
 });
