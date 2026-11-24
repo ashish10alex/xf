@@ -57,16 +57,62 @@ export const isFunctionName = (word) => !!fns() && fns().byName.has(word.toUpper
 // scan is each bracket open at the end of text, with the commas and words
 // written at its own level, and whether the end is in code rather than in a
 // string or a comment. # begins a comment in BigQuery alone.
-function scan(text) {
-  const frames = [];
+//
+// Each keystroke scans the text up to the cursor again, so scan resumes
+// from the last run: it keeps a copy of the brackets every CHECKPOINT
+// characters, and starts again at the last copy before the first character
+// that differs. A copy at i holds for any text that agrees up to and with
+// text[i], as no step looks further than one character past where it stops:
+// a word or a number ends at the first character not in it, and -- and the
+// triple quote are read ahead. An unclosed comment or string ends the scan,
+// so a longer text runs on past it from a copy.
+const CHECKPOINT = 2048;
+let memo = null; // { text, hash, marks: [{ at, frames }], result }
+
+const copyFrames = (frames) => frames.map((f) => ({ name: f.name, separators: f.separators.slice() }));
+
+export function scan(text) {
   const hash = onBigQuery();
-  let i = 0;
+  if (memo && memo.hash === hash && memo.text === text) return memo.result;
+  let marks = [];
+  if (memo && memo.hash === hash) {
+    const prev = memo.text;
+    const n = Math.min(prev.length, text.length);
+    let same = 0;
+    while (same < n && prev.charCodeAt(same) === text.charCodeAt(same)) same++;
+    let k = memo.marks.length;
+    while (k > 0 && memo.marks[k - 1].at >= same) k--;
+    marks = memo.marks.slice(0, k);
+  }
+  const result = scanFrom(text, hash, marks);
+  memo = { text, hash, marks, result };
+  return result;
+}
+
+// scanFresh is scan from the start, past the memo, and scanMarks where the
+// memo's copies are: for tests.
+export function scanFresh(text) {
+  return scanFrom(text, onBigQuery(), []);
+}
+export const scanMarks = () => (memo ? memo.marks.map((m) => m.at) : []);
+
+// scanFrom runs the scan from the last of marks, adding a mark each
+// CHECKPOINT characters on.
+function scanFrom(text, hash, marks) {
+  const last = marks[marks.length - 1];
+  const frames = last ? copyFrames(last.frames) : [];
+  let i = last ? last.at : 0;
+  let next = i + CHECKPOINT;
   const skipTo = (end, from) => {
     const at = text.indexOf(end, from);
     i = at < 0 ? text.length : at + end.length;
     return at >= 0;
   };
   while (i < text.length) {
+    if (i >= next) {
+      marks.push({ at: i, frames: copyFrames(frames) });
+      next = i + CHECKPOINT;
+    }
     const c = text[i];
     const two = text.slice(i, i + 2);
     if (two === '--' || (c === '#' && hash)) {
@@ -147,7 +193,7 @@ function activeParameter(params, separators) {
 
 // callInfo is the catalogued call text ends in: the function, the
 // signature the call fits first, and the param the cursor is at.
-function callInfo(text) {
+export function callInfo(text) {
   const call = callAt(text);
   const fn = call && functionNamed(call.name);
   if (!fn || !fn.signatures) return null;
@@ -304,7 +350,9 @@ export function functionCard(f, compact) {
 // function completed; off when the cursor leaves every call, or on esc.
 const setSig = cm.StateEffect.define();
 
-// sigField is the signature help reading the text through textOf.
+// sigField is the signature help reading the text through textOf: false
+// when off, or { info }, the call the cursor is in, worked out once per
+// transaction and read by the tooltip.
 function sigField(textOf) {
   const sigInfo = (state) => {
     const text = textOf(state);
@@ -312,22 +360,32 @@ function sigField(textOf) {
   };
   return cm.StateField.define({
     create: () => false,
-    update(on, tr) {
-      for (const e of tr.effects) if (e.is(setSig)) return e.value;
+    update(sig, tr) {
+      for (const e of tr.effects) if (e.is(setSig)) return e.value ? { info: sigInfo(tr.state) } : false;
+      let on = !!sig;
       if (tr.docChanged && tr.isUserEvent('input')) {
         let typed = '';
         tr.changes.iterChanges((_a, _b, _c, _d, ins) => { typed += ins.toString(); });
         if (/[(, ]/.test(typed) || tr.isUserEvent('input.complete')) on = true;
       }
-      if (on && (tr.docChanged || tr.selection)) on = !!sigInfo(tr.state);
-      return on;
+      if (!on) return false;
+      if (tr.docChanged || tr.selection) {
+        const info = sigInfo(tr.state);
+        return info ? { info } : false;
+      }
+      return sig;
     },
     provide: (f) => cm.showTooltip.compute([f, 'doc', 'selection'], (state) => {
-      if (!state.field(f)) return null;
-      const info = sigInfo(state);
+      const sig = state.field(f);
+      const info = sig && sig.info;
       return info ? { pos: state.selection.main.head, above: true, create: () => ({ dom: sigDOM(info) }) } : null;
     }),
   });
+}
+
+// escapeSig turns the signature help off on esc, when it is on.
+export function escapeSig(view, sigOn) {
+  if (view.state.field(sigOn, false)) view.dispatch({ effects: setSig.of(false) });
 }
 
 function sigDOM({ fn, actives, sig, param }) {
@@ -357,7 +415,7 @@ export function functionExtensions(textOf = wholeText) {
     sigOn,
     cm.EditorView.domEventHandlers({
       keydown(e, view) {
-        if (e.key === 'Escape' && view.state.field(sigOn, false)) view.dispatch({ effects: setSig.of(false) });
+        if (e.key === 'Escape') escapeSig(view, sigOn);
         return false;
       },
     }),
