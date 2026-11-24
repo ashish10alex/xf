@@ -6,8 +6,9 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { S, hooks } from '../assets/state.js';
 import { SRC } from '../assets/source.js';
-import { G, rows, key, clickRow, getDraft, formatRange, shortAge, blameSegments, blameShortName, clearBlameLens } from '../assets/scm.js';
+import { G, rows, key, clickRow, getDraft, formatRange, shortAge, blameSegments, blameShortName, clearBlameLens, refresh } from '../assets/scm.js';
 import { F } from '../assets/forge.js';
+import { recheckForces } from '../assets/source-editor.js';
 
 const st = () => ({ branch: 'feat', head: 'abc', op: '', conflicts: [], staged: [], changes: [], stashes: [] });
 
@@ -202,4 +203,55 @@ test('formatRange, shortAge, and blameShortName format compactly', () => {
   assert.equal(shortAge(Math.floor(now / 1000) - 10, now), 'now');
   assert.equal(shortAge(Math.floor(now / 1000) - 3 * 86400, now), '3d');
   assert.equal(shortAge(Math.floor(now / 1000) - 2 * 3600, now), '2h');
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const json = (v, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
+
+// Source Control's status read tells the source pane when HEAD moved, so
+// a recheck of the same file blames again only then.
+test('a status read with a new HEAD calls hooks.headMoved once; the same HEAD again does not', async () => {
+  const savedFetch = globalThis.fetch, savedBoot = S.boot, savedMoved = hooks.headMoved;
+  let status = { ...st(), head: 'aaa1111', busy: '', error: '' };
+  let fail = false;
+  globalThis.fetch = async (url) => {
+    if (String(url) !== '/api/scm') return json({});
+    return fail ? json({ error: 'git broke' }, 500) : json(status);
+  };
+  S.boot = { ...(S.boot || {}), root: '/r/head-moved', sep: '/' };
+  const moved = [];
+  hooks.headMoved = () => moved.push(hooks.gitHead());
+  try {
+    refresh(); await sleep(120);
+    assert.deepEqual(moved, ['aaa1111'], 'the first good read counts, with gitHead already new');
+
+    refresh(); await sleep(120);
+    assert.deepEqual(moved, ['aaa1111'], 'the same HEAD again does not');
+
+    fail = true;
+    refresh(); await sleep(120);
+    assert.deepEqual(moved, ['aaa1111'], 'a failed read is no new HEAD');
+    assert.equal(hooks.gitHead(), null, 'no HEAD known after a failed read');
+
+    fail = false;
+    refresh(); await sleep(120);
+    assert.deepEqual(moved, ['aaa1111'], 'the same HEAD after a failed read does not');
+
+    status = { ...status, head: 'bbb2222' };
+    refresh(); await sleep(120);
+    assert.deepEqual(moved, ['aaa1111', 'bbb2222'], 'a new HEAD does, once');
+  } finally {
+    globalThis.fetch = savedFetch;
+    S.boot = savedBoot;
+    hooks.headMoved = savedMoved;
+  }
+});
+
+test('recheckForces blames again with no HEAD known or a HEAD that moved', () => {
+  assert.equal(recheckForces('abc', null), true, 'no status');
+  assert.equal(recheckForces('abc', undefined), true, 'no Source Control');
+  assert.equal(recheckForces(null, null), true);
+  assert.equal(recheckForces('abc', 'abc'), false, 'same HEAD');
+  assert.equal(recheckForces('abc', 'def'), true, 'HEAD moved');
+  assert.equal(recheckForces(null, 'abc'), true, 'never blamed at a known HEAD');
 });

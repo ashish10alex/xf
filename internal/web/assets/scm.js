@@ -59,6 +59,7 @@ let draft = '';
 function restore() {
   if (loadedFor === root()) return;
   loadedFor = root();
+  lastHead = undefined;
   Object.assign(G, { loaded: false, error: '', st: null, busy: '', failed: '', cursor: '', filter: '', filtering: false,
     blame: { file: '', state: 'none', error: '', summary: null }, blameLens: '', blameActive: null,
     commits: [], more: false, logLoaded: false, logHead: '', commitFiles: {}, stashFiles: {}, prompt: null, amend: false, output: null, diff: null });
@@ -98,6 +99,8 @@ export function setDraft(text) {
 export const shown = () => T.shown && T.view === 'scm';
 
 let seq = 0, timer = 0;
+// lastHead is HEAD as the last good status read had it (undefined before one).
+let lastHead;
 
 // A git command shows as running (the header's spinner, the status bar's
 // "git: …") once it has run for busyDelay: staging or discarding a file
@@ -134,6 +137,12 @@ async function load() {
     setBusy(v.busy);
     G.error = v.error || '';
     G.loaded = true;
+    // A new HEAD (a commit, amend, reset, pull or checkout) changes the
+    // source pane's blame; the first load counts, for a blame asked before.
+    if (!G.error && v.head !== lastHead) {
+      lastHead = v.head;
+      if (hooks.headMoved) hooks.headMoved();
+    }
     if (G.open.commits && (!G.logLoaded || G.logHead !== logKey(v))) loadLog(false);
     keepStashes(v.stashes);
     if (!G.cursor || !rows().some((r) => r.key === G.cursor)) G.cursor = firstRow();
@@ -1233,6 +1242,8 @@ hooks.scmEvent = (ev) => {
 };
 hooks.stageText = stageText;
 hooks.scmCount = count;
+// gitHead is HEAD's short SHA, or null while there is no good status.
+hooks.gitHead = () => (G.loaded && !G.error && G.st ? G.st.head : null);
 hooks.blameSummaryWanted = () => { restore(); return !!(hooks.scmShown ? hooks.scmShown() : shown()) && !!G.open.blame; };
 hooks.blameUpdated = (info) => {
   const file = (info && info.file) || '';

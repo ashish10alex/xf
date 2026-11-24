@@ -77,6 +77,18 @@ let blameEditTimer = 0;
 const blameWanted = () => blameOn || !!(hooks.blameSummaryWanted && hooks.blameSummaryWanted());
 const notifyBlame = (info) => { if (hooks.blameUpdated) hooks.blameUpdated(info); };
 
+// blamedHead is HEAD (Source Control's gitHead) when the blame shown was
+// last asked for. A recheck asks again only when HEAD moved since:
+// edits since then stay mapped onto that blame (blame.js).
+let blamedHead = null;
+
+// recheckForces says whether a recheck of the same file asks git again:
+// yes with no HEAD known (no status, or it failed), or a HEAD that moved.
+export function recheckForces(blamedHead, head) {
+  if (head == null) return true;
+  return head !== blamedHead;
+}
+
 // blameShown asks for the blame of v, the file view shows, or clears it
 // when neither inline blame nor the blame summary wants it.
 function blameShown(view, v, force = true) {
@@ -94,7 +106,15 @@ function blameShown(view, v, force = true) {
   }
   const ask = (m) => {
     view.dispatch({ effects: m.setBlameInline.of(blameOn) });
-    m.refreshBlame(view, file, base, true, notifyBlame, { force });
+    // A request sent says 'loading' at once; record the HEAD it is for.
+    const head = hooks.gitHead ? hooks.gitHead() : null;
+    let asking = true, sent = false;
+    m.refreshBlame(view, file, base, true, (info) => {
+      if (asking && info && info.state === 'loading') sent = true;
+      notifyBlame(info);
+    }, { force });
+    asking = false;
+    if (sent && head != null) blamedHead = head;
   };
   if (blameMod) { ask(blameMod); return; }
   notifyBlame({ file, state: 'loading', summary: null });
@@ -219,8 +239,11 @@ function mountSourceEditor(parent) {
     if (v) ed.setLanguage(languageFor(v.lang, dbt()));
     blameShown(ed.view, v, true);
   };
-  // The file is as it was, but a commit may have changed its blame.
-  hooks.sourceRechecked = () => blameShown(ed.view, SRC.view, true);
+  // The file is as it was: blame again only when HEAD moved since the
+  // blame shown (a commit, amend, reset, pull or checkout).
+  hooks.sourceRechecked = () => blameShown(ed.view, SRC.view, recheckForces(blamedHead, hooks.gitHead ? hooks.gitHead() : null));
+  // Source Control read a new HEAD.
+  hooks.headMoved = () => { if (SRC.view) blameShown(ed.view, SRC.view, true); };
   // Autosave waits for the end of insert mode; without vim, for a pause
   // in typing (source.js). Vim switched on afresh is a new adapter.
   const followMode = () => { const adapter = cm.getCM(ed.view); if (adapter) adapter.on('vim-mode-change', (e) => onMode(e.mode)); };
