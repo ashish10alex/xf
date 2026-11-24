@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/ashish10alex/xf/internal/engine"
 	"github.com/ashish10alex/xf/internal/frontend"
@@ -284,6 +286,71 @@ func TestSourceCompleteAndRefs(t *testing.T) {
 	// Only an action's file.
 	if st := postStatus(t, c, ts.URL+"/api/source/refs", map[string]any{"file": "includes/x.js", "text": text}, nil); st != http.StatusForbidden {
 		t.Errorf("refs of a non-action file: status %d", st)
+	}
+
+	// An emoji is 4 bytes and 2 units; é is 2 bytes and 1 unit. Every
+	// offset below comes after both.
+	text = "-- 🎉 café\nSELECT * FROM ${ref(\"customers\")} AS c\nJOIN ${ref(\"customers\")} AS d JOIN $cus"
+	u16 := utf16.Encode([]rune(text))
+	span := func(from, to int) string { return string(utf16.Decode(u16[from:to])) }
+	comp.Items = nil
+	postJSON(t, c, ts.URL+"/api/source/complete", map[string]any{"file": "definitions/orders.sqlx", "text": text, "offset": len(u16)}, &comp)
+	if len(comp.Items) == 0 {
+		t.Fatal("no completions after an emoji")
+	}
+	for _, it := range comp.Items {
+		if got := span(it.From, len(u16)); got != "$cus" {
+			t.Errorf("%s: from %d replaces %q", it.Label, it.From, got)
+		}
+	}
+	refs.Refs, refs.JS = nil, nil
+	postJSON(t, c, ts.URL+"/api/source/refs", map[string]any{"file": "definitions/orders.sqlx", "text": text}, &refs)
+	want := []string{`ref("customers")`, `ref("customers")`}
+	var gotRefs, gotJS []string
+	for _, r := range refs.Refs {
+		gotRefs = append(gotRefs, span(r.From, r.To))
+	}
+	for _, s := range refs.JS {
+		gotJS = append(gotJS, span(s[0], s[1]))
+	}
+	if !slices.Equal(gotRefs, want) || !slices.Equal(gotJS, want) {
+		t.Errorf("after an emoji: refs cover %q, js spans cover %q", gotRefs, gotJS)
+	}
+}
+
+// utf16Offsets answers as unitsAt does for every offset, asked in any
+// order: out of range, in the middle of a rune, and past a CRLF.
+func TestUTF16OffsetsMatchUnitsAt(t *testing.T) {
+	for _, s := range []string{
+		"",
+		"SELECT 1\nFROM t",
+		"-- é\nSELECT 'é'",
+		"-- 🎉 x 😀\n${ref(\"a\")}",
+		"a\r\nb é\r\n🎉\r\n",
+		"é🎉e\u0301\xff",
+	} {
+		check := func(order string, units func(int) int, offsets []int) {
+			for _, b := range offsets {
+				if got, want := units(b), unitsAt(s, b); got != want {
+					t.Errorf("%q %s: offset %d = %d, unitsAt says %d", s, order, b, got, want)
+				}
+			}
+		}
+		rising := []int{-3, -1}
+		for b := 0; b <= len(s); b++ {
+			rising = append(rising, b)
+		}
+		rising = append(rising, len(s)+1, len(s)+10)
+		check("rising", utf16Offsets(s), rising)
+		r := rand.New(rand.NewPCG(1, uint64(len(s))))
+		for range 5 {
+			shuffled := slices.Clone(rising)
+			r.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+			check("shuffled", utf16Offsets(s), shuffled)
+		}
+		// One function, asked rising, then again from the start.
+		units := utf16Offsets(s)
+		check("rising twice", units, append(slices.Clone(rising), rising...))
 	}
 }
 

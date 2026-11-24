@@ -455,6 +455,37 @@ func unitsAt(s string, b int) int {
 	return n
 }
 
+// utf16Offsets answers unitsAt(s, b) for many offsets in s without
+// walking s from the start for each: it walks on from the last answer
+// while the offsets rise, and starts again only when one is lower.
+func utf16Offsets(s string) func(b int) int {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return func(b int) int {
+			return min(max(b, 0), len(s))
+		}
+	}
+	// n is the UTF-16 length of s[:pos], and pos is a rune's start.
+	pos, n := 0, 0
+	return func(b int) int {
+		if b < pos {
+			pos, n = 0, 0
+		}
+		for pos < len(s) && pos < b {
+			r, size := utf8.DecodeRuneInString(s[pos:])
+			n += utf16Len(r)
+			pos += size
+		}
+		return n
+	}
+}
+
 func utf16Len(r rune) int {
 	if r >= 0x10000 {
 		return 2
@@ -510,6 +541,7 @@ func (p *projectState) sourceComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	src := []byte(req.Text)
 	out := []completionView{}
+	units := utf16Offsets(req.Text)
 	for _, c := range navigate.Completions(p.navProject(), abs, src, byteAt(req.Text, req.Offset)) {
 		kind := "ref"
 		switch c.Kind {
@@ -525,7 +557,7 @@ func (p *projectState) sourceComplete(w http.ResponseWriter, r *http.Request) {
 			kind = "configValue"
 		}
 		out = append(out, completionView{Label: c.Label, Detail: c.Detail, Insert: c.InsertText, Filter: c.FilterText,
-			From: unitsAt(req.Text, c.Start), Kind: kind})
+			From: units(c.Start), Kind: kind})
 	}
 	writeJSON(w, struct {
 		Items []completionView `json:"items"`
@@ -566,8 +598,9 @@ func (p *projectState) sourceRefs(w http.ResponseWriter, r *http.Request) {
 	}
 	src := []byte(req.Text)
 	refs := []refView{}
+	units := utf16Offsets(req.Text)
 	for _, t := range navigate.TableRefs(p.navProject(), abs, src) {
-		v := refView{From: unitsAt(req.Text, t.Start), To: unitsAt(req.Text, t.End),
+		v := refView{From: units(t.Start), To: units(t.End),
 			Project: t.Target.Database, Dataset: t.Target.Schema, Table: t.Target.Name, HasTable: true}
 		switch t.Source {
 		case navigate.SourceRaw:
@@ -590,7 +623,7 @@ func (p *projectState) sourceRefs(w http.ResponseWriter, r *http.Request) {
 	js := [][2]int{}
 	if langOf(req.File) == "sqlx" {
 		for _, s := range navigate.JSSpans(src) {
-			js = append(js, [2]int{unitsAt(req.Text, s[0]), unitsAt(req.Text, s[1])})
+			js = append(js, [2]int{units(s[0]), units(s[1])})
 		}
 	}
 	writeJSON(w, struct {
@@ -768,6 +801,7 @@ func (p *projectState) sourceSymbols(w http.ResponseWriter, r *http.Request) {
 	}
 	syms = navigate.ReferencesFirst(syms)
 	out := make([]symbolView, 0, len(syms))
+	units := utf16Offsets(req.Text)
 	for _, s := range syms {
 		selStart, selEnd := s.SelStart, s.SelEnd
 		if selStart == 0 && selEnd == 0 && (s.Start != 0 || s.End != 0) {
@@ -781,8 +815,8 @@ func (p *projectState) sourceSymbols(w http.ResponseWriter, r *http.Request) {
 			Name:   s.Name,
 			Kind:   s.Kind.Detail(),
 			Detail: s.Kind.Detail(),
-			From:   unitsAt(req.Text, selStart),
-			To:     unitsAt(req.Text, selEnd),
+			From:   units(selStart),
+			To:     units(selEnd),
 			Line:   line + 1,
 			Col:    col,
 		})
