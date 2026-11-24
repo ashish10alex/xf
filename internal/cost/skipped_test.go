@@ -47,12 +47,12 @@ func TestSkipsGroupByWhy(t *testing.T) {
 		}
 		got = append(got, gr)
 	}
-	hint := "A dry run needs every table it reads to exist. A table this branch adds exists only once a run builds it."
+	hint := MissingHint
 	want := []group{
 		{"Reads a table not in BigQuery (location EU)", hint, []row{
 			{"acme.marts.b", "acme.marts.a_new", "new on this branch"},
 			{"acme.checks.c", "acme.raw.gone", ""},
-			{"acme.marts.d", "acme.marts.orders", "changed on this branch"},
+			{"acme.marts.d", "acme.marts.orders", "never built in prod"},
 		}},
 		{"BigQuery gave no estimate", "", []row{{"acme.marts.a_new", "", ""}}},
 		{"dry run failed: Syntax error", "", []row{{"acme.marts.e", "", ""}}},

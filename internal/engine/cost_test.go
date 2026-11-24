@@ -68,9 +68,8 @@ func costEngine(t *testing.T, g *project.Graph, cs ChangesSource, fc *fakeCost) 
 
 var worktreeCost = CostRequest{DefaultBranch: "main", Head: changes.HeadWorktree}
 
-// The check hears whether defer to prod is on, and keeps a report for
-// each, as tables are read from dev only with it on.
-func TestQueryCostFollowsDeferToProd(t *testing.T) {
+// QueryCost keys reports by StandIns independently of defer to prod.
+func TestQueryCostKeysByStandIns(t *testing.T) {
 	fc := &fakeCost{}
 	g := loadGraph(t, "basic.json")
 	e := New(Config{Compile: func(context.Context) (*project.Graph, error) { return dataform.ParseCompileJSON(g.JSON) },
@@ -80,23 +79,26 @@ func TestQueryCostFollowsDeferToProd(t *testing.T) {
 	_ = e.Start(ctx)
 	<-e.FirstCompile()
 
-	req := worktreeCost
-	req.Defer = true // a client can't say: the engine does
-	if _, err := e.QueryCost(ctx, req, nil); err != nil {
+	if _, err := e.QueryCost(ctx, worktreeCost, nil); err != nil {
 		t.Fatal(err)
 	}
+	withStandIns := worktreeCost
+	withStandIns.StandIns = true
+	if _, err := e.QueryCost(ctx, withStandIns, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Cached for both StandIns=false and StandIns=true even if Defer changes.
 	e.SetDefer(true)
 	if _, err := e.QueryCost(ctx, worktreeCost, nil); err != nil {
 		t.Fatal(err)
 	}
-	e.SetDefer(false)
-	if _, err := e.QueryCost(ctx, worktreeCost, nil); err != nil {
+	if _, err := e.QueryCost(ctx, withStandIns, nil); err != nil {
 		t.Fatal(err)
 	}
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
-	if len(fc.reqs) != 2 || fc.reqs[0].Defer || !fc.reqs[1].Defer {
-		t.Fatalf("checks %+v, want one with defer off, one with it on, and the first kept for off", fc.reqs)
+	if len(fc.reqs) != 2 || fc.reqs[0].StandIns || !fc.reqs[1].StandIns {
+		t.Fatalf("checks %+v, want one without stand-ins and one with stand-ins, both cached", fc.reqs)
 	}
 }
 

@@ -88,6 +88,32 @@ func Retarget(res *changes.Result, g, other *project.Graph) (*changes.Result, ma
 		d.ID, d.Parent, d.RenamedTo = id(d.ID), id(d.Parent), id(d.RenamedTo)
 		out.Deleted[i] = d
 	}
+	if len(res.Declared) > 0 {
+		// Match sources across targets by FileName + Target.Name when distinct.
+		otherSources := map[string]*project.Action{}
+		ambigSource := map[string]bool{}
+		for _, a := range other.Actions {
+			if a.Kind != project.KindSource {
+				continue
+			}
+			key := a.FileName + "\x00" + a.Target.Name
+			if existing, ok := otherSources[key]; ok && existing.ID != a.ID {
+				ambigSource[key] = true
+			}
+			otherSources[key] = a
+		}
+		out.Declared = make([]changes.DeclChange, len(res.Declared))
+		for i, d := range res.Declared {
+			key := d.FileName + "\x00" + d.Target.Name
+			if o := otherSources[key]; o != nil && !ambigSource[key] {
+				if o.ID != d.ID {
+					toOther[string(d.ID)] = string(o.ID)
+				}
+				d.ID, d.Target = o.ID, o.Target
+			}
+			out.Declared[i] = d
+		}
+	}
 	for from, to := range deleted {
 		toOther[from] = to
 	}

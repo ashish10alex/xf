@@ -29,6 +29,12 @@ type Skipped struct {
 	// that table, Changed when it changes it.
 	Missing, Location string
 	New, Changed      bool
+	// Kind classifies Missing by who builds it and whether this branch touches
+	// it (empty when Missing == "").
+	Kind MissingKind
+	// FileName and From identify a declaration/source when Kind == MissingPrereq.
+	FileName string
+	From     string
 	// Waits are, when New is set, every table the branch adds that the
 	// dry run waits on a run to build, Missing first.
 	Waits []string
@@ -54,7 +60,7 @@ func (a Action) WhyNot() string {
 var notFoundRE = regexp.MustCompile(`^dry run failed: Not found: (Table|View|Dataset) (\S+) was not found in location (\S+)`)
 
 // MissingHint says why a dry run reads a table BigQuery doesn't have.
-const MissingHint = "A dry run needs every table it reads to exist. A table this branch adds exists only once a run builds it."
+const MissingHint = "A dry run needs every table it reads to exist. A table this branch adds exists only once a run builds it; an external declaration must be loaded outside Dataform."
 
 // SkippedActions are the actions of r without an estimate, in r's order.
 func SkippedActions(r *Report) []Skipped {
@@ -65,6 +71,10 @@ func SkippedActions(r *Report) []Skipped {
 		if a.DryRunAs != "" {
 			byName[strings.ToLower(a.DryRunAs)] = a
 		}
+	}
+	byDecl := map[string]DeclaredTable{}
+	for _, d := range r.Declared {
+		byDecl[strings.ToLower(d.Table)] = d
 	}
 	var out []Skipped
 	for _, a := range r.Actions {
@@ -77,8 +87,20 @@ func SkippedActions(r *Report) []Skipped {
 		}
 		if m := notFoundRE.FindStringSubmatch(s.Why); m != nil {
 			s.Missing, s.Location = strings.Replace(m[2], ":", ".", 1), m[3]
-			if b, ok := byName[strings.ToLower(s.Missing)]; ok {
+			low := strings.ToLower(s.Missing)
+			if b, ok := byName[low]; ok {
 				s.New, s.Changed = b.Added(), !b.Added()
+				if s.New {
+					s.Kind = MissingNew
+				} else {
+					s.Kind = MissingNeverBuilt
+				}
+			} else if d, ok := byDecl[low]; ok {
+				s.Kind = MissingPrereq
+				s.FileName = d.FileName
+				s.From = d.From
+			} else {
+				s.Kind = MissingUntouched
 			}
 			if s.New {
 				s.Waits = waits(s.Missing, a.Waits)
@@ -125,14 +147,15 @@ func Skips(r *Report) []Skip {
 	return out
 }
 
-// Tag is "new on this branch" or "changed on this branch" when the branch
-// adds or changes the missing table, else "".
+// Tag says how the branch relates to the missing table, or "" for untouched.
 func (s Skipped) Tag() string {
-	switch {
-	case s.New:
+	switch s.Kind {
+	case MissingNew:
 		return "new on this branch"
-	case s.Changed:
-		return "changed on this branch"
+	case MissingNeverBuilt:
+		return "never built in prod"
+	case MissingPrereq:
+		return "prerequisite on this branch"
 	}
 	return ""
 }

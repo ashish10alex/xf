@@ -47,6 +47,7 @@ func runCost(args []string) int {
 	failOverDelta := fs.String("fail-over-delta", "", "exit 1 when the branch adds more than this `size` of scan per run compared to the merge-base, e.g. 50GB (units are binary)")
 	failOnUnfiltered := fs.Bool("fail-on-unfiltered", false, "exit 1 when any estimated query reads a partitioned table without naming its partition column")
 	failOnUnestimated := fs.Bool("fail-on-unestimated", false, "exit 1 when any changed action could not be estimated")
+	devStandIns := fs.Bool("dev-stand-ins", false, "size queries that read tables missing in prod using dev's copies when built, while still reporting missing prod prerequisites and prod-reader risks")
 	output := fs.String("output", "", "also write the report to `path`: as Markdown, for a pull request comment, or as JSON with --json")
 	fs.StringVar(output, "o", "", "")
 	asJSON := fs.Bool("json", false, "print the report as JSON instead of text")
@@ -80,8 +81,8 @@ cost gate trips (--fail-over, --fail-over-delta, --fail-on-unfiltered or
 	if err == nil {
 		err = sf.checkFlag(config.KeyUSDPerTiB)
 	}
-	if err == nil && *web && (*pushed || *failOver != "" || *failOverDelta != "" || *failOnUnfiltered || *failOnUnestimated || *output != "" || *asJSON || *attention) {
-		err = errors.New("--web can't be used with --pushed, --fail-over, --fail-over-delta, --fail-on-unfiltered, --fail-on-unestimated, --output, --json or --attention")
+	if err == nil && *web && (*pushed || *failOver != "" || *failOverDelta != "" || *failOnUnfiltered || *failOnUnestimated || *devStandIns || *output != "" || *asJSON || *attention) {
+		err = errors.New("--web can't be used with --pushed, --fail-over, --fail-over-delta, --fail-on-unfiltered, --fail-on-unestimated, --dev-stand-ins, --output, --json or --attention")
 	}
 	if err == nil && *attention && *asJSON {
 		err = errors.New("--attention can't be used with --json, which has every action")
@@ -112,7 +113,7 @@ cost gate trips (--fail-over, --fail-over-delta, --fail-on-unfiltered or
 	}
 	if err == nil {
 		var code int
-		if code, err = checkCost(pf, sf, *pushed, opts, *output, *asJSON); err == nil {
+		if code, err = checkCost(pf, sf, *pushed, *devStandIns, opts, *output, *asJSON); err == nil {
 			return code
 		}
 	}
@@ -120,7 +121,7 @@ cost gate trips (--fail-over, --fail-over-delta, --fail-on-unfiltered or
 	return costFailed
 }
 
-func checkCost(pf projectFlags, sf *settingFlags, pushed bool, opts cost.Options, output string, asJSON bool) (int, error) {
+func checkCost(pf projectFlags, sf *settingFlags, pushed, standIns bool, opts cost.Options, output string, asJSON bool) (int, error) {
 	root, name, err := pf.find()
 	if err != nil {
 		return 0, err
@@ -148,7 +149,7 @@ func checkCost(pf projectFlags, sf *settingFlags, pushed bool, opts cost.Options
 	defer client.Close()
 
 	req := engine.CostRequest{DefaultBranch: cmp.Or(settings.DefaultBranch, config.DefaultBranch), Head: changes.HeadWorktree, Refresh: true,
-		ProdCompilerOptions: settings.ProdCompilerOptions, Unset: unsetProdOptions(settings)}
+		ProdCompilerOptions: settings.ProdCompilerOptions, Unset: unsetProdOptions(settings), StandIns: standIns}
 	if name == backend.DBT {
 		req.DbtProdTarget, req.Unset = settings.DbtProdTarget, unsetDbtProdTarget(settings, os.Getenv)
 	}
@@ -191,6 +192,14 @@ func checkCost(pf projectFlags, sf *settingFlags, pushed bool, opts cost.Options
 			fmt.Fprintln(os.Stderr, "xf cost: 1 action could not be estimated; it is not in the total, and --fail-over doesn't count it")
 		} else if n > 1 {
 			fmt.Fprintf(os.Stderr, "xf cost: %d actions could not be estimated; they are not in the total, and --fail-over doesn't count them\n", n)
+		}
+	}
+	if standIns {
+		for _, risk := range report.ProdRisks {
+			fmt.Fprintln(os.Stderr, "xf cost: warning:", cost.ProdRiskText(risk))
+		}
+		for _, p := range report.Prerequisites {
+			fmt.Fprintln(os.Stderr, "xf cost: warning:", cost.PrerequisiteText(p))
 		}
 	}
 	if report.BaseError != "" {
@@ -449,7 +458,7 @@ func dataformCost(bq func(context.Context) (warehouse.Warehouse, error), dryRun 
 		deps.Base = func(ctx context.Context) (*project.Graph, error) { return parse(src.Commit(ctx, res.MergeBase)) }
 		head := cost.Head{Graph: prod, Compiled: config.KeyProdCompilerOptions,
 			ID: func(id project.ActionID) project.ActionID { return project.ActionID(prodID(string(id))) }}
-		if req.Defer && lookups != nil {
+		if req.StandIns && lookups != nil {
 			deps.InDev = inDev(g, lookups, logger)
 		}
 		return cost.Run(ctx, res, head, deps, progress)
@@ -513,6 +522,29 @@ func dbtCost(pw *projectWarehouse, dryRun dryRunFunc, targets *dbtTargets) engin
 			}
 			return id
 		}}
+		if req.StandIns {
+			deps.InDev = dbtInDev(g, bq)
+		}
 		return cost.Run(ctx, res, head, deps, progress)
+	}
+}
+
+// dbtInDev is cost.Deps.InDev for a dbt BigQuery compile g: checks whether an
+// action's dev relation exists in BigQuery.
+func dbtInDev(g *project.Graph, bq func(context.Context) (warehouse.Warehouse, error)) func(context.Context, project.ActionID) (project.Target, time.Time, bool) {
+	return func(ctx context.Context, id project.ActionID) (project.Target, time.Time, bool) {
+		a := g.Actions[id]
+		if a == nil {
+			return project.Target{}, time.Time{}, false
+		}
+		c, err := bq(ctx)
+		if err != nil {
+			return project.Target{}, time.Time{}, false
+		}
+		tbl, err := c.Table(ctx, a.Target.Database, a.Target.Schema, a.Target.Name)
+		if err != nil || tbl == nil {
+			return project.Target{}, time.Time{}, false
+		}
+		return a.Target, time.Time{}, true
 	}
 }

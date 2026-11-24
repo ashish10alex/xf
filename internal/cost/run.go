@@ -1,6 +1,7 @@
 package cost
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -570,22 +571,39 @@ type builtLookup struct {
 type runner struct {
 	deps Deps
 	ps   *partitions
-	// added are the tables the branch adds, by their lower-cased
-	// project.dataset.name in the compile dry run.
-	added map[string]addedTable
-	// built says whether an added table is where the dry runs look, by
-	// its key in added; guarded by mu.
-	mu    sync.Mutex
-	built map[string]*builtLookup
+	// standIns are the tables this branch adds, changes, or declares, keyed by
+	// their lower-cased project.dataset.name in the compile dry run.
+	standIns map[string]standInTable
+	// built says whether an upstream table is where the dry runs look, by
+	// lower-cased target ID; guarded by mu.
+	mu     sync.Mutex
+	built  map[string]*builtLookup
+	exists map[string]*builtLookup
 }
 
-// addedTable is a table the branch adds: target in the compile dry run, id
-// in the one the Changed Actions were worked out from, and re matching its
-// table reference in Dataform or dbt-bigquery SQL.
-type addedTable struct {
-	target project.Target
-	id     project.ActionID
-	re     *regexp.Regexp
+// standInTable is a table this branch adds, changes, or declares: target in
+// the compile dry run, id in the one the Changed Actions were worked out from,
+// and re matching its table reference in Dataform or dbt-bigquery SQL.
+type standInTable struct {
+	target   project.Target
+	id       project.ActionID
+	kind     MissingKind
+	fileName string
+	from     string
+	re       *regexp.Regexp
+}
+
+type missingHit struct {
+	table    string
+	location string
+	kind     MissingKind
+	fileName string
+	from     string
+}
+
+type estimateMeta struct {
+	missing      []missingHit
+	sawProdTable bool
 }
 
 // missingRE is BigQuery's message for a query that reads a table, view or
@@ -595,18 +613,25 @@ var missingRE = regexp.MustCompile(`^dry run failed: Not found: (Table|View|Data
 // missing is what a dry run didn't find, lower-cased: a table's
 // project.dataset.name, or a dataset's project.dataset.
 type missing struct {
-	name    string
-	dataset bool
+	name     string // lower-cased
+	rawName  string // original casing with '.' instead of ':'
+	location string
+	dataset  bool
 }
 
 // missingIn is what reason says a dry run didn't find; ok is false when
 // it failed for another reason.
 func missingIn(reason string) (m missing, ok bool) {
+	if sub := notFoundRE.FindStringSubmatch(firstLine(reason)); sub != nil {
+		raw := strings.Replace(sub[2], ":", ".", 1)
+		return missing{name: strings.ToLower(raw), rawName: raw, location: sub[3], dataset: sub[1] == "Dataset"}, true
+	}
 	sub := missingRE.FindStringSubmatch(reason)
 	if sub == nil {
 		return missing{}, false
 	}
-	return missing{name: strings.ToLower(strings.Replace(sub[2], ":", ".", 1)), dataset: sub[1] == "Dataset"}, true
+	raw := strings.Replace(sub[2], ":", ".", 1)
+	return missing{name: strings.ToLower(raw), rawName: raw, dataset: sub[1] == "Dataset"}, true
 }
 
 // covers says t is m, or is in it.
@@ -642,15 +667,41 @@ func replaceTargetRef(sql, fromID, toID string) string {
 	return targetRefRE(fromID).ReplaceAllLiteralString(sql, quoted(toID))
 }
 
-// readFromDev adds to reads dev's copy of the tables the branch adds that
-// m is, or that sql reads in m, a dataset, when they are built there. It
-// is false when none is, or each is in reads already.
+// recordMissing appends the missing table(s) m represents to hits (deduped).
+func (r *runner) recordMissing(m missing, sql string, hits *[]missingHit) {
+	add := func(h missingHit) {
+		if !slices.ContainsFunc(*hits, func(x missingHit) bool { return strings.EqualFold(x.table, h.table) }) {
+			*hits = append(*hits, h)
+		}
+	}
+	matched := false
+	var keys []string
+	for k, t := range r.standIns {
+		if m.covers(t.target) && (!m.dataset || t.re.MatchString(sql)) {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		t := r.standIns[k]
+		add(missingHit{table: string(t.target.ID()), location: m.location, kind: t.kind, fileName: t.fileName, from: t.from})
+		matched = true
+	}
+	if !matched && !m.dataset {
+		add(missingHit{table: m.rawName, location: m.location, kind: MissingUntouched})
+	}
+}
+
+// readFromDev adds to reads dev's copy of the tables this branch adds, changes
+// (when unbuilt in prod), or declares that m is, or that sql reads in m, a
+// dataset, when they are built there. It is false when none is, or each is in
+// reads already.
 func (r *runner) readFromDev(ctx context.Context, m missing, sql string, reads *[]DevRead) bool {
 	if r.deps.InDev == nil {
 		return false
 	}
 	var keys []string
-	for k, t := range r.added {
+	for k, t := range r.standIns {
 		if m.covers(t.target) && (!m.dataset || t.re.MatchString(sql)) {
 			keys = append(keys, k)
 		}
@@ -658,7 +709,7 @@ func (r *runner) readFromDev(ctx context.Context, m missing, sql string, reads *
 	slices.Sort(keys)
 	read := false
 	for _, k := range keys {
-		t := r.added[k]
+		t := r.standIns[k]
 		if slices.ContainsFunc(*reads, func(d DevRead) bool { return d.Table == string(t.target.ID()) }) {
 			continue
 		}
@@ -666,21 +717,28 @@ func (r *runner) readFromDev(ctx context.Context, m missing, sql string, reads *
 		if !ok || dev == t.target {
 			continue
 		}
-		*reads = append(*reads, DevRead{Table: string(t.target.ID()), Dev: string(dev.ID()), BuiltAt: builtAt})
+		*reads = append(*reads, DevRead{
+			Table:    string(t.target.ID()),
+			Dev:      string(dev.ID()),
+			BuiltAt:  builtAt,
+			Kind:     t.kind,
+			FileName: t.fileName,
+			From:     t.from,
+		})
 		read = true
 	}
 	return read
 }
 
-// waits are the tables the branch adds that sql, a dry run of a that
+// waits are the new tables the branch adds that sql, a dry run of a that
 // didn't find m, reads and BigQuery doesn't have where a's dry runs look:
 // those m is, and each other one a dry run of its own doesn't find. It is
 // nil when m is none of them.
 func (r *runner) waits(ctx context.Context, g *project.Graph, a *project.Action, m missing, sql string) []string {
 	var keys []string
 	found := false
-	for k, t := range r.added {
-		if t.target == a.Target || !t.re.MatchString(sql) {
+	for k, t := range r.standIns {
+		if t.kind != MissingNew || t.target == a.Target || !t.re.MatchString(sql) {
 			continue
 		}
 		keys = append(keys, k)
@@ -692,7 +750,7 @@ func (r *runner) waits(ctx context.Context, g *project.Graph, a *project.Action,
 	slices.Sort(keys)
 	var out []string
 	for _, k := range keys {
-		t := r.added[k]
+		t := r.standIns[k]
 		if m.covers(t.target) || !r.isBuilt(ctx, g, a, k) {
 			out = append(out, string(t.target.ID()))
 		}
@@ -700,9 +758,9 @@ func (r *runner) waits(ctx context.Context, g *project.Graph, a *project.Action,
 	return out
 }
 
-// isBuilt says whether the table the branch adds of key k is where a's
-// dry runs look, by a dry run that reads it alone; it is true when that
-// dry run fails for another reason, which says nothing of the table.
+// isBuilt says whether the table of key k is where a's dry runs look, by a dry
+// run that reads it alone; it is true when that dry run fails for another
+// reason, which says nothing of the table.
 func (r *runner) isBuilt(ctx context.Context, g *project.Graph, a *project.Action, k string) bool {
 	r.mu.Lock()
 	l := r.built[k]
@@ -713,12 +771,35 @@ func (r *runner) isBuilt(ctx context.Context, g *project.Graph, a *project.Actio
 	r.mu.Unlock()
 	l.once.Do(func() {
 		proj, location := g.DryRunTarget(a)
-		_, err := r.deps.DryRun(ctx, proj, location, "SELECT 1 FROM "+quoted(string(r.added[k].target.ID()))+" WHERE FALSE")
+		_, err := r.deps.DryRun(ctx, proj, location, "SELECT 1 FROM "+quoted(string(r.standIns[k].target.ID()))+" WHERE FALSE")
 		l.ok = true
 		if err != nil {
 			_, notFound := missingIn("dry run failed: " + errorText(err))
 			l.ok = !notFound
 		}
+	})
+	return l.ok
+}
+
+// tableExists confirms whether target already exists where a's dry runs look.
+// Unlike isBuilt, it returns true only when the dry-run probe succeeds (err == nil)
+// so permission or unknown errors never raise false prod-reader warnings.
+func (r *runner) tableExists(ctx context.Context, g *project.Graph, a *project.Action, target project.Target) bool {
+	k := strings.ToLower(string(target.ID()))
+	r.mu.Lock()
+	l := r.exists[k]
+	if l == nil {
+		l = &builtLookup{}
+		r.exists[k] = l
+	}
+	r.mu.Unlock()
+	l.once.Do(func() {
+		proj, location := g.DryRunTarget(a)
+		if proj == "" {
+			return
+		}
+		_, err := r.deps.DryRun(ctx, proj, location, "SELECT 1 FROM "+quoted(string(target.ID()))+" WHERE FALSE")
+		l.ok = err == nil
 	})
 	return l.ok
 }
@@ -997,11 +1078,12 @@ func denied(err error) bool {
 
 // estimate is the estimate of c, whose action in head is a, and the
 // failure of its dry run, if it failed.
-func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Action, head *project.Graph) (Action, error) {
+func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Action, head *project.Graph) (Action, estimateMeta, error) {
 	out := Action{Name: string(c.ID), FileName: c.FileName, Type: c.Type, New: isNew(c) && c.RenamedFrom == "", RenamedFrom: string(c.RenamedFrom)}
 	if a.ID != c.ID {
 		out.DryRunAs = string(a.ID)
 	}
+	var meta estimateMeta
 	run, full := counted(a)
 	q := run
 	var d *warehouse.Check
@@ -1019,6 +1101,7 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 			q, full, out.FirstBuild = full, nil, true
 			continue
 		}
+		r.recordMissing(m, sql.SQL, &meta.missing)
 		if !r.readFromDev(ctx, m, sql.SQL, &out.FromDev) {
 			out.Waits = r.waits(ctx, head, a, m, sql.SQL)
 			break
@@ -1026,6 +1109,13 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 	}
 	if d != nil {
 		out.schema = d.Schema
+		for _, t := range d.Tables {
+			fullRef := t.Project + "." + t.Dataset + "." + t.Table
+			if !slices.ContainsFunc(out.FromDev, func(dr DevRead) bool { return strings.EqualFold(dr.Dev, fullRef) }) {
+				meta.sawProdTable = true
+				break
+			}
+		}
 	}
 	if out.Estimate != nil {
 		out.Unfiltered = r.ps.unfiltered(ctx, ranSQL, d.Tables)
@@ -1036,7 +1126,7 @@ func (r *runner) estimate(ctx context.Context, c changes.Changed, a *project.Act
 	if out.FirstBuild && out.Estimate != nil {
 		out.Incremental = r.later(ctx, head, a, run, out.FromDev)
 	}
-	return out, err
+	return out, meta, err
 }
 
 // later is what each run of a, a new incremental table, scans once its
@@ -1078,7 +1168,12 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 	if progress == nil {
 		progress = func(Progress) {}
 	}
-	r := &runner{deps: deps, added: map[string]addedTable{}, built: map[string]*builtLookup{}}
+	r := &runner{
+		deps:     deps,
+		standIns: map[string]standInTable{},
+		built:    map[string]*builtLookup{},
+		exists:   map[string]*builtLookup{},
+	}
 	if deps.Partition != nil {
 		r.ps = &partitions{lookup: deps.Partition, seen: map[warehouse.TableRef]*partitionLookup{}}
 	}
@@ -1094,7 +1189,7 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 		a *project.Action
 	}
 	var items []item
-	report := &Report{Comparison: impact.ComparisonOf(res), Compiled: head.Compiled, Actions: []Action{}}
+	report := &Report{Comparison: impact.ComparisonOf(res), Compiled: head.Compiled, StandIns: deps.InDev != nil, Actions: []Action{}}
 	for _, c := range res.Changed {
 		a := head.Graph.Actions[headID(c.ID)]
 		switch {
@@ -1103,13 +1198,55 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 				Reason: "nothing in the compile with " + head.Compiled + " matches it"})
 		case a == nil:
 		default:
-			if isNew(c) {
-				r.added[strings.ToLower(string(a.Target.ID()))] = addedTable{a.Target, c.ID, targetRefRE(string(a.Target.ID()))}
+			kind := MissingNeverBuilt
+			if isNew(c) || c.RenamedFrom != "" {
+				kind = MissingNew
+			}
+			r.standIns[strings.ToLower(string(a.Target.ID()))] = standInTable{
+				target:   a.Target,
+				id:       c.ID,
+				kind:     kind,
+				fileName: c.FileName,
+				re:       targetRefRE(string(a.Target.ID())),
 			}
 			if run, _ := counted(a); run != nil {
 				items = append(items, item{c, a})
 			}
 		}
+	}
+	for _, d := range res.Declared {
+		if d.Kind != changes.DeclAdded && d.Kind != changes.DeclRetargeted {
+			continue
+		}
+		pid := headID(d.ID)
+		if pid == "" {
+			pid = d.ID
+		}
+		target := targetFromActionOrID(head.Graph, pid, d.Target)
+		from := ""
+		if d.From != "" {
+			if f := headID(d.From); f != "" {
+				from = string(f)
+			} else {
+				from = string(d.From)
+			}
+		}
+		key := strings.ToLower(string(target.ID()))
+		if _, exists := r.standIns[key]; !exists {
+			r.standIns[key] = standInTable{
+				target:   target,
+				id:       d.ID,
+				kind:     MissingPrereq,
+				fileName: d.FileName,
+				from:     from,
+				re:       targetRefRE(string(target.ID())),
+			}
+		}
+		report.Declared = append(report.Declared, DeclaredTable{
+			Table:    string(target.ID()),
+			FileName: d.FileName,
+			From:     from,
+		})
 	}
 
 	acts := make([]*project.Action, len(items))
@@ -1133,6 +1270,7 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 	}
 
 	estimated := make([]Action, len(items))
+	metas := make([]estimateMeta, len(items))
 	failures := make([]error, len(items))
 	indexes := make([]int, len(items))
 	for i := range indexes {
@@ -1144,7 +1282,7 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 		progress(Progress{Phase: "Dry running", Total: len(items)})
 	}
 	inBatches(ctx, indexes, dryRunBatch, func(i int) {
-		estimated[i], failures[i] = r.estimate(ctx, items[i].c, items[i].a, head.Graph)
+		estimated[i], metas[i], failures[i] = r.estimate(ctx, items[i].c, items[i].a, head.Graph)
 		mu.Lock()
 		done++
 		progress(Progress{Phase: "Dry running", Done: done, Total: len(items)})
@@ -1165,6 +1303,8 @@ func Run(ctx context.Context, res *changes.Result, head Head, deps Deps, progres
 	if len(items) > 0 && !slices.ContainsFunc(failures, func(err error) bool { return !denied(err) }) {
 		return nil, fmt.Errorf("BigQuery refused every dry run: %w", failures[0])
 	}
+
+	r.analyzeSafetyAndRoots(ctx, head.Graph, heads, estimated, metas, report)
 
 	// compare are the actions with a merge-base to estimate.
 	var compare []int
@@ -1303,5 +1443,323 @@ func addedColumns(g *project.Graph, heads []*project.Action, estimated []Action)
 	}
 	for i := range estimated {
 		estimated[i].schema = nil
+	}
+}
+
+func targetFromActionOrID(g *project.Graph, id project.ActionID, fallback project.Target) project.Target {
+	if a := g.Actions[id]; a != nil {
+		return a.Target
+	}
+	parts := strings.Split(string(id), ".")
+	switch len(parts) {
+	case 3:
+		return project.Target{Database: parts[0], Schema: parts[1], Name: parts[2]}
+	case 2:
+		return project.Target{Schema: parts[0], Name: parts[1]}
+	}
+	return fallback
+}
+
+func sharesTag(a, b []string) bool {
+	for _, x := range a {
+		if slices.Contains(b, x) {
+			return true
+		}
+	}
+	return false
+}
+
+func missingKindOrder(k MissingKind) int {
+	switch k {
+	case MissingUntouched:
+		return 0
+	case MissingPrereq:
+		return 1
+	case MissingNeverBuilt:
+		return 2
+	case MissingNew:
+		return 3
+	}
+	return 4
+}
+
+// analyzeSafetyAndRoots computes prod-reader risks, missing external
+// prerequisites, graph-based blocking roots, and the prod-unbuilt guard note.
+func (r *runner) analyzeSafetyAndRoots(ctx context.Context, g *project.Graph, heads []*project.Action, estimated []Action, metas []estimateMeta, report *Report) {
+	if len(heads) == 0 {
+		return
+	}
+
+	// 1. Prod-reader risks: existing prod tables that now read a table missing in prod.
+	var probeIdx []int
+	for i, a := range estimated {
+		if a.New || a.RenamedFrom != "" || !heads[i].Kind.HasTable() || len(metas[i].missing) == 0 {
+			continue
+		}
+		probeIdx = append(probeIdx, i)
+	}
+	prodExists := make([]bool, len(heads))
+	inBatches(ctx, probeIdx, dryRunBatch, func(i int) {
+		prodExists[i] = r.tableExists(ctx, g, heads[i], heads[i].Target)
+	})
+
+	for _, i := range probeIdx {
+		if !prodExists[i] {
+			continue
+		}
+		seenM := map[string]bool{}
+		for _, h := range metas[i].missing {
+			low := strings.ToLower(h.table)
+			if strings.EqualFold(h.table, string(heads[i].Target.ID())) || seenM[low] {
+				continue
+			}
+			seenM[low] = true
+			risk := ProdReaderRisk{
+				Action:  estimated[i].Name,
+				Missing: h.table,
+				Kind:    h.kind,
+			}
+			if mAct := g.Actions[project.ActionID(h.table)]; mAct != nil && len(heads[i].Tags) > 0 && len(mAct.Tags) > 0 && !sharesTag(heads[i].Tags, mAct.Tags) {
+				risk.NoSharedTag = true
+				risk.ActionTags = slices.Clone(heads[i].Tags)
+				risk.MissingTags = slices.Clone(mAct.Tags)
+			}
+			report.ProdRisks = append(report.ProdRisks, risk)
+		}
+	}
+	slices.SortFunc(report.ProdRisks, func(a, b ProdReaderRisk) int {
+		return cmp.Or(cmp.Compare(a.Action, b.Action), cmp.Compare(a.Missing, b.Missing))
+	})
+
+	// Build reverse dependency index among changed actions in g.
+	byProdID := map[string]int{}
+	for i, a := range heads {
+		byProdID[strings.ToLower(string(a.Target.ID()))] = i
+	}
+	dependents := map[int][]int{}
+	for i, a := range heads {
+		for _, dep := range a.DependencyTargets {
+			if j, ok := byProdID[strings.ToLower(string(dep.ID()))]; ok && j != i {
+				dependents[j] = append(dependents[j], i)
+			}
+		}
+	}
+
+	// 2. Missing external prerequisites declared/retargeted on this branch.
+	prereqMap := map[string]*Prerequisite{}
+	for i, meta := range metas {
+		for _, h := range meta.missing {
+			if h.kind != MissingPrereq {
+				continue
+			}
+			low := strings.ToLower(h.table)
+			p := prereqMap[low]
+			if p == nil {
+				p = &Prerequisite{Table: h.table, FileName: h.fileName, From: h.from}
+				prereqMap[low] = p
+			}
+			if !slices.Contains(p.Direct, estimated[i].Name) {
+				p.Direct = append(p.Direct, estimated[i].Name)
+			}
+			if slices.ContainsFunc(estimated[i].FromDev, func(dr DevRead) bool { return strings.EqualFold(dr.Table, h.table) }) {
+				p.SizedFromDev = true
+			}
+		}
+	}
+	for _, p := range prereqMap {
+		slices.Sort(p.Direct)
+		directSet := map[string]bool{}
+		var queue []int
+		for i, a := range estimated {
+			if slices.Contains(p.Direct, a.Name) {
+				directSet[a.Name] = true
+				queue = append(queue, i)
+			}
+		}
+		seen := map[int]bool{}
+		for _, idx := range queue {
+			seen[idx] = true
+		}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			for _, next := range dependents[cur] {
+				if seen[next] {
+					continue
+				}
+				seen[next] = true
+				queue = append(queue, next)
+				if !directSet[estimated[next].Name] {
+					p.Downstream = append(p.Downstream, estimated[next].Name)
+				}
+			}
+		}
+		slices.Sort(p.Downstream)
+		report.Prerequisites = append(report.Prerequisites, *p)
+	}
+	slices.SortFunc(report.Prerequisites, func(a, b Prerequisite) int {
+		return cmp.Compare(a.Table, b.Table)
+	})
+
+	// 3. Graph-based blocking roots for unestimated missing-table actions.
+	type unestMissing struct {
+		table    string
+		location string
+	}
+	blockedByTarget := map[string]int{}
+	immMissing := map[int]unestMissing{}
+	for i, a := range estimated {
+		if a.Estimate != nil {
+			continue
+		}
+		m, ok := missingIn(a.Reason)
+		if !ok || m.dataset {
+			continue
+		}
+		table := m.rawName
+		if st, ok := r.standIns[m.name]; ok {
+			table = string(st.target.ID())
+		}
+		immMissing[i] = unestMissing{table: table, location: m.location}
+		blockedByTarget[strings.ToLower(string(heads[i].Target.ID()))] = i
+	}
+	if len(immMissing) > 0 {
+		type rootAcc struct {
+			root   BlockingRoot
+			direct map[string]bool
+			via    map[string]map[string]bool
+		}
+		roots := map[string]*rootAcc{}
+		getRoot := func(table, loc string) *rootAcc {
+			low := strings.ToLower(table)
+			if acc := roots[low]; acc != nil {
+				if acc.root.Location == "" {
+					acc.root.Location = loc
+				}
+				return acc
+			}
+			br := BlockingRoot{Table: table, Location: loc, Kind: MissingUntouched}
+			if st, ok := r.standIns[low]; ok {
+				br.Table = string(st.target.ID())
+				br.Kind = st.kind
+				br.FileName = st.fileName
+				br.From = st.from
+			}
+			acc := &rootAcc{root: br, direct: map[string]bool{}, via: map[string]map[string]bool{}}
+			roots[low] = acc
+			return acc
+		}
+		// trace finds the deepest root(s) behind missing table target.
+		var trace func(table, loc string, seen map[string]bool) []unestMissing
+		trace = func(table, loc string, seen map[string]bool) []unestMissing {
+			low := strings.ToLower(table)
+			if seen[low] {
+				return nil
+			}
+			seen[low] = true
+			if j, blocked := blockedByTarget[low]; blocked {
+				up := immMissing[j]
+				if res := trace(up.table, up.location, seen); len(res) > 0 {
+					return res
+				}
+			}
+			return []unestMissing{{table: table, location: loc}}
+		}
+
+		for i, um := range immMissing {
+			// Direct missing targets: BigQuery's first missing table, every
+			// additional unbuilt branch table in Waits, plus any other blocked
+			// changed dependency in heads[i].DependencyTargets.
+			directTargets := []unestMissing{um}
+			seenDirect := map[string]bool{strings.ToLower(um.table): true}
+			for _, w := range estimated[i].Waits {
+				low := strings.ToLower(w)
+				if seenDirect[low] {
+					continue
+				}
+				seenDirect[low] = true
+				directTargets = append(directTargets, unestMissing{table: w, location: um.location})
+			}
+			for _, dep := range heads[i].DependencyTargets {
+				low := strings.ToLower(string(dep.ID()))
+				if seenDirect[low] {
+					continue
+				}
+				if j, ok := blockedByTarget[low]; ok {
+					seenDirect[low] = true
+					directTargets = append(directTargets, unestMissing{table: string(heads[j].Target.ID()), location: um.location})
+				}
+			}
+			for _, dt := range directTargets {
+				lowDT := strings.ToLower(dt.table)
+				if _, isIntermediate := blockedByTarget[lowDT]; !isIntermediate {
+					acc := getRoot(dt.table, dt.location)
+					acc.direct[estimated[i].Name] = true
+					continue
+				}
+				traced := trace(dt.table, dt.location, map[string]bool{})
+				for _, rt := range traced {
+					acc := getRoot(rt.table, rt.location)
+					if strings.EqualFold(rt.table, dt.table) {
+						acc.direct[estimated[i].Name] = true
+					} else {
+						if acc.via[dt.table] == nil {
+							acc.via[dt.table] = map[string]bool{}
+						}
+						acc.via[dt.table][estimated[i].Name] = true
+					}
+				}
+			}
+		}
+		for _, acc := range roots {
+			for a := range acc.direct {
+				acc.root.Direct = append(acc.root.Direct, a)
+			}
+			slices.Sort(acc.root.Direct)
+			for mid, set := range acc.via {
+				var acts []string
+				for a := range set {
+					if !acc.direct[a] {
+						acts = append(acts, a)
+					}
+				}
+				if len(acts) == 0 {
+					continue
+				}
+				slices.Sort(acts)
+				acc.root.Via = append(acc.root.Via, BlockingVia{Table: mid, Actions: acts})
+			}
+			slices.SortFunc(acc.root.Via, func(a, b BlockingVia) int { return cmp.Compare(a.Table, b.Table) })
+			report.BlockingRoots = append(report.BlockingRoots, acc.root)
+		}
+		slices.SortFunc(report.BlockingRoots, func(a, b BlockingRoot) int {
+			return cmp.Or(
+				cmp.Compare(missingKindOrder(a.Kind), missingKindOrder(b.Kind)),
+				cmp.Compare(b.BlockedCount(), a.BlockedCount()),
+				cmp.Compare(a.Table, b.Table),
+			)
+		})
+	}
+
+	// 4. Guard against misconfigured prodCompilerOptions when dev stand-ins
+	// replaced multiple changed tables and no prod table was confirmed.
+	if r.deps.InDev != nil {
+		neverBuilt := map[string]bool{}
+		sawProd := false
+		for i, a := range estimated {
+			if prodExists[i] || metas[i].sawProdTable {
+				sawProd = true
+			}
+			for _, dr := range a.FromDev {
+				if dr.Kind == MissingNeverBuilt {
+					neverBuilt[strings.ToLower(dr.Table)] = true
+				}
+			}
+		}
+		if len(neverBuilt) >= 2 && !sawProd {
+			where := cmp.Or(report.DryRunIn, "the dry-run project")
+			setting := cmp.Or(report.Compiled, "prodCompilerOptions")
+			report.ProdUnbuiltNote = fmt.Sprintf("None of the branch's tables exist in %s yet; check %s if prod already has them.", where, setting)
+		}
 	}
 }

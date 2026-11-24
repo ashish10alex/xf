@@ -230,13 +230,23 @@ func LaterLine(r *Report, o Options) string {
 	return fmt.Sprintf("Each run after the first: %s%s | %s%s", bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)))
 }
 
-// TotalLine is "Total scanned: 4.20 TiB | Estimated cost: $26.26".
+// TotalLine is "Total scanned: 4.20 TiB | Estimated cost: $26.26", or
+// "Total scanned: unknown (0 of 5 actions estimated)" when nothing could be
+// estimated.
 func TotalLine(r *Report, o Options) string {
 	if r.PastRuns != nil {
 		return PastTotalLine(r)
 	}
+	est, totalActions := r.Estimated(), len(r.Actions)
+	if totalActions > 0 && est == 0 {
+		return fmt.Sprintf("Total scanned: unknown (0 of %s estimated)", plural(totalActions, "action", "actions"))
+	}
 	total, bound := r.Total()
-	return fmt.Sprintf("Total scanned: %s%s | Estimated cost: %s%s", bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)))
+	line := fmt.Sprintf("Total scanned: %s%s | Estimated cost: %s%s", bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)))
+	if est < totalActions {
+		line += fmt.Sprintf(" (%d of %d actions estimated)", est, totalActions)
+	}
+	return line
 }
 
 // GateLine says how the report compares with the enabled gates in o; "" when
@@ -262,18 +272,23 @@ func GateLine(r *Report, o Options) string {
 		return "Gate not applied: there is no estimate to gate on, only past runs"
 	}
 	total, _ := r.Total()
+	est, unest := r.Estimated(), r.Unestimated()
+	unestSuffix := ""
+	if unest > 0 {
+		unestSuffix = fmt.Sprintf(" (%s not estimated, not counted)", plural(unest, "action", "actions"))
+	}
 	if onlyThreshold {
 		if r.Exceeds(o.Threshold) {
 			return fmt.Sprintf("Gate failed: %s exceeds the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
 		}
-		return fmt.Sprintf("Gate passed: %s is within the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold))
+		return fmt.Sprintf("Gate passed: %s is within the limit of %s%s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold), unestSuffix)
 	}
 	var failed, passed []string
 	if o.Threshold > 0 {
 		if r.Exceeds(o.Threshold) {
 			failed = append(failed, fmt.Sprintf("%s exceeds the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold)))
 		} else {
-			passed = append(passed, fmt.Sprintf("%s is within the limit of %s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold)))
+			passed = append(passed, fmt.Sprintf("%s is within the limit of %s%s", warehouse.FormatBytes(total), warehouse.FormatBytes(o.Threshold), unestSuffix))
 		}
 	}
 	if o.DeltaThreshold > 0 {
@@ -285,21 +300,23 @@ func GateLine(r *Report, o Options) string {
 				failed = append(failed, fmt.Sprintf("growth of %s exceeds the delta limit of %s", warehouse.FormatBytes(r.Growth()), warehouse.FormatBytes(o.DeltaThreshold)))
 			}
 		} else if noBase {
-			passed = append(passed, fmt.Sprintf("no merge-base: total is within the delta limit of %s", warehouse.FormatBytes(o.DeltaThreshold)))
+			passed = append(passed, fmt.Sprintf("no merge-base: total is within the delta limit of %s%s", warehouse.FormatBytes(o.DeltaThreshold), unestSuffix))
 		} else {
-			passed = append(passed, fmt.Sprintf("growth is within the delta limit of %s", warehouse.FormatBytes(o.DeltaThreshold)))
+			passed = append(passed, fmt.Sprintf("growth is within the delta limit of %s%s", warehouse.FormatBytes(o.DeltaThreshold), unestSuffix))
 		}
 	}
 	if o.FailOnUnfiltered {
 		if n := r.UnfilteredCount(); n > 0 {
 			failed = append(failed, plural(n, "query", "queries")+" missing a partition filter")
+		} else if unest > 0 {
+			passed = append(passed, fmt.Sprintf("no missing partition filters among %d estimated; %d not checked", est, unest))
 		} else {
 			passed = append(passed, "no missing partition filters")
 		}
 	}
 	if o.FailOnUnestimated {
-		if n := r.Unestimated(); n > 0 {
-			failed = append(failed, plural(n, "action", "actions")+" could not be estimated")
+		if unest > 0 {
+			failed = append(failed, plural(unest, "action", "actions")+" could not be estimated")
 		} else {
 			passed = append(passed, "every action estimated")
 		}
@@ -437,6 +454,15 @@ func Text(r *Report, o Options) string {
 	if hint := UnsetHint(r); hint != "" {
 		b.WriteString(o.paint("⚠ "+strings.ReplaceAll(hint, "`", ""), ansiYellow) + "\n")
 	}
+	if r.ProdUnbuiltNote != "" {
+		b.WriteString(o.paint("⚠ "+r.ProdUnbuiltNote, ansiYellow) + "\n")
+	}
+	for _, risk := range r.ProdRisks {
+		b.WriteString(o.paint("⚠ "+ProdRiskText(risk), ansiRed) + "\n")
+	}
+	for _, p := range r.Prerequisites {
+		b.WriteString(o.paint("⚠ "+PrerequisiteText(p), ansiYellow) + "\n")
+	}
 	actions, hidden := r.shown(o)
 	if len(actions) == 0 && hidden > 0 {
 		b.WriteString("Nothing needs attention.\n")
@@ -477,24 +503,37 @@ func Text(r *Report, o Options) string {
 	}
 	if len(others) > 0 {
 		b.WriteString("\n" + o.paint("Not estimated, so not in the total:", ansiBold) + "\n")
-		nameW := 0
-		for _, a := range others {
-			nameW = max(nameW, utf8.RuneCountInString(impact.ShortTable(a.Name)))
-		}
-		waits := waitsByAction(r)
-		for _, a := range others {
-			why := a.WhyNot()
-			if w := waits[a.Name]; len(w) > 0 {
-				var short []string
-				for _, t := range w {
-					short = append(short, impact.ShortTable(t))
-				}
-				why = "waits on " + plural(len(w), "new table", "new tables") + " no run has built yet: " + strings.Join(short, ", ")
-				if len(w) == 1 {
-					why = "waits on a new table no run has built yet: " + short[0]
-				}
+		if len(r.BlockingRoots) > 0 {
+			for _, br := range r.BlockingRoots {
+				b.WriteString(o.paint("?", ansiYellow) + " " + BlockingRootText(br) + "\n")
 			}
-			b.WriteString(o.paint("?", ansiYellow) + " " + pad(impact.ShortTable(a.Name), nameW) + "  " + o.paint(why, ansiDim) + "\n")
+			// Also list non-missing unestimated actions (columns, scripts, etc.).
+			for _, s := range SkippedActions(r) {
+				if s.Missing != "" {
+					continue
+				}
+				b.WriteString(o.paint("?", ansiYellow) + " " + impact.ShortTable(s.Action.Name) + "  " + o.paint(s.Action.WhyNot(), ansiDim) + "\n")
+			}
+		} else {
+			nameW := 0
+			for _, a := range others {
+				nameW = max(nameW, utf8.RuneCountInString(impact.ShortTable(a.Name)))
+			}
+			waits := waitsByAction(r)
+			for _, a := range others {
+				why := a.WhyNot()
+				if w := waits[a.Name]; len(w) > 0 {
+					var short []string
+					for _, t := range w {
+						short = append(short, impact.ShortTable(t))
+					}
+					why = "waits on " + plural(len(w), "new table", "new tables") + " no run has built yet: " + strings.Join(short, ", ")
+					if len(w) == 1 {
+						why = "waits on a new table no run has built yet: " + short[0]
+					}
+				}
+				b.WriteString(o.paint("?", ansiYellow) + " " + pad(impact.ShortTable(a.Name), nameW) + "  " + o.paint(why, ansiDim) + "\n")
+			}
 		}
 	}
 	if gate := GateLine(r, o); gate != "" {
@@ -689,9 +728,35 @@ func Markdown(r *Report, o Options) string {
 			lines = append(lines, explain, "")
 		}
 	}
-	total, bound := r.Total()
-	lines = append(lines, fmt.Sprintf("**Total scanned:** %s%s | **Estimated cost:** %s%s (on demand, at %s per TiB)",
-		bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)), FormatUSD(o.price())))
+	if len(r.ProdRisks) > 0 {
+		lines = append(lines, "🚨 **Prod breakage risk:**", "")
+		for _, risk := range r.ProdRisks {
+			lines = append(lines, "- "+prodRiskMarkdown(risk))
+		}
+		lines = append(lines, "")
+	}
+	if len(r.Prerequisites) > 0 {
+		lines = append(lines, "⚠️ **Missing external prerequisite:**", "")
+		for _, p := range r.Prerequisites {
+			lines = append(lines, "- "+prerequisiteMarkdown(p))
+		}
+		lines = append(lines, "")
+	}
+	if r.ProdUnbuiltNote != "" {
+		lines = append(lines, "⚠️ "+r.ProdUnbuiltNote, "")
+	}
+	est, totalActions := r.Estimated(), len(r.Actions)
+	if totalActions > 0 && est == 0 {
+		lines = append(lines, fmt.Sprintf("**Total scanned:** unknown *(none of %s could be estimated)*", plural(totalActions, "action", "actions")))
+	} else {
+		total, bound := r.Total()
+		coverage := ""
+		if est < totalActions {
+			coverage = fmt.Sprintf("%d of %d actions estimated; ", est, totalActions)
+		}
+		lines = append(lines, fmt.Sprintf("**Total scanned:** %s%s | **Estimated cost:** %s%s (%son demand, at %s per TiB)",
+			bound, warehouse.FormatBytes(total), bound, FormatUSD(o.USD(total)), coverage, FormatUSD(o.price())))
+	}
 	if later := LaterLine(r, o); later != "" {
 		lines = append(lines, "", later)
 	}
@@ -831,28 +896,32 @@ func markdownSkipped(r *Report) []string {
 	}
 
 	var lines []string
-	if len(missing) > 0 {
-		lines = append(lines, fmt.Sprintf("⚠️ **Reads a missing table (%d):**", len(missing)), "")
-		for _, s := range missing {
-			note := "not on this branch: check it"
-			if s.Changed {
-				note = "changed on this branch"
-			}
-			lines = append(lines, fmt.Sprintf("- `%s` reads `%s` *(%s)*", impact.ShortTable(s.Action.Name), impact.ShortTable(s.Missing), note))
+	if len(r.BlockingRoots) > 0 {
+		lines = append(lines, fmt.Sprintf("**Blocked by %s (%d actions):**", plural(len(r.BlockingRoots), "missing table", "missing tables"), totalBlocked(r.BlockingRoots)), "")
+		for _, br := range r.BlockingRoots {
+			lines = append(lines, "- "+blockingRootMarkdown(br))
 		}
 		lines = append(lines, "")
-	}
-	if len(waiting) > 0 {
-		lines = append(lines, fmt.Sprintf("**Waits on a new table added on this branch (%d):**", waitingTotal), "")
-		for _, g := range waiting {
-			var deps []string
-			deps = append(deps, g.actions...)
-			if g.assertions > 0 {
-				deps = append(deps, plural(g.assertions, "assertion", "assertions"))
+	} else {
+		if len(missing) > 0 {
+			lines = append(lines, fmt.Sprintf("⚠️ **Reads a missing table (%d):**", len(missing)), "")
+			for _, s := range missing {
+				lines = append(lines, fmt.Sprintf("- `%s` reads `%s` *(%s)*", impact.ShortTable(s.Action.Name), impact.ShortTable(s.Missing), skippedMissingNote(s)))
 			}
-			lines = append(lines, fmt.Sprintf("- Waiting on `%s`: %s", g.reads, strings.Join(deps, " + ")))
+			lines = append(lines, "")
 		}
-		lines = append(lines, "", "<sub>"+MissingHint+"</sub>", "")
+		if len(waiting) > 0 {
+			lines = append(lines, fmt.Sprintf("**Waits on a new table added on this branch (%d):**", waitingTotal), "")
+			for _, g := range waiting {
+				var deps []string
+				deps = append(deps, g.actions...)
+				if g.assertions > 0 {
+					deps = append(deps, plural(g.assertions, "assertion", "assertions"))
+				}
+				lines = append(lines, fmt.Sprintf("- Waiting on `%s`: %s", g.reads, strings.Join(deps, " + ")))
+			}
+			lines = append(lines, "", "<sub>"+MissingHint+"</sub>", "")
+		}
 	}
 	if len(columns) > 0 {
 		lines = append(lines, fmt.Sprintf("**Waits on a new column added on this branch (%d):**", len(columns)), "")
@@ -876,6 +945,149 @@ func markdownSkipped(r *Report) []string {
 func firstLine(s string) string {
 	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
 	return s
+}
+
+// ProdRiskText formats a prod-reader breakage warning in plain text.
+func ProdRiskText(risk ProdReaderRisk) string {
+	msg := fmt.Sprintf("prod's next run of %s will fail unless %s is built first", impact.ShortTable(risk.Action), impact.ShortTable(risk.Missing))
+	if risk.NoSharedTag {
+		msg += fmt.Sprintf(" (shares no tag: %s vs %s)", strings.Join(risk.ActionTags, ", "), strings.Join(risk.MissingTags, ", "))
+	}
+	return msg
+}
+
+func prodRiskMarkdown(risk ProdReaderRisk) string {
+	msg := fmt.Sprintf("Prod's next run of `%s` will fail unless `%s` is built first", cell(impact.ShortTable(risk.Action)), cell(impact.ShortTable(risk.Missing)))
+	if risk.NoSharedTag {
+		msg += fmt.Sprintf(" *(shares no tag: `%s` vs `%s`)*", cell(strings.Join(risk.ActionTags, ", ")), cell(strings.Join(risk.MissingTags, ", ")))
+	}
+	return msg
+}
+
+// PrerequisiteText formats a missing external declaration warning in plain text.
+func PrerequisiteText(p Prerequisite) string {
+	var detail []string
+	if p.From != "" {
+		detail = append(detail, "retargeted from "+impact.ShortTable(p.From))
+	}
+	if p.FileName != "" {
+		detail = append(detail, "declared in "+p.FileName)
+	}
+	head := impact.ShortTable(p.Table)
+	if len(detail) > 0 {
+		head += " (" + strings.Join(detail, ", ") + ")"
+	}
+	msg := "prerequisite: " + head + " is built outside Dataform and missing in prod — load it before running"
+	if p.SizedFromDev {
+		msg += " (sized using dev's copy)"
+	}
+	return msg
+}
+
+func prerequisiteMarkdown(p Prerequisite) string {
+	var detail []string
+	if p.From != "" {
+		detail = append(detail, fmt.Sprintf("retargeted from `%s`", cell(impact.ShortTable(p.From))))
+	}
+	if p.FileName != "" {
+		detail = append(detail, fmt.Sprintf("declared in `%s`", cell(p.FileName)))
+	}
+	head := fmt.Sprintf("`%s`", cell(impact.ShortTable(p.Table)))
+	if len(detail) > 0 {
+		head += " (" + strings.Join(detail, ", ") + ")"
+	}
+	msg := head + " is built outside Dataform and not in prod yet — load it before running"
+	if p.SizedFromDev {
+		msg += " *(sized using dev's copy)*"
+	}
+	return msg
+}
+
+func skippedMissingNote(s Skipped) string {
+	switch s.Kind {
+	case MissingPrereq:
+		if s.FileName != "" {
+			return "prerequisite declared in " + s.FileName + ": load before running"
+		}
+		return "prerequisite declared on this branch: load before running"
+	case MissingNeverBuilt:
+		return "never built in prod"
+	case MissingNew:
+		return "new on this branch"
+	}
+	return "not touched by this branch: check it"
+}
+
+func blockingRootLabel(br BlockingRoot) string {
+	switch br.Kind {
+	case MissingPrereq:
+		if br.From != "" && br.FileName != "" {
+			return fmt.Sprintf("prerequisite, retargeted from %s in %s — load before running", impact.ShortTable(br.From), br.FileName)
+		}
+		if br.FileName != "" {
+			return fmt.Sprintf("prerequisite, declared in %s — load before running", br.FileName)
+		}
+		return "prerequisite — load before running"
+	case MissingNeverBuilt:
+		return "never built in prod"
+	case MissingNew:
+		return "new on this branch, not built yet"
+	}
+	return "not touched by this branch: check it"
+}
+
+// BlockingRootText formats a blocking root and its blocked cascade in plain text.
+func BlockingRootText(br BlockingRoot) string {
+	var parts []string
+	if len(br.Direct) > 0 {
+		var d []string
+		for _, a := range br.Direct {
+			d = append(d, impact.ShortTable(a))
+		}
+		parts = append(parts, strings.Join(d, ", "))
+	}
+	for _, v := range br.Via {
+		var acts []string
+		for _, a := range v.Actions {
+			acts = append(acts, impact.ShortTable(a))
+		}
+		parts = append(parts, fmt.Sprintf("via %s: %s", impact.ShortTable(v.Table), strings.Join(acts, ", ")))
+	}
+	return fmt.Sprintf("%s [%s] blocks %s", impact.ShortTable(br.Table), blockingRootLabel(br), strings.Join(parts, " → "))
+}
+
+func blockingRootMarkdown(br BlockingRoot) string {
+	var parts []string
+	if len(br.Direct) > 0 {
+		var d []string
+		for _, a := range br.Direct {
+			d = append(d, "`"+cell(impact.ShortTable(a))+"`")
+		}
+		parts = append(parts, strings.Join(d, ", "))
+	}
+	for _, v := range br.Via {
+		var acts []string
+		for _, a := range v.Actions {
+			acts = append(acts, "`"+cell(impact.ShortTable(a))+"`")
+		}
+		parts = append(parts, fmt.Sprintf("via `%s`: %s", cell(impact.ShortTable(v.Table)), strings.Join(acts, ", ")))
+	}
+	return fmt.Sprintf("`%s` *(%s)* blocks %s", cell(impact.ShortTable(br.Table)), cell(blockingRootLabel(br)), strings.Join(parts, " → "))
+}
+
+func totalBlocked(roots []BlockingRoot) int {
+	seen := map[string]bool{}
+	for _, br := range roots {
+		for _, a := range br.Direct {
+			seen[a] = true
+		}
+		for _, v := range br.Via {
+			for _, a := range v.Actions {
+				seen[a] = true
+			}
+		}
+	}
+	return len(seen)
 }
 
 // JSONVersion is the version of the JSON document: fields are added
@@ -970,14 +1182,21 @@ type jsonReport struct {
 	// BaseTotalBytes is what the same actions scanned at the merge-base,
 	// and DeltaTotalBytes how many more the branch scans: null when not
 	// known (see Report.BaseTotal).
-	BaseTotalBytes  *int64    `json:"baseTotalBytes"`
-	DeltaTotalBytes *int64    `json:"deltaTotalBytes"`
-	DeltaTotalUSD   *float64  `json:"deltaTotalUsd"`
-	USDPerTiB       float64   `json:"usdPerTib"`
-	Unestimated     int       `json:"unestimated"`
-	Gate            *jsonGate `json:"gate,omitempty"`
-	BaseError       string    `json:"baseError,omitempty"`
-	CheckedAt       time.Time `json:"checkedAt"`
+	BaseTotalBytes   *int64           `json:"baseTotalBytes"`
+	DeltaTotalBytes  *int64           `json:"deltaTotalBytes"`
+	DeltaTotalUSD    *float64         `json:"deltaTotalUsd"`
+	USDPerTiB        float64          `json:"usdPerTib"`
+	EstimatedActions int              `json:"estimatedActions"`
+	ChangedActions   int              `json:"changedActions"`
+	Unestimated      int              `json:"unestimated"`
+	StandIns         bool             `json:"standIns,omitempty"`
+	Prerequisites    []Prerequisite   `json:"prerequisites,omitempty"`
+	ProdRisks        []ProdReaderRisk `json:"prodRisks,omitempty"`
+	BlockingRoots    []BlockingRoot   `json:"blockingRoots,omitempty"`
+	ProdUnbuiltNote  string           `json:"prodUnbuiltNote,omitempty"`
+	Gate             *jsonGate        `json:"gate,omitempty"`
+	BaseError        string           `json:"baseError,omitempty"`
+	CheckedAt        time.Time        `json:"checkedAt"`
 	// PastRuns is a Databricks report's past runs (Report.PastRuns), with
 	// no actions or totals.
 	PastRuns *PastRuns `json:"pastRuns,omitempty"`
@@ -1005,7 +1224,9 @@ func JSON(r *Report, o Options) ([]byte, error) {
 	}
 	total, bound := r.Total()
 	out := jsonReport{Version: JSONVersion, Comparison: r.Comparison, Compiled: r.Compiled, DryRunIn: r.DryRunIn, Unset: r.Unset, Actions: []jsonAction{},
-		TotalBytes: total, TotalBound: boundName(bound), TotalUSD: o.USD(total), USDPerTiB: o.price(), Unestimated: r.Unestimated(),
+		TotalBytes: total, TotalBound: boundName(bound), TotalUSD: o.USD(total), USDPerTiB: o.price(),
+		EstimatedActions: r.Estimated(), ChangedActions: len(r.Actions), Unestimated: r.Unestimated(),
+		StandIns: r.StandIns, Prerequisites: r.Prerequisites, ProdRisks: r.ProdRisks, BlockingRoots: r.BlockingRoots, ProdUnbuiltNote: r.ProdUnbuiltNote,
 		BaseError: r.BaseError, CheckedAt: r.CheckedAt, PastRuns: r.PastRuns}
 	if later, bound, ok := r.Later(); ok {
 		usd := o.USD(later)

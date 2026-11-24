@@ -896,6 +896,15 @@ mark.cur { background: var(--amber); color: var(--bg); }
 .cost-asserts { display: inline-block; }
 .cost-asserts > summary { padding: 1px 6px; border-radius: 3px; background: var(--bg-2); border: 1px solid color-mix(in srgb, var(--rule) 75%, transparent); }
 .cost-assert-list { margin-top: 4px; padding-left: 6px; border-left: 1px solid var(--rule); }
+.cost-safety-wrap { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.cost-safety { padding: 8px 12px; border-radius: 4px; border-left: 3px solid var(--amber); background: color-mix(in srgb, var(--amber) 6%, transparent); }
+.cost-safety.risk { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 7%, transparent); }
+.cost-safety-head { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
+.cost-safety ul { margin: 4px 0 0; padding-left: 18px; }
+.cost-safety li { margin: 2px 0; }
+.cost-notes { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.standin-pill { font: 600 10px/16px var(--chrome); padding: 0 5px; border-radius: 3px; color: var(--blue); border: 1px solid color-mix(in srgb, var(--blue) 55%, transparent); background: color-mix(in srgb, var(--blue) 8%, transparent); white-space: nowrap; }
+.cost-via { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
 
 .prod { outline: none; }
 .prod p { max-width: 80ch; }

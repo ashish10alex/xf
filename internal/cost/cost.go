@@ -132,7 +132,8 @@ type AddedColumn struct {
 	Column string `json:"column"`
 }
 
-// DevRead is a table the branch adds that a dry run read from dev.
+// DevRead is a table missing in prod that a dry run read from dev as a sizing
+// stand-in.
 type DevRead struct {
 	// Table is its project.dataset.name where the dry runs look; Dev is
 	// its table in dev.
@@ -140,6 +141,88 @@ type DevRead struct {
 	Dev   string `json:"dev"`
 	// BuiltAt is when it was built in dev; zero when not known.
 	BuiltAt time.Time `json:"builtAt,omitzero"`
+	// Kind says why Table was missing where the dry runs look.
+	Kind MissingKind `json:"kind,omitempty"`
+	// FileName is the declaring file for MissingPrereq.
+	FileName string `json:"fileName,omitempty"`
+	// From is the previous table ID for a retargeted declaration.
+	From string `json:"from,omitempty"`
+}
+
+// MissingKind classifies a table a prod dry run did not find by who builds it
+// and whether this branch touches it.
+type MissingKind string
+
+const (
+	MissingNew        MissingKind = "new"          // branch adds this table
+	MissingNeverBuilt MissingKind = "never_built"  // branch changes this table; never built in prod
+	MissingPrereq     MissingKind = "prerequisite" // external declaration/source added or retargeted on branch
+	MissingUntouched  MissingKind = "untouched"    // missing table not touched by this branch
+)
+
+// DeclaredTable is an external declaration or dbt source added or retargeted on
+// this branch, named in the dry runs' compile.
+type DeclaredTable struct {
+	Table    string `json:"table"`
+	FileName string `json:"fileName,omitempty"`
+	From     string `json:"from,omitempty"`
+}
+
+// Prerequisite is an external declaration or dbt source added or retargeted on
+// this branch that is missing where the dry runs look. It is always reported,
+// even when dev stand-ins size the queries that read it.
+type Prerequisite struct {
+	Table        string   `json:"table"`
+	FileName     string   `json:"fileName,omitempty"`
+	From         string   `json:"from,omitempty"`
+	Direct       []string `json:"direct,omitempty"`
+	Downstream   []string `json:"downstream,omitempty"`
+	SizedFromDev bool     `json:"sizedFromDev,omitempty"`
+}
+
+// ProdReaderRisk warns that a changed action whose own table already exists in
+// prod now reads a table prod does not have: prod's next run of Action fails
+// unless Missing is built first.
+type ProdReaderRisk struct {
+	Action      string      `json:"action"`
+	Missing     string      `json:"missing"`
+	Kind        MissingKind `json:"kind"`
+	NoSharedTag bool        `json:"noSharedTag,omitempty"`
+	ActionTags  []string    `json:"actionTags,omitempty"`
+	MissingTags []string    `json:"missingTags,omitempty"`
+}
+
+// BlockingVia groups unestimated actions blocked through an intermediate
+// unbuilt branch table.
+type BlockingVia struct {
+	Table   string   `json:"table"`
+	Actions []string `json:"actions"`
+}
+
+// BlockingRoot is a deepest missing table in the compiled dependency graph
+// blocking one or more unestimated changed actions.
+type BlockingRoot struct {
+	Table    string        `json:"table"`
+	Location string        `json:"location,omitempty"`
+	Kind     MissingKind   `json:"kind"`
+	FileName string        `json:"fileName,omitempty"`
+	From     string        `json:"from,omitempty"`
+	Direct   []string      `json:"direct,omitempty"`
+	Via      []BlockingVia `json:"via,omitempty"`
+}
+
+// BlockedCount is the number of unique actions blocked by b.
+func (b BlockingRoot) BlockedCount() int {
+	seen := map[string]bool{}
+	for _, a := range b.Direct {
+		seen[a] = true
+	}
+	for _, v := range b.Via {
+		for _, a := range v.Actions {
+			seen[a] = true
+		}
+	}
+	return len(seen)
 }
 
 // RunKind names which of an action's runs an estimate is.
@@ -211,6 +294,22 @@ type Report struct {
 	// 0042), is the changed models' latest runs, in place of Actions'
 	// estimates.
 	PastRuns *PastRuns `json:"pastRuns,omitempty"`
+	// StandIns says dev stand-ins were enabled for this check.
+	StandIns bool `json:"standIns,omitempty"`
+	// Declared are external declarations or dbt sources added or retargeted on
+	// this branch, named in the dry runs' compile.
+	Declared []DeclaredTable `json:"declared,omitempty"`
+	// Prerequisites are external declarations on this branch confirmed missing
+	// where the dry runs look, even when sized with dev stand-ins.
+	Prerequisites []Prerequisite `json:"prerequisites,omitempty"`
+	// ProdRisks are existing prod tables that now read a table missing in prod.
+	ProdRisks []ProdReaderRisk `json:"prodRisks,omitempty"`
+	// BlockingRoots groups unestimated missing-table actions under their
+	// deepest missing dependency in the compiled graph.
+	BlockingRoots []BlockingRoot `json:"blockingRoots,omitempty"`
+	// ProdUnbuiltNote warns when prod appears completely unbuilt for the
+	// branch's changed tables and dev stand-ins were used for all of them.
+	ProdUnbuiltNote string `json:"prodUnbuiltNote,omitempty"`
 }
 
 // Progress is how far a check got.
@@ -336,14 +435,25 @@ func (r *Report) ReadFromDev() int {
 	return len(tables)
 }
 
-// FromDevLine says how many tables the branch adds the estimates read
-// from dev, "" when none.
+// FromDevLine says how many tables missing in prod were read from dev as
+// sizing stand-ins, "" when none.
 func FromDevLine(r *Report) string {
 	n := r.ReadFromDev()
 	if n == 0 {
 		return ""
 	}
-	return "defer to prod: " + plural(n, "new table", "new tables") + " read from dev, sized as dev has " + map[bool]string{true: "it", false: "them"}[n == 1]
+	return "dev stand-ins: " + plural(n, "table", "tables") + " read from dev, sized as dev has " + map[bool]string{true: "it", false: "them"}[n == 1]
+}
+
+// Estimated counts the actions with an estimate.
+func (r *Report) Estimated() int {
+	n := 0
+	for _, a := range r.Actions {
+		if a.Estimate != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // Unestimated counts the actions without an estimate.

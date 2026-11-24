@@ -393,7 +393,10 @@ func (s styles) costReportLines(r *cost.Report, width int, o cost.Options) []str
 		lines = append(lines, s.dim.Render("compiled with ")+s.text.Render(r.Compiled))
 	}
 	lines = append(lines, s.unsetHintLines(cost.UnsetHint(r), width)...)
-	lines = append(lines, "", s.text.Bold(true).Render(cost.TotalLine(r, o)))
+	lines = append(lines, "")
+	for _, tl := range wrapValue(cost.TotalLine(r, o), width) {
+		lines = append(lines, s.text.Bold(true).Render(tl))
+	}
 
 	var rows [][]string
 	var warned []bool

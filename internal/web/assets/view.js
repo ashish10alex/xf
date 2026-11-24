@@ -1665,6 +1665,9 @@ function ChecksPage() {
     onClick=${key(k)}><kbd>${k}</kbd> ${label}</button>`;
   const against = (api, label) => html`<button class=${'tab' + (o.api === api ? ' on' : '')} title="a switches"
     onClick=${o.api === api ? undefined : key('a')}>${label}</button>`;
+  const standInMode = (prodOnly, label) => html`<button class=${'tab' + (!!S.costProdOnly === prodOnly ? ' on' : '')} title="p switches between sizing missing prod tables from dev vs prod only"
+    onClick=${!!S.costProdOnly === prodOnly ? undefined : key('p')}>${label}</button>`;
+  const showStandInToggle = which === 'cost' && S.caps.warehouse !== 'databricks' && S.caps.warehouse !== 'snowflake';
   const zoomed = S.caps.terminal && S.checksTerm && S.checksTermZoomed;
   const zoomKey = st.onMac ? '⌘z' : 'alt+z';
   const footerKeys = S.caps.terminal && S.checksTerm && st.termFocused()
@@ -1678,6 +1681,7 @@ function ChecksPage() {
       ${tabs.length > 1 && html`<span class="set-tabs" role="group" aria-label="Check">${tabs.map((w) => w === 'impact' ? tab(w, 'Column impact', 'I') : tab(w, 'Query cost', 'C'))}</span>`}
       <span class="spacer"></span>
       ${S.caps.branches && html`<button class="link base-link" title="b compares with another branch" onClick=${key('b')}><kbd>b</kbd> vs ${S.boot.defaultBranch}</button>`}
+      ${showStandInToggle && html`<span class="set-tabs" role="group" aria-label="Missing prod tables"><span class="tab-key"><kbd>p</kbd></span>${standInMode(false, 'Dev stand-ins')}${standInMode(true, 'Prod only')}</span>`}
       ${S.caps.api && html`<span class="set-tabs" role="group" aria-label="Checked from"><span class="tab-key"><kbd>a</kbd></span>${against(false, 'Working tree')}${against(true, 'Pushed branch')}</span>`}
       <button class="run-btn" disabled=${!o.report || o.loading} onClick=${key('y')}><kbd>y</kbd> Copy Markdown</button>
       <button class="run-btn" disabled=${o.loading} onClick=${key('c')}><kbd>c</kbd> Check again</button>
@@ -1763,11 +1767,33 @@ function CostTable({ r }) {
         ${r.baseLabel && html`<th colspan="2" class="run" title="Against the same action at the merge-base">Change</th>`}
         <th rowspan="2">Notes</th></tr>
         <tr>${Array.from({ length: groups }, () => html`<th class="num">Scans</th><th class="num">Cost</th>`)}</tr></thead>
-      <tbody>${r.rows.map((x) => html`<tr><td class="mono">${x.name}${x.marks && html`<sup class="fn">${x.marks.join(' ')}</sup>`}</td>
-        ${row(x, false)}<td class=${x.warn ? 'warn' : 'dim'}>${x.notes}</td></tr>`)}</tbody>
+      <tbody>${r.rows.map((x) => {
+        const extra = x.standIns && x.standIns.length > 0 && x.notes
+          ? x.notes.split(' · ').filter((s) => !s.startsWith('dev stand-in:')).join(' · ')
+          : '';
+        return html`<tr><td class="mono">${x.name}${x.marks && html`<sup class="fn">${x.marks.join(' ')}</sup>`}</td>
+          ${row(x, false)}<td class=${x.warn ? 'warn' : 'dim'}>${x.standIns && x.standIns.length > 0
+            ? html`<span class="cost-notes">${extra && html`<span class=${x.warn ? 'warn' : 'dim'}>${extra}</span>`}${x.standIns.map((s) => html`<span class="standin-pill" title=${'Read from dev copy ' + s.table}>dev stand-in${s.built ? ' · built ' + s.built : ''}</span>`)}</span>`
+            : x.notes}</td></tr>`;
+      })}</tbody>
       <tfoot><tr><td>Total</td>${row(r.totalRow, true)}<td></td></tr></tfoot>
     </table>`)}
     ${r.footnotes && html`<ol class="cost-footnotes dim">${r.footnotes.map((n) => html`<li>${n}</li>`)}</ol>`}`;
+}
+
+function CostSafety({ r }) {
+  if (!(r.prodRisks && r.prodRisks.length) && !(r.prerequisites && r.prerequisites.length) && !r.prodUnbuiltNote) return null;
+  return html`<div class="cost-safety-wrap">
+    ${r.prodRisks && r.prodRisks.length > 0 && html`<div class="cost-safety risk">
+      <div class="cost-safety-head"><span class="mark m-fix">prod breakage risk</span> <span>Existing prod ${r.prodRisks.length === 1 ? 'table reads a table' : 'tables read tables'} missing in prod</span></div>
+      <ul>${r.prodRisks.map((x) => html`<li>Next prod run of ${tableName(x.action)} will fail unless ${tableName(x.missing)} is built first${x.hint && html` <span class="dim small">(${x.hint})</span>`}</li>`)}</ul>
+    </div>`}
+    ${r.prerequisites && r.prerequisites.length > 0 && html`<div class="cost-safety prereq">
+      <div class="cost-safety-head"><span class="mark m-review">prerequisite</span> <span>External ${r.prerequisites.length === 1 ? 'table declared on this branch is' : 'tables declared on this branch are'} missing in prod — load before running</span></div>
+      <ul>${r.prerequisites.map((p) => html`<li>${tableName(p.table)}${p.from && html` <span class="dim small">retargeted from ${tableName(p.from)}</span>`}${p.fileName && html` <span class="dim small">in <span class="mono">${p.fileName}</span></span>`}${p.sizedFromDev && html` <span class="standin-pill">sized on dev's copy</span>`}</li>`)}</ul>
+    </div>`}
+    ${r.prodUnbuiltNote && html`<p class="warn">⚠ ${r.prodUnbuiltNote}</p>`}
+  </div>`;
 }
 
 function CostReport({ o }) {
@@ -1783,6 +1809,7 @@ function CostReport({ o }) {
       ${r.explain && html`<p class="explain">${raw(r.explain)}</p>`}
       ${r.fromDev && html`<div class="dim">${r.fromDev}</div>`}
       ${r.unset && html`<p class="warn">${r.unset}</p>`}
+      <${CostSafety} r=${r} />
       ${r.empty ? html`<p class="dim">${r.empty}</p>` : r.rows.length > 0 ? html`<${CostTable} r=${r} />` : html`<p class="total"><b>${r.total}</b></p>`}
       ${r.later && html`<p class="dim">${r.later}</p>`}
       ${r.baseError && html`<p class="warn">${r.baseError}</p>`}
@@ -1818,17 +1845,28 @@ const tableName = (t) => {
   const i = t.lastIndexOf('.');
   return html`<span class="mono"><span class="dim">${t.slice(0, i + 1)}</span>${t.slice(i + 1)}</span>`;
 };
-const chipClass = { new: 'm-new', missing: 'm-review', other: 'm-none' };
+const chipClass = { new: 'm-new', neverBuilt: 'm-low', prereq: 'm-review', missing: 'm-fix', other: 'm-none' };
 
 // NotEstimated is the actions C couldn't price, grouped by root cause:
-// 1. Missing tables in BigQuery (not added on this branch) that need checking.
-// 2. New tables added on this branch, with the actions waiting on each one.
+// 1. Root-cause missing tables (with direct + transitive cascades).
+// 2. Legacy per-action Missing / Waiting tables (when Roots aren't provided).
 // 3. Columns added on this branch, with the actions waiting on each.
 // 4. Other reasons (external tables, scripts), grouped by why.
 function NotEstimated({ n }) {
   const where = n.where || 'BigQuery';
   return html`<h3>Not estimated <span class="dim">${n.count} ${n.count === 1 ? 'action' : 'actions'}, not in the total</span></h3>
-    <div class="cost-chips">${n.chips.map((c) => html`<span class=${'mark ' + chipClass[c.kind]}>${c.text}</span>`)}</div>
+    <div class="cost-chips">${n.chips.map((c) => html`<span class=${'mark ' + (chipClass[c.kind] || 'm-none')}>${c.text}</span>`)}</div>
+    ${n.roots && n.roots.length > 0 && wrapTable(html`<table class="grid not-estimated missing-alert">
+      <thead><tr><th>Root cause missing in <span class="as-is">${where}</span></th><th>Status</th><th>Blocks</th></tr></thead>
+      <tbody>${n.roots.map((g) => html`<tr>
+        <td>${tableName(g.table)}</td>
+        <td class="status"><span class=${'mark ' + (chipClass[g.kind] || 'm-review')}>${g.status}</span>
+          ${g.note && html`<span class="dim small">${g.note}</span>`}</td>
+        <td><div class="cost-deps">
+          ${(g.direct || []).map((a) => html`<span class="cost-dep">${tableName(a)}</span>`)}
+          ${(g.via || []).map((v) => html`<span class="cost-via"><span class="dim small">via</span> ${tableName(v.table)} <span class="dim">→</span> ${v.actions.map((a) => html`<span class="cost-dep">${tableName(a)}</span>`)}</span>`)}
+        </div></td></tr>`)}</tbody>
+    </table>`)}
     ${n.missing && wrapTable(html`<table class="grid not-estimated missing-alert">
       <thead><tr><th>Reads a missing table</th><th>Type</th><th>Missing in <span class="as-is">${where}</span></th><th>Status</th></tr></thead>
       <tbody>${n.missing.map((x) => html`<tr>
@@ -1836,7 +1874,7 @@ function NotEstimated({ n }) {
           ? html`<details><summary class="dim">${x.assertions.length} assertions</summary>${x.assertions.map((a) => html`<div>${tableName(a)}</div>`)}</details>`
           : tableName(x.action)}</td>
         <td class="dim">${x.type}</td><td>${tableName(x.reads)}</td>
-        <td class="status"><span class=${'mark ' + chipClass[x.kind]}>${x.status}</span>
+        <td class="status"><span class=${'mark ' + (chipClass[x.kind] || 'm-review')}>${x.status}</span>
           <span class="dim small">${x.note}</span></td></tr>`)}</tbody>
     </table>`)}
     ${n.waiting && wrapTable(html`<table class="grid not-estimated">

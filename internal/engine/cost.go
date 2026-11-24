@@ -46,9 +46,10 @@ type CostRequest struct {
 	// nowhere, not even to "": the report then says it used the defaults
 	// (cost.Report.Unset).
 	Unset string `json:"unset,omitempty"`
-	// Defer is whether defer to prod is on, which the engine sets: a table
-	// the branch adds is then read from dev when prod doesn't have it.
-	Defer bool `json:"-"`
+	// StandIns says dry runs that miss a table this branch adds, changes
+	// (when unbuilt in prod), or declares may read dev's copy for sizing
+	// while still surfacing missing-prod-table safety warnings.
+	StandIns bool `json:"standIns,omitempty"`
 }
 
 type costKey struct {
@@ -56,7 +57,7 @@ type costKey struct {
 	head     changes.Head
 	prod     string
 	dbt      string
-	deferred bool
+	standIns bool
 }
 
 // costRun is one cost check.
@@ -85,8 +86,7 @@ func (e *Engine) QueryCost(ctx context.Context, req CostRequest, progress func(c
 	sig := checkSignature(res, g)
 
 	e.mu.Lock()
-	req.Defer = e.state.Defer
-	key := costKey{req.DefaultBranch, req.Head, req.ProdCompilerOptions, req.DbtProdTarget, req.Defer}
+	key := costKey{req.DefaultBranch, req.Head, req.ProdCompilerOptions, req.DbtProdTarget, req.StandIns}
 	run := e.costs[key]
 	if run == nil || req.Refresh && (run.sig != sig || !run.running()) {
 		run = e.startCost(key, sig, req, res, g)

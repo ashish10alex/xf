@@ -195,16 +195,19 @@ export async function openCheck(which, refresh) {
   S.overlay = null;
   if (S.checks !== which) S.checksTermZoomed = false;
   S.checks = which;
-  const o = S[which] && S[which].api === S.flags.api && S[which].base === S.boot.defaultBranch ? S[which] : { report: null };
+  const prodOnly = which === 'cost' ? !!S.costProdOnly : false;
+  const o = S[which] && S[which].api === S.flags.api && S[which].base === S.boot.defaultBranch && !!S[which].prodOnly === prodOnly ? S[which] : { report: null };
   const stale = !!o.report && checkStale(o);
   const auto = autoRefreshAllowed(which);
   if (!refresh && o.token && (o.loading || o.err || (o.report && (!stale || !auto)))) { S[which] = o; redraw(); return; }
   refresh = refresh || (stale && auto);
   const token = String(++checkToken);
-  S[which] = { ...o, loading: true, err: null, progress: '', token, api: S.flags.api, base: S.boot.defaultBranch, offset: o.offset || 0 };
+  S[which] = { ...o, loading: true, err: null, progress: '', token, api: S.flags.api, base: S.boot.defaultBranch, prodOnly, offset: o.offset || 0 };
   redraw();
   try {
-    const r = await post('/api/' + which, { api: S.flags.api, refresh: !!refresh, token });
+    const body = { api: S.flags.api, refresh: !!refresh, token };
+    if (which === 'cost' && prodOnly) body.prodOnly = true;
+    const r = await post('/api/' + which, body);
     if (!S[which] || S[which].token !== token) return;
     if (r.prod) {
       S[which].loading = false;
@@ -337,6 +340,12 @@ export function checkKey(which, k) {
       refreshView();
       openCheck(which);
       return;
+    case 'p':
+      if (which !== 'cost' || S.caps.warehouse === 'databricks' || S.caps.warehouse === 'snowflake') return;
+      S.checksTermZoomed = false;
+      S.costProdOnly = !S.costProdOnly;
+      openCheck('cost');
+      return;
     case 'e': if (hasErrors()) { closeChecks(); showErrorsTab(); } return;
     case 'b': openBase(); return;
     case 'j': case 'down': scrollOverlay(40); return;
@@ -418,10 +427,6 @@ export async function setDefer(on) {
       return;
     }
     say(r.message || '');
-    // Query cost reads the tables the branch adds from dev only with defer
-    // on: the report kept on the page is for the other setting.
-    if (S.cost) S.cost.token = '';
-    if (S.checks === 'cost') openCheck('cost');
     if (!on && r.proxies && r.proxies.length) {
       const n = r.proxies.length;
       S.deferAsk = {

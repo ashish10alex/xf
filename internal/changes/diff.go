@@ -81,21 +81,51 @@ type Deleted struct {
 	RenamedTo project.ActionID `json:"renamedTo,omitempty"`
 }
 
+// DeclKind says how an external declaration or dbt source changed.
+type DeclKind string
+
+const (
+	DeclAdded      DeclKind = "added"
+	DeclRemoved    DeclKind = "removed"
+	DeclRetargeted DeclKind = "retargeted"
+)
+
+// DeclChange is an external table declaration (Dataform declaration or dbt
+// source) added, removed or retargeted on this branch. Kept apart from Changed
+// because declarations are never run.
+type DeclChange struct {
+	ID       project.ActionID `json:"id"`
+	Target   project.Target   `json:"target"`
+	FileName string           `json:"fileName"`
+	Kind     DeclKind         `json:"kind"`
+	// From is the previous target ID when Kind == DeclRetargeted.
+	From project.ActionID `json:"from,omitempty"`
+}
+
+// DeclTarget identifies a declaration or source in one compile for
+// DiffDeclarations.
+type DeclTarget struct {
+	Target   project.Target
+	FileName string
+}
+
 // Diff is how two compiles of a project differ, each list sorted by file,
 // then target.
 type Diff struct {
-	Changed []Changed `json:"changed,omitempty"`
-	Deleted []Deleted `json:"deleted,omitempty"`
+	Changed  []Changed    `json:"changed,omitempty"`
+	Deleted  []Deleted    `json:"deleted,omitempty"`
+	Declared []DeclChange `json:"declared,omitempty"`
 }
 
 // rawAction is an action of the compile output, with every field kept.
 type rawAction map[string]any
 
 type rawGraph struct {
-	Tables     []rawAction `json:"tables"`
-	Operations []rawAction `json:"operations"`
-	Assertions []rawAction `json:"assertions"`
-	Notebooks  []rawAction `json:"notebooks"`
+	Tables       []rawAction `json:"tables"`
+	Operations   []rawAction `json:"operations"`
+	Assertions   []rawAction `json:"assertions"`
+	Notebooks    []rawAction `json:"notebooks"`
+	Declarations []rawAction `json:"declarations"`
 	// PropertyGraphs come from definitions/**/graph.yaml.
 	PropertyGraphs []rawAction `json:"propertyGraphs"`
 }
@@ -144,13 +174,14 @@ func (a rawAction) pick(keys ...string) map[string]any {
 	return out
 }
 
-// runnableActions indexes the actions a run can build by ID. Descriptions,
-// column docs, tags and dependencies are left out: changing only those
-// doesn't change what a run builds. Declarations are never run.
-func runnableActions(data []byte) (map[project.ActionID]comparableAction, error) {
+// runnableActions indexes the actions a run can build by ID, and declarations
+// indexes the external table declarations by ID. Descriptions, column docs,
+// tags and dependencies are left out: changing only those doesn't change what
+// a run builds. Declarations are never run, and are diffed into Diff.Declared.
+func runnableActions(data []byte) (map[project.ActionID]comparableAction, map[project.ActionID]DeclTarget, error) {
 	var g rawGraph
 	if err := json.Unmarshal(data, &g); err != nil {
-		return nil, fmt.Errorf("decode compile result: %w", err)
+		return nil, nil, fmt.Errorf("decode compile result: %w", err)
 	}
 	out := map[project.ActionID]comparableAction{}
 	add := func(a rawAction, typ string, sql, config map[string]any) {
@@ -175,7 +206,80 @@ func runnableActions(data []byte) (map[project.ActionID]comparableAction, error)
 	for _, p := range g.PropertyGraphs {
 		add(p, "property graph", p.pick("graphBody"), p.pick("disabled"))
 	}
-	return out, nil
+	decls := map[project.ActionID]DeclTarget{}
+	for _, d := range g.Declarations {
+		if t, ok := d.target(); ok {
+			decls[t.ID()] = DeclTarget{Target: t, FileName: project.SlashPath(d.str("fileName"))}
+		}
+	}
+	return out, decls, nil
+}
+
+// DiffDeclarations compares external declarations or sources between two
+// compiles. When a file has exactly one added and one removed declaration, they
+// are paired as DeclRetargeted; otherwise each is listed separately.
+func DiffDeclarations(before, after map[project.ActionID]DeclTarget) []DeclChange {
+	addedByFile := map[string][]DeclTarget{}
+	removedByFile := map[string][]DeclTarget{}
+	var addedNoFile, removedNoFile []DeclTarget
+
+	for id, a := range after {
+		if _, ok := before[id]; !ok {
+			if a.FileName == "" {
+				addedNoFile = append(addedNoFile, a)
+			} else {
+				addedByFile[a.FileName] = append(addedByFile[a.FileName], a)
+			}
+		}
+	}
+	for id, b := range before {
+		if _, ok := after[id]; !ok {
+			if b.FileName == "" {
+				removedNoFile = append(removedNoFile, b)
+			} else {
+				removedByFile[b.FileName] = append(removedByFile[b.FileName], b)
+			}
+		}
+	}
+
+	var out []DeclChange
+	files := map[string]bool{}
+	for f := range addedByFile {
+		files[f] = true
+	}
+	for f := range removedByFile {
+		files[f] = true
+	}
+	for f := range files {
+		adds := addedByFile[f]
+		rems := removedByFile[f]
+		if len(adds) == 1 && len(rems) == 1 {
+			out = append(out, DeclChange{
+				ID:       adds[0].Target.ID(),
+				Target:   adds[0].Target,
+				FileName: f,
+				Kind:     DeclRetargeted,
+				From:     rems[0].Target.ID(),
+			})
+			continue
+		}
+		for _, a := range adds {
+			out = append(out, DeclChange{ID: a.Target.ID(), Target: a.Target, FileName: f, Kind: DeclAdded})
+		}
+		for _, r := range rems {
+			out = append(out, DeclChange{ID: r.Target.ID(), Target: r.Target, FileName: f, Kind: DeclRemoved})
+		}
+	}
+	for _, a := range addedNoFile {
+		out = append(out, DeclChange{ID: a.Target.ID(), Target: a.Target, Kind: DeclAdded})
+	}
+	for _, r := range removedNoFile {
+		out = append(out, DeclChange{ID: r.Target.ID(), Target: r.Target, Kind: DeclRemoved})
+	}
+	slices.SortFunc(out, func(x, y DeclChange) int {
+		return cmp.Or(cmp.Compare(x.FileName, y.FileName), cmp.Compare(x.ID, y.ID), cmp.Compare(x.Kind, y.Kind))
+	})
+	return out
 }
 
 // normalize treats absent, null, false, "" and empty arrays and objects
@@ -223,11 +327,11 @@ func equal(a, b map[string]any) bool {
 // Comparing compiled output rather than changed files also catches actions
 // affected by edits to includes/ or workflow_settings.yaml.
 func Compare(base, head []byte) (Diff, error) {
-	before, err := runnableActions(base)
+	before, beforeDecls, err := runnableActions(base)
 	if err != nil {
 		return Diff{}, err
 	}
-	after, err := runnableActions(head)
+	after, afterDecls, err := runnableActions(head)
 	if err != nil {
 		return Diff{}, err
 	}
@@ -254,6 +358,7 @@ func Compare(base, head []byte) (Diff, error) {
 			d.Deleted = append(d.Deleted, Deleted{ID: id, FileName: b.fileName, Type: b.typ, Parent: b.parent})
 		}
 	}
+	d.Declared = DiffDeclarations(beforeDecls, afterDecls)
 	slices.SortFunc(d.Changed, func(x, y Changed) int {
 		return cmp.Or(cmp.Compare(x.FileName, y.FileName), cmp.Compare(x.ID, y.ID))
 	})

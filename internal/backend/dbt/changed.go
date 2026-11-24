@@ -263,6 +263,7 @@ type stateManifest struct {
 type fullManifest struct {
 	nodes    map[string]node // the runnable ones
 	all      map[string]node // every node and unit test
+	sources  map[string]node // external sources
 	state    map[string]stateNode
 	children map[string][]string
 }
@@ -276,7 +277,7 @@ func decodeFull(data []byte) (*fullManifest, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("decode dbt manifest: %w", err)
 	}
-	f := &fullManifest{nodes: map[string]node{}, all: map[string]node{}, state: map[string]stateNode{}, children: map[string][]string{}}
+	f := &fullManifest{nodes: map[string]node{}, all: map[string]node{}, sources: map[string]node{}, state: map[string]stateNode{}, children: map[string][]string{}}
 	for _, nodes := range []map[string]node{m.Nodes, m.UnitTests} {
 		for id, n := range nodes {
 			f.all[id] = n
@@ -287,6 +288,9 @@ func decodeFull(data []byte) (*fullManifest, error) {
 				f.children[dep] = append(f.children[dep], id)
 			}
 		}
+	}
+	for id, n := range m.Sources {
+		f.sources[id] = n
 	}
 	for _, nodes := range []map[string]stateNode{s.Nodes, s.UnitTests} {
 		for id, n := range nodes {
@@ -349,6 +353,19 @@ func diffManifests(base, head []byte, modified []string) (changes.Diff, error) {
 			d.Deleted = append(d.Deleted, changes.Deleted{ID: target(n).ID(), FileName: path.Clean(project.SlashPath(n.OriginalFilePath)), Type: kind.String()})
 		}
 	}
+	sourceTargets := func(sources map[string]node) map[project.ActionID]changes.DeclTarget {
+		out := make(map[project.ActionID]changes.DeclTarget, len(sources))
+		for _, n := range sources {
+			t := target(n)
+			file := ""
+			if n.OriginalFilePath != "" {
+				file = path.Clean(project.SlashPath(n.OriginalFilePath))
+			}
+			out[t.ID()] = changes.DeclTarget{Target: t, FileName: file}
+		}
+		return out
+	}
+	d.Declared = changes.DiffDeclarations(sourceTargets(before.sources), sourceTargets(after.sources))
 	slices.SortFunc(d.Changed, func(x, y changes.Changed) int {
 		return cmp.Or(cmp.Compare(x.FileName, y.FileName), cmp.Compare(x.ID, y.ID))
 	})

@@ -463,7 +463,7 @@ func TestMarkdown(t *testing.T) {
 	for _, want := range []string{
 		"### Query Cost of Branch Changes",
 		"**Branch:** `feat/v2` vs `origin/main` @ `abc1234` | working tree",
-		"**Total scanned:** ≤ 4.20 TiB | **Estimated cost:** ≤ $26.26 (on demand, at $6.25 per TiB)",
+		"**Total scanned:** ≤ 4.20 TiB | **Estimated cost:** ≤ $26.26 (3 of 4 actions estimated; on demand, at $6.25 per TiB)",
 		"❌ Gate failed: 4.20 TiB exceeds the limit of 100.00 GiB",
 		"| Action | Type | Full build (dry run) | Incremental (dry run) | Change | Notes |",
 		"| `marts.fct_order_items` | incremental | 9.00 TiB · $56.25 | **≤ 4.20 TiB** · $26.25 | +4.20 TiB (+$26.23), was 3.00 GiB · $0.018 | ⚠️ no partition filter: `event_date` of `raw.events` · `definitions/fct_order_items.sqlx` |",
@@ -507,7 +507,8 @@ func TestMarkdown(t *testing.T) {
 	}}
 	md2 := Markdown(r2, Options{})
 	for _, want := range []string{
-		"⚠️ **Reads a missing table (1):**\n\n- `checks.gone` reads `raw.gone` *(not on this branch: check it)*",
+		"**Total scanned:** unknown *(none of 6 actions could be estimated)*",
+		"⚠️ **Reads a missing table (1):**\n\n- `checks.gone` reads `raw.gone` *(not touched by this branch: check it)*",
 		"**Waits on a new table added on this branch (3):**\n\n- Waiting on `marts.a_new`: `marts.child` + 2 assertions",
 		"BigQuery gave no estimate (2):\n\n- `marts.a_new` *(new)*, `marts.b_new` *(new)*",
 	} {
@@ -761,7 +762,10 @@ func TestRunReadsATableTheBranchAddsFromDev(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := find(t, r, "report")
-	want := []DevRead{{Table: "acme.marts.agg", Dev: "acme_dev.marts.agg", BuiltAt: built}, {Table: "acme.marts.agg2", Dev: "acme_dev.marts.agg2", BuiltAt: built}}
+	want := []DevRead{
+		{Table: "acme.marts.agg", Dev: "acme_dev.marts.agg", BuiltAt: built, Kind: MissingNew, FileName: "definitions/agg.sqlx"},
+		{Table: "acme.marts.agg2", Dev: "acme_dev.marts.agg2", BuiltAt: built, Kind: MissingNew, FileName: "definitions/agg2.sqlx"},
+	}
 	if a.Estimate == nil || a.Estimate.Bytes != 3<<20 || len(a.FromDev) != 2 || a.FromDev[0] != want[0] || a.FromDev[1] != want[1] {
 		t.Fatalf("both tables the branch adds are read from dev: %+v", a)
 	}
@@ -824,7 +828,9 @@ func TestRunListsEveryNewTableADryRunWaitsOn(t *testing.T) {
 	if len(s) != 1 || !slices.Equal(s[0].Waits, []string{"acme.marts.b_new", "acme.marts.a_new"}) {
 		t.Fatalf("skipped %+v: the table BigQuery named first, then the others", s)
 	}
-	if text := Text(r, Options{}); !strings.Contains(text, "? marts.out  waits on 2 new tables no run has built yet: marts.b_new, marts.a_new") {
+	text := Text(r, Options{})
+	if !strings.Contains(text, "? marts.a_new [new on this branch, not built yet] blocks marts.out") ||
+		!strings.Contains(text, "? marts.b_new [new on this branch, not built yet] blocks marts.out") {
 		t.Errorf("Text:\n%s", text)
 	}
 	data, err := JSON(r, Options{})
@@ -1193,7 +1199,7 @@ func TestCostGatesAndJSONDeltaUSD(t *testing.T) {
 	if got := GateLine(r, Options{Threshold: 5 * gib}); got != "Gate failed: 10.00 GiB exceeds the limit of 5.00 GiB" {
 		t.Errorf("threshold-only GateLine = %q", got)
 	}
-	if got := GateLine(r, Options{Threshold: 20 * gib}); got != "Gate passed: 10.00 GiB is within the limit of 20.00 GiB" {
+	if got := GateLine(r, Options{Threshold: 20 * gib}); got != "Gate passed: 10.00 GiB is within the limit of 20.00 GiB (1 action not estimated, not counted)" {
 		t.Errorf("threshold-only pass GateLine = %q", got)
 	}
 
@@ -1286,5 +1292,203 @@ func TestCostGatesAndJSONDeltaUSD(t *testing.T) {
 	}
 	if len(doc.Actions) == 0 || doc.Actions[0].DeltaUSD == nil || *doc.Actions[0].DeltaUSD != wantDeltaUSD {
 		t.Errorf("action[0].deltaUsd = %+v, want %v", doc.Actions[0].DeltaUSD, wantDeltaUSD)
+	}
+}
+
+// Mirrors the real-world opstrat_automation scenario:
+//   - OPSTRAT_EXCEL_INPUT is a retargeted declaration in sources.js (not in prod)
+//   - 0200_OPSTRAT & 0250_OPSTRAT existed on base (changed, never built in prod)
+//   - 0300_OPSTRAT & 0500_OPSTRAT read 0200_OPSTRAT (and 0500 also reads 0300)
+//   - 0100_SUPPLIER_CALL ALREADY exists in prod (tag supplier_call vs opstrat)
+//     and reads a partitioned prod table (DPR) without its partition filter.
+func TestRunSafetyPrerequisitesRootsAndDevStandIns(t *testing.T) {
+	mk := func(schema, name, query string, tags []string, deps ...project.Target) *project.Action {
+		tgt := project.Target{Database: "prod", Schema: schema, Name: name}
+		return &project.Action{
+			ID:                tgt.ID(),
+			Target:            tgt,
+			CanonicalTarget:   tgt,
+			Kind:              project.KindTable,
+			FileName:          "definitions/" + name + ".sqlx",
+			Query:             query,
+			Tags:              tags,
+			DependencyTargets: deps,
+		}
+	}
+	srcT := project.Target{Database: "prod", Schema: "order_processing_source", Name: "OPSTRAT_EXCEL_INPUT"}
+	t0200 := project.Target{Database: "prod", Schema: "opstrat", Name: "0200_OPSTRAT"}
+	t0300 := project.Target{Database: "prod", Schema: "opstrat", Name: "0300_OPSTRAT"}
+
+	srcDecl := &project.Action{ID: srcT.ID(), Target: srcT, CanonicalTarget: srcT, Kind: project.KindDeclaration, FileName: "definitions/sources/sources.js"}
+	a0200 := mk("opstrat", "0200_OPSTRAT", "select * from `prod.order_processing_source.OPSTRAT_EXCEL_INPUT`", []string{"opstrat"}, srcT)
+	a0250 := mk("opstrat", "0250_OPSTRAT", "select * from `prod.order_processing_source.OPSTRAT_EXCEL_INPUT`", []string{"opstrat"}, srcT)
+	a0300 := mk("opstrat", "0300_OPSTRAT", "select * from `prod.opstrat.0200_OPSTRAT`", []string{"opstrat"}, t0200)
+	a0500 := mk("opstrat", "0500_OPSTRAT", "select * from `prod.opstrat.0200_OPSTRAT` join `prod.opstrat.0300_OPSTRAT` using (id)", []string{"opstrat"}, t0200, t0300)
+	a0100 := mk("allocation_build_plan", "0100_SUPPLIER_CALL", "select * from `prod.dpr.0500_DPR` join `prod.opstrat.0200_OPSTRAT` using (id)", []string{"supplier_call"}, t0200)
+
+	g := project.NewGraph([]*project.Action{srcDecl, a0200, a0250, a0300, a0500, a0100})
+	g.DefaultDatabase, g.DefaultLocation = "prod", "EU"
+
+	res := &changes.Result{
+		BaseRef: "origin/develop", MergeBase: "e8c58f15", HeadRef: "opstrat_automation", Head: changes.HeadWorktree,
+		Diff: changes.Diff{
+			Changed: []changes.Changed{
+				{ID: a0100.ID, Target: a0100.Target, FileName: a0100.FileName, Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+				{ID: a0200.ID, Target: a0200.Target, FileName: a0200.FileName, Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+				{ID: a0250.ID, Target: a0250.Target, FileName: a0250.FileName, Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+				{ID: a0300.ID, Target: a0300.Target, FileName: a0300.FileName, Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+				{ID: a0500.ID, Target: a0500.Target, FileName: a0500.FileName, Type: "table", Reasons: []changes.Reason{changes.ReasonSQL}},
+			},
+			Declared: []changes.DeclChange{{
+				ID: srcT.ID(), Target: srcT, FileName: "definitions/sources/sources.js",
+				Kind: changes.DeclRetargeted, From: "prod.opstrat.0100_OPSTRAT",
+			}},
+		},
+	}
+
+	bq := &fakeBQ{
+		dryRuns: map[string]*warehouse.Check{
+			// 0100_SUPPLIER_CALL already exists in prod.
+			"SELECT 1 FROM `prod.allocation_build_plan.0100_SUPPLIER_CALL` WHERE FALSE": precise(0),
+			// Dev-stand-in queries succeed: 0100 keeps prod.dpr.0500_DPR!
+			"select * from `dev.order_processing_source.OPSTRAT_EXCEL_INPUT`":                     {Bytes: 92800, Accuracy: warehouse.AccuracyPrecise, Tables: []warehouse.TableRef{{Project: "dev", Dataset: "order_processing_source", Table: "OPSTRAT_EXCEL_INPUT"}}},
+			"select * from `dev.opstrat.0200_OPSTRAT`":                                            {Bytes: 29044, Accuracy: warehouse.AccuracyPrecise, Tables: []warehouse.TableRef{{Project: "dev", Dataset: "opstrat", Table: "0200_OPSTRAT"}}},
+			"select * from `dev.opstrat.0200_OPSTRAT` join `dev.opstrat.0300_OPSTRAT` using (id)": {Bytes: 61982, Accuracy: warehouse.AccuracyPrecise, Tables: []warehouse.TableRef{{Project: "dev", Dataset: "opstrat", Table: "0200_OPSTRAT"}, {Project: "dev", Dataset: "opstrat", Table: "0300_OPSTRAT"}}},
+			"select * from `prod.dpr.0500_DPR` join `dev.opstrat.0200_OPSTRAT` using (id)": {
+				Bytes: 500 << 20, Accuracy: warehouse.AccuracyPrecise,
+				Tables: []warehouse.TableRef{
+					{Project: "prod", Dataset: "dpr", Table: "0500_DPR"},
+					{Project: "dev", Dataset: "opstrat", Table: "0200_OPSTRAT"},
+				},
+			},
+		},
+		failures: map[string]error{
+			a0200.Query: notFound("prod.order_processing_source.OPSTRAT_EXCEL_INPUT"),
+			a0250.Query: notFound("prod.order_processing_source.OPSTRAT_EXCEL_INPUT"),
+			a0300.Query: notFound("prod.opstrat.0200_OPSTRAT"),
+			a0500.Query: notFound("prod.opstrat.0200_OPSTRAT"),
+			"select * from `dev.opstrat.0200_OPSTRAT` join `prod.opstrat.0300_OPSTRAT` using (id)": notFound("prod.opstrat.0300_OPSTRAT"),
+			a0100.Query: notFound("prod.opstrat.0200_OPSTRAT"),
+			"SELECT 1 FROM `prod.opstrat.0200_OPSTRAT` WHERE FALSE": notFound("prod.opstrat.0200_OPSTRAT"),
+			"SELECT 1 FROM `prod.opstrat.0250_OPSTRAT` WHERE FALSE": notFound("prod.opstrat.0250_OPSTRAT"),
+			"SELECT 1 FROM `prod.opstrat.0300_OPSTRAT` WHERE FALSE": notFound("prod.opstrat.0300_OPSTRAT"),
+			"SELECT 1 FROM `prod.opstrat.0500_OPSTRAT` WHERE FALSE": notFound("prod.opstrat.0500_OPSTRAT"),
+		},
+		partitions: map[string]*warehouse.Partition{
+			"0500_DPR": {Column: "REPORT_DATE"},
+		},
+	}
+
+	// 1. Prod-only mode (InDev == nil): honest unknown total, root-cause tree, prerequisite & prod risk.
+	rProd, err := Run(context.Background(), res, Head{Graph: g, Compiled: "prodCompilerOptions"}, Deps{DryRun: bq.dryRun, Partition: bq.partition}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rProd.Estimated() != 0 || rProd.Unestimated() != 5 {
+		t.Fatalf("prod-only counts: est=%d unest=%d", rProd.Estimated(), rProd.Unestimated())
+	}
+	if got := TotalLine(rProd, Options{}); got != "Total scanned: unknown (0 of 5 actions estimated)" {
+		t.Errorf("TotalLine = %q", got)
+	}
+	if got := GateLine(rProd, Options{Threshold: 100 * gib, FailOnUnfiltered: true}); !strings.Contains(got, "5 actions not estimated, not counted") || !strings.Contains(got, "no missing partition filters among 0 estimated; 5 not checked") {
+		t.Errorf("GateLine = %q", got)
+	}
+	if len(rProd.ProdRisks) != 1 || rProd.ProdRisks[0].Action != string(a0100.ID) || rProd.ProdRisks[0].Missing != string(t0200.ID()) || !rProd.ProdRisks[0].NoSharedTag {
+		t.Errorf("ProdRisks = %+v", rProd.ProdRisks)
+	}
+	if len(rProd.Prerequisites) != 1 || rProd.Prerequisites[0].Table != string(srcT.ID()) || rProd.Prerequisites[0].From != "prod.opstrat.0100_OPSTRAT" || rProd.Prerequisites[0].SizedFromDev {
+		t.Errorf("Prerequisites = %+v", rProd.Prerequisites)
+	}
+	if len(rProd.BlockingRoots) != 1 || rProd.BlockingRoots[0].Table != string(srcT.ID()) || rProd.BlockingRoots[0].Kind != MissingPrereq || rProd.BlockingRoots[0].BlockedCount() != 5 {
+		t.Errorf("BlockingRoots = %+v", rProd.BlockingRoots)
+	}
+	mdProd := Markdown(rProd, Options{})
+	for _, want := range []string{
+		"🚨 **Prod breakage risk:**",
+		"⚠️ **Missing external prerequisite:**",
+		"**Total scanned:** unknown *(none of 5 actions could be estimated)*",
+		"**Blocked by 1 missing table (5 actions):**",
+	} {
+		if !strings.Contains(mdProd, want) {
+			t.Errorf("prod Markdown missing %q:\n%s", want, mdProd)
+		}
+	}
+
+	// 2. Dev stand-ins mode (InDev != nil): all 5 estimated, hidden REPORT_DATE warning surfaced,
+	//    AND safety findings (ProdRisks + Prerequisites with SizedFromDev=true) stay visible!
+	inDev := func(_ context.Context, id project.ActionID) (project.Target, time.Time, bool) {
+		parts := strings.Split(string(id), ".")
+		return project.Target{Database: "dev", Schema: parts[1], Name: parts[2]}, time.Time{}, true
+	}
+	rDev, err := Run(context.Background(), res, Head{Graph: g, Compiled: "prodCompilerOptions"}, Deps{DryRun: bq.dryRun, Partition: bq.partition, InDev: inDev}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rDev.Estimated() != 5 || rDev.Unestimated() != 0 || !rDev.StandIns {
+		t.Fatalf("stand-ins counts: est=%d unest=%d standIns=%v actions=%+v", rDev.Estimated(), rDev.Unestimated(), rDev.StandIns, rDev.Actions)
+	}
+	if len(rDev.ProdRisks) != 1 || !rDev.ProdRisks[0].NoSharedTag {
+		t.Errorf("ProdRisks must remain visible with stand-ins: %+v", rDev.ProdRisks)
+	}
+	if len(rDev.Prerequisites) != 1 || !rDev.Prerequisites[0].SizedFromDev {
+		t.Errorf("Prerequisites must remain visible with SizedFromDev=true: %+v", rDev.Prerequisites)
+	}
+	if rDev.ProdUnbuiltNote != "" {
+		t.Errorf("ProdUnbuiltNote should not fire when prod DPR table and prod 0100 exist: %q", rDev.ProdUnbuiltNote)
+	}
+	var got0100 Action
+	for _, a := range rDev.Actions {
+		if a.Name == string(a0100.ID) {
+			got0100 = a
+		}
+	}
+	if len(got0100.Unfiltered) != 1 || got0100.Unfiltered[0].Column != "REPORT_DATE" {
+		t.Errorf("0100_SUPPLIER_CALL must surface REPORT_DATE partition warning: %+v", got0100.Unfiltered)
+	}
+	if len(got0100.FromDev) != 1 || got0100.FromDev[0].Kind != MissingNeverBuilt {
+		t.Errorf("0100_SUPPLIER_CALL FromDev = %+v", got0100.FromDev)
+	}
+
+	// JSON exposes estimatedActions, changedActions, standIns, prodRisks, prerequisites.
+	data, err := JSON(rDev, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"estimatedActions": 5`, `"changedActions": 5`, `"standIns": true`, `"prodRisks":`, `"prerequisites":`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("JSON missing %s:\n%s", want, data)
+		}
+	}
+}
+
+func TestRunProdUnbuiltGuardNote(t *testing.T) {
+	a := action("a", project.KindTable, "select * from `acme.marts.b` join `acme.marts.c` using (id)")
+	b := action("b", project.KindTable, "select 1")
+	c := action("c", project.KindTable, "select 2")
+	bq := &fakeBQ{
+		dryRuns: map[string]*warehouse.Check{
+			b.Query: {Bytes: 1, Accuracy: warehouse.AccuracyPrecise},
+			c.Query: {Bytes: 1, Accuracy: warehouse.AccuracyPrecise},
+			"select * from `dev.marts.b` join `dev.marts.c` using (id)": {
+				Bytes: 10, Accuracy: warehouse.AccuracyPrecise,
+				Tables: []warehouse.TableRef{{Project: "dev", Dataset: "marts", Table: "b"}, {Project: "dev", Dataset: "marts", Table: "c"}},
+			},
+		},
+		failures: map[string]error{
+			a.Query: notFound("acme.marts.b"),
+			"select * from `dev.marts.b` join `acme.marts.c` using (id)": notFound("acme.marts.c"),
+			"SELECT 1 FROM `acme.marts.a` WHERE FALSE":                   notFound("acme.marts.a"),
+		},
+	}
+	inDev := func(_ context.Context, id project.ActionID) (project.Target, time.Time, bool) {
+		parts := strings.Split(string(id), ".")
+		return project.Target{Database: "dev", Schema: parts[1], Name: parts[2]}, time.Time{}, true
+	}
+	r, err := Run(context.Background(), changed(changes.ReasonSQL, a, b, c), Head{Graph: graph(a, b, c), Compiled: "prodCompilerOptions"}, Deps{DryRun: bq.dryRun, InDev: inDev}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.ProdUnbuiltNote, "check prodCompilerOptions") {
+		t.Errorf("ProdUnbuiltNote = %q, want guard note when >=2 changed tables missing and no prod table seen", r.ProdUnbuiltNote)
 	}
 }

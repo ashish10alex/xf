@@ -13,7 +13,7 @@ import (
 
 // ProtocolVersion is part of the socket's name, so a client only ever meets
 // a server that speaks its protocol. Bump it whenever a message changes.
-const ProtocolVersion = 23
+const ProtocolVersion = 24
 
 // socketName is the name of the socket (Unix) or pipe (Windows) xf serve
 // listens on for a project: "xf-", the first 16 hex characters of the

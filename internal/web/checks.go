@@ -182,9 +182,10 @@ func (p *projectState) tags(w http.ResponseWriter, r *http.Request) {
 // again when a report on the same changes is kept. Token tells its
 // progress events from other pages'.
 type checkRequest struct {
-	API     bool   `json:"api"`
-	Refresh bool   `json:"refresh"`
-	Token   string `json:"token"`
+	API      bool   `json:"api"`
+	Refresh  bool   `json:"refresh"`
+	ProdOnly bool   `json:"prodOnly,omitempty"`
+	Token    string `json:"token"`
 }
 
 // fetchBase fetches origin before a check, so its merge-base is with the
@@ -361,7 +362,7 @@ func (p *projectState) cost(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	p.fetchBase(ctx, req.Refresh, req.Token)
 	rep, err := d.QueryCost(ctx, engine.CostRequest{DefaultBranch: d.DefaultBranch, Head: changesHead(req.API), Refresh: req.Refresh,
-		ProdCompilerOptions: d.ProdCompilerOptions, DbtProdTarget: d.DbtProdTarget, Unset: d.Unset},
+		ProdCompilerOptions: d.ProdCompilerOptions, DbtProdTarget: d.DbtProdTarget, Unset: d.Unset, StandIns: !req.ProdOnly},
 		progress(p, req.Token, func(pr cost.Progress) (string, *costView) {
 			var partial *costView
 			if pr.Partial != nil {

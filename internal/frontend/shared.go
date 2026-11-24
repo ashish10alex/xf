@@ -488,12 +488,16 @@ type CostView struct {
 	Compared string `json:"compared,omitempty"`
 	// Explain says in a sentence what was dry run, as HTML; "" when
 	// nothing was.
-	Explain  string `json:"explain,omitempty"`
-	Compiled string `json:"compiled,omitempty"`
-	DryRunIn string `json:"dryRunIn,omitempty"`
-	FromDev  string `json:"fromDev,omitempty"`
-	Unset    string `json:"unset,omitempty"`
-	Total    string `json:"total"`
+	Explain         string             `json:"explain,omitempty"`
+	Compiled        string             `json:"compiled,omitempty"`
+	DryRunIn        string             `json:"dryRunIn,omitempty"`
+	FromDev         string             `json:"fromDev,omitempty"`
+	StandIns        bool               `json:"standIns,omitempty"`
+	ProdUnbuiltNote string             `json:"prodUnbuiltNote,omitempty"`
+	ProdRisks       []CostProdRisk     `json:"prodRisks,omitempty"`
+	Prerequisites   []CostPrerequisite `json:"prerequisites,omitempty"`
+	Unset           string             `json:"unset,omitempty"`
+	Total           string             `json:"total"`
 	// Later is the total of each run after the first, when an incremental
 	// table's first build is in Total.
 	Later string `json:"later,omitempty"`
@@ -519,11 +523,37 @@ type CostView struct {
 	Past *CostPast `json:"past,omitempty"`
 }
 
+// CostProdRisk warns that an existing prod table now reads a table missing in prod.
+type CostProdRisk struct {
+	Action  string `json:"action"`
+	Missing string `json:"missing"`
+	Kind    string `json:"kind"`
+	Hint    string `json:"hint,omitempty"`
+}
+
+// CostPrerequisite is a missing external declaration/source added or retargeted
+// on this branch.
+type CostPrerequisite struct {
+	Table        string   `json:"table"`
+	FileName     string   `json:"fileName,omitempty"`
+	From         string   `json:"from,omitempty"`
+	Direct       []string `json:"direct,omitempty"`
+	Downstream   []string `json:"downstream,omitempty"`
+	SizedFromDev bool     `json:"sizedFromDev,omitempty"`
+}
+
+// CostStandIn is one dev copy substituted for a missing prod table on a CostRow.
+type CostStandIn struct {
+	Table string `json:"table"`
+	Built string `json:"built,omitempty"`
+}
+
 // CostRow is an estimated action of a CostView: its row of the table,
 // with the notes short enough to go on it.
 type CostRow struct {
 	cost.TableRow
-	Notes string `json:"notes,omitempty"`
+	Notes    string        `json:"notes,omitempty"`
+	StandIns []CostStandIn `json:"standIns,omitempty"`
 	// Warn says a query reads a partitioned table without its filter.
 	Warn bool `json:"warn,omitempty"`
 }
@@ -596,9 +626,38 @@ func CostReport(r *cost.Report) CostView { return CostReportWith(r, cost.Options
 func CostReportWith(r *cost.Report, o cost.Options) CostView {
 	// Rows is never nil, so a report whose every action failed to estimate
 	// sends [], not null, which xf web's cost tab could not draw.
-	v := CostView{Compiled: r.Compiled, DryRunIn: r.DryRunIn, FromDev: cost.FromDevLine(r), Total: cost.TotalLine(r, o),
+	v := CostView{Compiled: r.Compiled, DryRunIn: r.DryRunIn, FromDev: cost.FromDevLine(r), StandIns: r.StandIns,
+		ProdUnbuiltNote: r.ProdUnbuiltNote, Total: cost.TotalLine(r, o),
 		Footnote: CostTableFootnote, Markdown: cost.Markdown(r, o), Rows: []CostRow{},
 		Explain: impact.InlineHTML(cost.Explanation(r))}
+	for _, risk := range r.ProdRisks {
+		cr := CostProdRisk{
+			Action:  impact.ShortTable(risk.Action),
+			Missing: impact.ShortTable(risk.Missing),
+			Kind:    string(risk.Kind),
+		}
+		if risk.NoSharedTag {
+			cr.Hint = "shares no tag: " + strings.Join(risk.ActionTags, ", ") + " vs " + strings.Join(risk.MissingTags, ", ")
+		}
+		v.ProdRisks = append(v.ProdRisks, cr)
+	}
+	for _, p := range r.Prerequisites {
+		cp := CostPrerequisite{
+			Table:        impact.ShortTable(p.Table),
+			FileName:     p.FileName,
+			SizedFromDev: p.SizedFromDev,
+		}
+		if p.From != "" {
+			cp.From = impact.ShortTable(p.From)
+		}
+		for _, a := range p.Direct {
+			cp.Direct = append(cp.Direct, impact.ShortTable(a))
+		}
+		for _, a := range p.Downstream {
+			cp.Downstream = append(cp.Downstream, impact.ShortTable(a))
+		}
+		v.Prerequisites = append(v.Prerequisites, cp)
+	}
 	if c := r.Comparison; c != nil {
 		v.Compared = c.HeadRef + " vs " + c.BaseRef + " @ " + c.MergeBase[:min(len(c.MergeBase), 7)]
 	}
@@ -626,14 +685,17 @@ func CostReportWith(r *cost.Report, o cost.Options) CostView {
 		if tr.FullRefresh != "" {
 			notes = append(notes, "full refresh "+tr.FullRefresh)
 		}
+		var standIns []CostStandIn
 		for _, d := range a.FromDev {
-			note := "reads dev's " + impact.ShortTable(d.Dev)
-			if built := RelTime(r.CheckedAt, d.BuiltAt); built != "" {
+			built := RelTime(r.CheckedAt, d.BuiltAt)
+			standIns = append(standIns, CostStandIn{Table: impact.ShortTable(d.Dev), Built: built})
+			note := "dev stand-in: " + impact.ShortTable(d.Dev)
+			if built != "" {
 				note += " (built " + built + ")"
 			}
 			notes = append(notes, note)
 		}
-		v.Rows = append(v.Rows, CostRow{TableRow: tr, Notes: strings.Join(notes, " · "), Warn: len(a.Unfiltered) > 0})
+		v.Rows = append(v.Rows, CostRow{TableRow: tr, Notes: strings.Join(notes, " · "), StandIns: standIns, Warn: len(a.Unfiltered) > 0})
 	}
 	v.Later = cost.LaterLine(r, o)
 	v.NotEstimated = costSkipped(r)

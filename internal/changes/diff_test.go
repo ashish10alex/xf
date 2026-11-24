@@ -221,3 +221,41 @@ func TestCompareIncrementalPostOps(t *testing.T) {
 		t.Errorf("changed = %v, want %v", got, want)
 	}
 }
+
+func TestCompareDeclarationsAddedRemovedAndRetargeted(t *testing.T) {
+	decl := func(file, schema, name string) map[string]any {
+		return map[string]any{
+			"fileName": file,
+			"target":   map[string]any{"database": "proj", "schema": schema, "name": name},
+		}
+	}
+	// Single remove + single add in the same file pairs as retargeted.
+	base := graph(t, map[string][]map[string]any{"declarations": {
+		decl("definitions/sources/sources.js", "opstrat", "0100_OPSTRAT"),
+		decl("definitions/sources/other.js", "raw", "kept"),
+		decl("definitions/sources/bulk.js", "raw", "old1"),
+		decl("definitions/sources/bulk.js", "raw", "old2"),
+	}})
+	head := graph(t, map[string][]map[string]any{"declarations": {
+		decl("definitions/sources/sources.js", "order_processing_source", "OPSTRAT_EXCEL_INPUT"),
+		decl("definitions/sources/other.js", "raw", "kept"),
+		decl("definitions/sources/other.js", "raw", "added_only"),
+		decl("definitions/sources/bulk.js", "raw", "new1"),
+		decl("definitions/sources/bulk.js", "raw", "new2"),
+	}})
+	d := compare(t, base, head)
+	if len(d.Changed) != 0 || len(d.Deleted) != 0 {
+		t.Fatalf("declarations must stay out of Changed/Deleted: %+v", d)
+	}
+	want := []DeclChange{
+		{ID: "proj.raw.new1", Target: project.Target{Database: "proj", Schema: "raw", Name: "new1"}, FileName: "definitions/sources/bulk.js", Kind: DeclAdded},
+		{ID: "proj.raw.new2", Target: project.Target{Database: "proj", Schema: "raw", Name: "new2"}, FileName: "definitions/sources/bulk.js", Kind: DeclAdded},
+		{ID: "proj.raw.old1", Target: project.Target{Database: "proj", Schema: "raw", Name: "old1"}, FileName: "definitions/sources/bulk.js", Kind: DeclRemoved},
+		{ID: "proj.raw.old2", Target: project.Target{Database: "proj", Schema: "raw", Name: "old2"}, FileName: "definitions/sources/bulk.js", Kind: DeclRemoved},
+		{ID: "proj.raw.added_only", Target: project.Target{Database: "proj", Schema: "raw", Name: "added_only"}, FileName: "definitions/sources/other.js", Kind: DeclAdded},
+		{ID: "proj.order_processing_source.OPSTRAT_EXCEL_INPUT", Target: project.Target{Database: "proj", Schema: "order_processing_source", Name: "OPSTRAT_EXCEL_INPUT"}, FileName: "definitions/sources/sources.js", Kind: DeclRetargeted, From: "proj.opstrat.0100_OPSTRAT"},
+	}
+	if !reflect.DeepEqual(d.Declared, want) {
+		t.Errorf("declared =\n%+v\nwant\n%+v", d.Declared, want)
+	}
+}

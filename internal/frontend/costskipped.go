@@ -26,6 +26,7 @@ type CostSkipped struct {
 	// for in, "acme-prod (EU)"; "" when there is more than one, and the
 	// Reads of Missing and Waiting then keep their project.
 	Where   string             `json:"where,omitempty"`
+	Roots   []CostRootGroup    `json:"roots,omitempty"`
 	Missing []CostMissingRow   `json:"missing,omitempty"`
 	Waiting []CostWaitingGroup `json:"waiting,omitempty"`
 	// Waits is the actions in Waiting: one waiting on two new tables is
@@ -35,6 +36,24 @@ type CostSkipped struct {
 	// dry runs didn't find, with the actions waiting on each.
 	Columns []CostColumnGroup `json:"columns,omitempty"`
 	Other   []CostOtherGroup  `json:"other,omitempty"`
+}
+
+// CostRootGroup is a deepest missing table in the dependency graph blocking
+// one or more unestimated actions, with direct and transitive cascades.
+type CostRootGroup struct {
+	Table  string            `json:"table"`
+	Kind   string            `json:"kind"` // "missing", "prereq", "neverBuilt", "new"
+	Status string            `json:"status"`
+	Note   string            `json:"note,omitempty"`
+	Count  int               `json:"count"`
+	Direct []string          `json:"direct,omitempty"`
+	Via    []CostBlockingVia `json:"via,omitempty"`
+}
+
+// CostBlockingVia lists actions blocked through an intermediate missing table.
+type CostBlockingVia struct {
+	Table   string   `json:"table"`
+	Actions []string `json:"actions"`
 }
 
 // CostColumnGroup is a column a changed action makes on this branch, which
@@ -111,14 +130,70 @@ func costSkipped(r *cost.Report) *CostSkipped {
 			places[v.Where] = true
 		}
 	}
+	for _, br := range r.BlockingRoots {
+		if br.Table != "" && br.Location != "" {
+			project, _, _ := strings.Cut(br.Table, ".")
+			v.Where = project + " (" + br.Location + ")"
+			places[v.Where] = true
+		}
+	}
 	if len(places) > 1 {
 		v.Where = ""
+	}
+	short := func(table string) string {
+		if v.Where != "" {
+			return impact.ShortTable(table)
+		}
+		return table
 	}
 	counts := map[string]int{}
 	foldedMissing := map[string]int{} // a missing table's row of assertions
 	waitingByTable := map[string]int{}
 	otherByWhy := map[string]int{}
 	columnAt := map[cost.AddedColumn]int{}
+	useRoots := len(r.BlockingRoots) > 0
+
+	if useRoots {
+		for _, br := range r.BlockingRoots {
+			rg := CostRootGroup{
+				Table: short(br.Table),
+				Count: br.BlockedCount(),
+			}
+			switch br.Kind {
+			case cost.MissingPrereq:
+				rg.Kind, rg.Status = "prereq", "prerequisite"
+				var detail []string
+				if br.From != "" {
+					detail = append(detail, "retargeted from "+short(br.From))
+				}
+				if br.FileName != "" {
+					detail = append(detail, "declared in "+br.FileName)
+				}
+				if len(detail) > 0 {
+					rg.Note = strings.Join(detail, " · ") + " · built outside Dataform, load before running"
+				} else {
+					rg.Note = "built outside Dataform, load before running"
+				}
+			case cost.MissingNeverBuilt:
+				rg.Kind, rg.Status, rg.Note = "neverBuilt", "never built", "never built in prod"
+			case cost.MissingNew:
+				rg.Kind, rg.Status, rg.Note = "new", "not built yet", "added on this branch"
+			default:
+				rg.Kind, rg.Status, rg.Note = "missing", "missing", "not touched by this branch: check it"
+			}
+			for _, a := range br.Direct {
+				rg.Direct = append(rg.Direct, impact.ShortTable(a))
+			}
+			for _, via := range br.Via {
+				var acts []string
+				for _, a := range via.Actions {
+					acts = append(acts, impact.ShortTable(a))
+				}
+				rg.Via = append(rg.Via, CostBlockingVia{Table: short(via.Table), Actions: acts})
+			}
+			v.Roots = append(v.Roots, rg)
+		}
+	}
 
 	for _, s := range skipped {
 		name := impact.ShortTable(s.Action.Name)
@@ -155,13 +230,10 @@ func costSkipped(r *cost.Report) *CostSkipped {
 			})
 			continue
 		}
-
-		short := func(table string) string {
-			if v.Where != "" {
-				return impact.ShortTable(table)
-			}
-			return table
+		if useRoots {
+			continue
 		}
+
 		reads := short(s.Missing)
 
 		if s.New {
@@ -192,10 +264,19 @@ func costSkipped(r *cost.Report) *CostSkipped {
 			Reads:  reads,
 			Status: "missing",
 			Kind:   "missing",
-			Note:   "not on this branch: check it",
+			Note:   "not touched by this branch: check it",
 		}
-		if s.Changed {
-			row.Note = "changed on this branch"
+		switch s.Kind {
+		case cost.MissingPrereq:
+			row.Status, row.Kind = "prerequisite", "prereq"
+			if s.FileName != "" {
+				row.Note = "declared in " + s.FileName + ": load before running"
+			} else {
+				row.Note = "declared on this branch: load before running"
+			}
+		case cost.MissingNeverBuilt:
+			row.Status, row.Kind = "never built", "neverBuilt"
+			row.Note = "never built in prod"
 		}
 		counts["missing"]++
 		if s.Action.Type == "assertion" {
@@ -213,6 +294,45 @@ func costSkipped(r *cost.Report) *CostSkipped {
 	}
 
 	v.Waits = counts["new"]
+	if useRoots {
+		blocked := map[string]bool{}
+		for _, br := range r.BlockingRoots {
+			for _, a := range br.Direct {
+				blocked[a] = true
+			}
+			for _, via := range br.Via {
+				for _, a := range via.Actions {
+					blocked[a] = true
+				}
+			}
+		}
+		chipKind := "missing"
+		allPrereq, allNew := true, true
+		for _, rg := range v.Roots {
+			if rg.Kind != "prereq" {
+				allPrereq = false
+			}
+			if rg.Kind != "new" && rg.Kind != "neverBuilt" {
+				allNew = false
+			}
+		}
+		nounOne, nounMany := "root cause", "root causes"
+		if allPrereq {
+			chipKind, nounOne, nounMany = "prereq", "missing prerequisite", "missing prerequisites"
+		} else if allNew {
+			chipKind, nounOne, nounMany = "new", "unbuilt branch table", "unbuilt branch tables"
+		}
+		nRoots, nBlocked := len(v.Roots), len(blocked)
+		noun, verb := nounMany, "block"
+		if nRoots == 1 {
+			noun, verb = nounOne, "blocks"
+		}
+		actNoun := "actions"
+		if nBlocked == 1 {
+			actNoun = "action"
+		}
+		v.Chips = append(v.Chips, CostChip{Text: fmt.Sprintf("%d %s %s %d %s", nRoots, noun, verb, nBlocked, actNoun), Kind: chipKind})
+	}
 	for _, c := range []struct{ kind, one, many, chip string }{
 		{"missing", "reads a missing table", "read a missing table", "missing"},
 		{"new", "waits on a new table", "wait on a new table", "new"},

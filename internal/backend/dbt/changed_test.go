@@ -218,3 +218,23 @@ func TestCompiledBaseReportsACompileThatFails(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestDiffManifestsTracksDeclaredSources(t *testing.T) {
+	base := []byte(`{"nodes":{},"sources":{
+		"source.p.raw.old":{"unique_id":"source.p.raw.old","resource_type":"source","name":"old","source_name":"raw","database":"proj","schema":"raw","identifier":"old_tbl","original_file_path":"models/sources.yml"}
+	}}`)
+	head := []byte(`{"nodes":{},"sources":{
+		"source.p.raw.new":{"unique_id":"source.p.raw.new","resource_type":"source","name":"new","source_name":"raw","database":"proj","schema":"raw","identifier":"new_tbl","original_file_path":"models/sources.yml"}
+	}}`)
+	d, err := diffManifests(base, head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Changed) != 0 || len(d.Declared) != 1 {
+		t.Fatalf("diff = %+v", d)
+	}
+	got := d.Declared[0]
+	if got.Kind != changes.DeclRetargeted || got.ID != "proj.raw.new_tbl" || got.From != "proj.raw.old_tbl" || got.FileName != "models/sources.yml" {
+		t.Errorf("declared[0] = %+v", got)
+	}
+}

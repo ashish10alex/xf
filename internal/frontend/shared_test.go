@@ -288,17 +288,18 @@ func TestCostReportFirstBuildAndFromDev(t *testing.T) {
 		t.Errorf("first build %+v, footnotes %q", agg, v.Footnotes)
 	}
 	rep := rows["report"]
-	if rep.Notes != "reads dev's marts_dev.agg (built 12m ago)" || rep.Change != (cost.Figure{Scans: "-3.00 GiB", Cost: "-$0.018"}) || rep.Trend != cost.TrendDown ||
+	if rep.Notes != "dev stand-in: marts_dev.agg (built 12m ago)" || len(rep.StandIns) != 1 || rep.StandIns[0] != (CostStandIn{Table: "marts_dev.agg", Built: "12m ago"}) ||
+		rep.Change != (cost.Figure{Scans: "-3.00 GiB", Cost: "-$0.018"}) || rep.Trend != cost.TrendDown ||
 		rep.Base != (cost.Figure{Scans: "3.00 GiB", Cost: "$0.018"}) || len(rep.Marks) != 0 {
 		t.Errorf("report %+v", rep)
 	}
 	if v.Later != "Each run after the first: 257.00 MiB | $0.002" {
 		t.Errorf("Later %q", v.Later)
 	}
-	if v.FromDev != "defer to prod: 1 new table read from dev, sized as dev has it" {
+	if v.FromDev != "dev stand-ins: 1 table read from dev, sized as dev has it" {
 		t.Errorf("FromDev %q", v.FromDev)
 	}
-	if !strings.Contains(v.Markdown, "reads `marts.agg` from dev") || !strings.Contains(v.Markdown, "Defer to prod: 1 new table") {
+	if !strings.Contains(v.Markdown, "reads `marts.agg` from dev") || !strings.Contains(v.Markdown, "Dev stand-ins: 1 table") {
 		t.Errorf("markdown %s", v.Markdown)
 	}
 }

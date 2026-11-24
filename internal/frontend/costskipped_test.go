@@ -27,8 +27,8 @@ func TestCostSkippedSaysWhatEachMissingTableIs(t *testing.T) {
 		Chips: []CostChip{{"2 read a missing table", "missing"}, {"3 wait on a new table", "new"}, {"1 gave no byte count", "other"}},
 		Where: "prod (EU)",
 		Missing: []CostMissingRow{
-			{Action: "checks.gone", Type: "assertion", Reads: "raw.gone", Status: "missing", Note: "not on this branch: check it", Kind: "missing"},
-			{Action: "marts.c", Type: "view", Reads: "marts.orders", Status: "missing", Note: "changed on this branch", Kind: "missing"},
+			{Action: "checks.gone", Type: "assertion", Reads: "raw.gone", Status: "missing", Note: "not touched by this branch: check it", Kind: "missing"},
+			{Action: "marts.c", Type: "view", Reads: "marts.orders", Status: "never built", Note: "never built in prod", Kind: "neverBuilt"},
 		},
 		Waiting: []CostWaitingGroup{
 			{
@@ -101,5 +101,39 @@ func TestCostSkippedGroupsActionsWaitingOnANewColumn(t *testing.T) {
 	}
 	if len(got.Other) != 1 || got.Other[0].Actions[0].Action != "marts.typo" {
 		t.Errorf("other %+v", got.Other)
+	}
+}
+
+func TestCostSkippedRendersBlockingRootsAndPrerequisites(t *testing.T) {
+	notFound := func(table string) string {
+		return "dry run failed: Not found: Table prod:" + table + " was not found in location EU"
+	}
+	r := &cost.Report{
+		Actions: []cost.Action{
+			{Name: "dev.opstrat.0200", DryRunAs: "prod.opstrat.0200", Type: "table", Reason: notFound("src.EXCEL")},
+			{Name: "dev.sup.0100", DryRunAs: "prod.sup.0100", Type: "table", Reason: notFound("opstrat.0200")},
+		},
+		BlockingRoots: []cost.BlockingRoot{{
+			Table:    "prod.src.EXCEL",
+			Location: "EU",
+			Kind:     cost.MissingPrereq,
+			FileName: "definitions/sources/sources.js",
+			From:     "prod.opstrat.0100",
+			Direct:   []string{"dev.opstrat.0200"},
+			Via:      []cost.BlockingVia{{Table: "prod.opstrat.0200", Actions: []string{"dev.sup.0100"}}},
+		}},
+	}
+	got := costSkipped(r)
+	if got.Count != 2 || got.Where != "prod (EU)" || len(got.Roots) != 1 || len(got.Missing) != 0 {
+		t.Fatalf("got = %+v", got)
+	}
+	if len(got.Chips) != 1 || got.Chips[0] != (CostChip{Text: "1 missing prerequisite blocks 2 actions", Kind: "prereq"}) {
+		t.Errorf("chips = %+v", got.Chips)
+	}
+	rg := got.Roots[0]
+	if rg.Table != "src.EXCEL" || rg.Kind != "prereq" || rg.Status != "prerequisite" || rg.Count != 2 ||
+		!reflect.DeepEqual(rg.Direct, []string{"opstrat.0200"}) ||
+		!reflect.DeepEqual(rg.Via, []CostBlockingVia{{Table: "opstrat.0200", Actions: []string{"sup.0100"}}}) {
+		t.Errorf("root = %+v", rg)
 	}
 }
