@@ -187,6 +187,7 @@ const (
 	KeyVimBuffers      = "vimBuffers"
 	KeyVimBufferDelete = "vimBufferDelete"
 	KeyVimFiles        = "vimFiles"
+	KeyVimFileTree     = "vimFileTree"
 	// KeyVimFormat formats the file's SQL with sqlfluff (ADR 0024). It is
 	// the one vim key with no default: :format and the palette do it
 	// until a key is set.
@@ -196,12 +197,12 @@ const (
 // VimKeys are the vim keys, in the order they are documented, and
 // VimKeyDefaults their keys when nothing sets them.
 var (
-	VimKeys        = []string{KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
+	VimKeys        = []string{KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFileTree, KeyVimFormat}
 	VimKeyDefaults = map[string]string{
 		KeyVimNextHunk: "]g", KeyVimPrevHunk: "[g", KeyVimUndoHunk: "guh", KeyVimStageHunk: "gsh", KeyVimNextError: "]e", KeyVimPrevError: "[e",
 		KeyVimHover: "K", KeyVimDefinition: "gd", KeyVimMenu: "gm",
 		KeyVimLeader: "<Space>", KeyVimBufferPrev: "<leader>[", KeyVimBufferNext: "<leader>]", KeyVimBuffers: "<leader>b",
-		KeyVimBufferDelete: "<leader>x", KeyVimFiles: "<leader>f",
+		KeyVimBufferDelete: "<leader>x", KeyVimFiles: "<leader>f", KeyVimFileTree: "<leader>nt",
 	}
 )
 
@@ -327,6 +328,7 @@ var Titles = map[string]string{
 	KeyVimBuffers:           "List buffers",
 	KeyVimBufferDelete:      "Remove buffer",
 	KeyVimFiles:             "Find a file",
+	KeyVimFileTree:          "File tree",
 	KeyVimFormat:            "Format file",
 }
 
@@ -391,11 +393,11 @@ var Defaults = func() map[string]string {
 
 // Keys lists every key in the order they are documented.
 var Keys = []string{KeyDataformBin, KeyDbtBin, KeyDbtTarget, KeyDbtProdTarget, KeyDbtCompileWithHooks, KeyDatabricksWarehouse, KeyDatabricksProfile, KeySnowflakeWarehouse, KeySnowflakeConnection, KeyRunMode, KeyDataformLocation, KeyDataformRepo, KeyDefaultBranch, KeyTablePrefix, KeySchemaSuffix, KeyDatabaseSuffix, KeyDevCompilerOptions, KeyProdCompilerOptions, KeyLineageProjects, KeyQueryHistoryProjects, KeyQueryHistoryDays, KeyQueryHistoryMaxGB, KeyDeferToProd, KeyUSDPerTiB, KeyEditor, KeyTheme, KeyWebTheme, KeyWebThemeLight, KeyWebThemeDark, KeyScratchWarnGB, KeyScratchConfirmGB, KeySourceAutosaveMs, KeyDiffStyle, KeyPythonLanguageServer, KeySqlfluffBin, KeySqlfluffConfig, KeyAutoHidePane2, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
-	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
+	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFileTree, KeyVimFormat}
 
 // userKeys are the keys only the user's config file sets.
 var userKeys = []string{KeyTheme, KeyPane2Tab, KeyWrapLines, KeyWebAutoExitSeconds, KeyWebOpenProjectIn, KeyWebBrowser, KeyWebBrowserProfile, KeyForgePollSeconds,
-	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFormat}
+	KeyVimMode, KeyVimNextHunk, KeyVimPrevHunk, KeyVimUndoHunk, KeyVimStageHunk, KeyVimNextError, KeyVimPrevError, KeyVimHover, KeyVimDefinition, KeyVimMenu, KeyVimLeader, KeyVimBufferPrev, KeyVimBufferNext, KeyVimBuffers, KeyVimBufferDelete, KeyVimFiles, KeyVimFileTree, KeyVimFormat}
 
 // Flags maps each key to the flag that sets it; the vim keys, the
 // themes of xf web's auto and diffStyle have none.
@@ -546,7 +548,7 @@ type Settings struct {
 	// VimNextHunk and the rest are key sequences as vim writes them
 	VimNextHunk, VimPrevHunk, VimUndoHunk, VimStageHunk, VimNextError, VimPrevError, VimHover, VimDefinition, VimMenu string
 	// VimLeader is the keys <leader> stands for in the others
-	VimLeader, VimBufferPrev, VimBufferNext, VimBuffers, VimBufferDelete, VimFiles string
+	VimLeader, VimBufferPrev, VimBufferNext, VimBuffers, VimBufferDelete, VimFiles, VimFileTree string
 	// VimFormat is the key that formats the SQL, "" for none
 	VimFormat string
 }
@@ -735,6 +737,8 @@ func (s *Settings) field(key string) *string {
 		return &s.VimBufferDelete
 	case KeyVimFiles:
 		return &s.VimFiles
+	case KeyVimFileTree:
+		return &s.VimFileTree
 	case KeyVimFormat:
 		return &s.VimFormat
 	}

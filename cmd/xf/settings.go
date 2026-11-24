@@ -83,6 +83,7 @@ var flagUsage = map[string]string{
 	config.KeyVimBuffers:           vimDoc + "list the source pane's buffers (files opened) to pick one, as :ls (default: <leader>b)",
 	config.KeyVimBufferDelete:      vimDoc + "remove the buffer shown from the source pane's buffers, going to the alternate one first, as :bd (default: <leader>x)",
 	config.KeyVimFiles:             vimDoc + "find a file to open, as the palette's cmd+p (ctrl+p off a Mac) does (default: <leader>f)",
+	config.KeyVimFileTree:          vimDoc + "show or hide the file tree, as cmd+b (ctrl+b off a Mac) does (default: <leader>nt)",
 	config.KeyVimFormat:            vimDoc + "format the file's SQL with sqlfluff and its config block, as :format does; the result stays unsaved and u undoes it (default: none, e.g. <leader>=)",
 }
 
@@ -148,6 +149,7 @@ var keyValue = map[string]string{
 	config.KeyVimBuffers:           "vim keys, e.g. <leader>b",
 	config.KeyVimBufferDelete:      "vim keys, e.g. <leader>x",
 	config.KeyVimFiles:             "vim keys, e.g. <leader>f",
+	config.KeyVimFileTree:          "vim keys, e.g. <leader>nt",
 	config.KeyVimFormat:            "vim keys, e.g. <leader>=",
 }
 

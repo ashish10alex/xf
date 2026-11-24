@@ -25,6 +25,7 @@ import (
 	"github.com/ashish10alex/xf/internal/session"
 	"github.com/ashish10alex/xf/internal/web"
 	"github.com/ashish10alex/xf/nvim"
+	"github.com/atotto/clipboard"
 )
 
 // runWeb is xf web: the TUI in a browser (see package web), for the
@@ -162,6 +163,8 @@ func startWeb(pf projectFlags, sf *settingFlags, o webStart) error {
 	browser, profile := webBrowser(sf, o.app)
 	open, link, note := pageOpener(browser, profile)
 	cfg.OpenURL = link
+	cfg.ClipboardRead = clipboard.ReadAll
+	cfg.ClipboardWrite = clipboard.WriteAll
 	if dir := sessionDir(); dir != "" {
 		// Beside the sessions: ~/.local/state/xf/web-page.log.
 		cfg.PageLog = filepath.Join(filepath.Dir(dir), "web-page.log")

@@ -2,7 +2,7 @@
 // dry run of the SQL being edited, and the query job with its pages of
 // rows. The view itself is scratch-view.js; the editor is scratch-editor.js.
 
-import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects, openWarehousePicker, openProfilePicker, openScratchWarehouse, askQuit } from './state.js';
+import { S, redraw, get, post, copy, hooks, fader, onMac, openLink, openProjects, openWarehousePicker, openProfilePicker, openScratchWarehouse, askQuit, projectURL, scratchPopoutURL } from './state.js';
 import { openThemePicker, themeLabel } from './theme.js';
 import { part } from './workspace.js';
 import { vimOn } from './vim-mode.js';
@@ -63,6 +63,7 @@ export const SC = {
   listOpen: false,     // the scratch selector, cmd+b
   defaults: null,      // the project and location a scratch with no model runs in
   standalone: false,   // no project behind the page: Scratch is all of it
+  popout: false,       // separate Scratch window opened beside the project window
   dbx: null,           // standalone Databricks connection: { profile, host, warehouse, hasProfiles, needsProfile }
   projects: null,      // BigQuery projects or Databricks catalogs for the target box's datalist
   whOpen: false,       // standalone warehouse switcher menu
@@ -455,6 +456,7 @@ export async function selectScratch(id, force, show, opts = {}) {
 
 export async function closeScratchView() {
   if (SC.standalone) return; // there is no project page to go back to
+  if (SC.popout) { await closePopout(); return; }
   const tab = SC.tabs.length ? activeTab() : null;
   if (tab) captureEditor(tab);
   await flushAllSaves();
@@ -462,6 +464,454 @@ export async function closeScratchView() {
   if (tab) tab.confirm = null;
   if (ed) ed.blur();
   redraw();
+}
+
+// ---- pop-out windows and docking ----
+
+const handoffPrefix = 'xf-web:scratch-handoff:';
+const handoffTTL = 60_000;
+const MAX_HANDOFF_RUN_BYTES = 1_000_000;
+
+function serializeRun(run) {
+  if (!run) return null;
+  if (run.phase === 'starting' || run.phase === 'running' || run.phase === 'loading') {
+    if (!run.job) return null;
+    return {
+      sql: run.sql, phase: 'running', job: run.job, started: run.started,
+      scratch: run.scratch || '', base: run.base || 0, record: !!run.record,
+      restored: run.restored || 0, tab: run.tab || 'rows',
+    };
+  }
+  if (run.phase === 'done') {
+    const out = {
+      sql: run.sql, phase: 'done', job: run.job, status: run.status,
+      started: run.started, ended: run.ended, restored: run.restored || 0,
+      scratch: run.scratch || '', base: run.base || 0,
+      schema: run.schema, rows: run.rows, next: run.next, total: run.total,
+      children: run.children, child: run.child, rowsJob: run.rowsJob, tab: run.tab || 'rows',
+    };
+    try {
+      if (JSON.stringify(out).length > MAX_HANDOFF_RUN_BYTES && run.job) {
+        return {
+          sql: run.sql, phase: 'running', job: run.job, started: run.started,
+          restored: run.ended || run.started, scratch: run.scratch || '',
+          base: run.base || 0, tab: run.tab || 'rows',
+        };
+      }
+    } catch { /* keep out */ }
+    return out;
+  }
+  if (run.phase === 'failed' || run.phase === 'cancelled') {
+    return {
+      sql: run.sql, phase: run.phase, job: run.job, status: run.status,
+      started: run.started, ended: run.ended, error: run.error,
+      scratch: run.scratch || '', base: run.base || 0, tab: run.tab || 'rows',
+    };
+  }
+  return null;
+}
+
+function serializeTabForHandoff(t, light = false) {
+  const cur = t.cur;
+  if (!cur) return null;
+  const run = serializeRun(t.run);
+  return {
+    id: cur.id || '',
+    draft: !!cur.draft,
+    from: cur.from || '',
+    project: cur.project || '',
+    location: cur.location || '',
+    sql: cur.sql || '',
+    savedSql: t.savedSql || '',
+    hideResults: !!t.hideResults,
+    filters: t.filters || {},
+    sort: t.sort || null,
+    sel: t.sel || null,
+    scrollTop: t.scrollTop || 0,
+    editor: light ? null : (t.editor || null),
+    editorScroll: t.editorScroll || 0,
+    run: light && run && run.phase === 'done' && run.job
+      ? { sql: run.sql, phase: 'running', job: run.job, started: run.started, restored: run.ended || run.started, scratch: run.scratch, base: run.base, tab: run.tab }
+      : run,
+  };
+}
+
+function snapshotTabsForHandoff(tabs, activeKey, light = false) {
+  const list = tabs.filter((t) => t && t.cur);
+  const activeIdx = Math.max(0, list.findIndex((t) => t.key === activeKey));
+  return {
+    at: Date.now(),
+    project: S.key,
+    listOpen: SC.listOpen,
+    focus: SC.focus,
+    activeIndex: activeIdx,
+    tabs: list.map((t) => serializeTabForHandoff(t, light)).filter(Boolean),
+  };
+}
+
+function pruneHandoffs() {
+  try {
+    const cutoff = Date.now() - handoffTTL;
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(handoffPrefix)) continue;
+      let stale = true;
+      try { const v = JSON.parse(localStorage.getItem(k) || 'null'); stale = !v || (v.at || 0) < cutoff; } catch { stale = true; }
+      if (stale) localStorage.removeItem(k);
+    }
+  } catch { /* no storage */ }
+}
+
+function writeHandoff(payload, fallbackPayload) {
+  pruneHandoffs();
+  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try {
+    localStorage.setItem(handoffPrefix + token, JSON.stringify(payload));
+    return token;
+  } catch {
+    if (fallbackPayload) {
+      try { localStorage.setItem(handoffPrefix + token, JSON.stringify(fallbackPayload)); return token; } catch { /* ignore */ }
+    }
+    return '';
+  }
+}
+
+function takeHandoff(token) {
+  if (!token) return null;
+  try {
+    const raw = localStorage.getItem(handoffPrefix + token);
+    localStorage.removeItem(handoffPrefix + token);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+// popoutFeatures builds the window.open feature string for a popped-out Scratch
+// window: placed at dropPos when dragged outside the current window (preserving
+// multi-monitor coordinates), or side-by-side beside the current window otherwise.
+export function popoutFeatures(dropPos, env = {}) {
+  const scr = env.screen || (typeof screen !== 'undefined' ? screen : {});
+  const win = env.window || (typeof window !== 'undefined' ? window : {});
+  const availLeft = Number.isFinite(scr.availLeft) ? scr.availLeft : 0;
+  const availTop = Number.isFinite(scr.availTop) ? scr.availTop : 0;
+  const availW = scr.availWidth || 1440;
+  const availH = scr.availHeight || 900;
+  const winX = Number.isFinite(win.screenX) ? win.screenX : availLeft;
+  const winY = Number.isFinite(win.screenY) ? win.screenY : availTop;
+  const winW = win.outerWidth || availW;
+  const winH = win.outerHeight || Math.round(availH * 0.85);
+  const width = Math.min(Math.max(Math.round(availW * 0.48), 640), Math.min(availW, 1100));
+  const height = Math.min(Math.max(winH, 560), availH);
+
+  let left, top;
+  const outside = dropPos && Number.isFinite(dropPos.screenX) && Number.isFinite(dropPos.screenY) && (
+    dropPos.screenX < winX || dropPos.screenX > winX + winW ||
+    dropPos.screenY < winY || dropPos.screenY > winY + winH
+  );
+  if (outside) {
+    left = Math.round(dropPos.screenX - width / 2);
+    top = Math.round(dropPos.screenY - 24);
+    const onThisScreen = dropPos.screenX >= availLeft && dropPos.screenX <= availLeft + availW &&
+      dropPos.screenY >= availTop && dropPos.screenY <= availTop + availH;
+    if (onThisScreen) {
+      left = Math.min(Math.max(left, availLeft), availLeft + Math.max(availW - width, 0));
+      top = Math.min(Math.max(top, availTop), availTop + Math.max(availH - height, 0));
+    }
+  } else {
+    top = Math.min(Math.max(winY, availTop), availTop + Math.max(availH - height, 0));
+    if (winX + winW + 420 <= availLeft + availW) {
+      left = winX + winW + 8;
+    } else if (winX - availLeft >= 420) {
+      left = availLeft;
+    } else {
+      left = availLeft + Math.max(availW - width, 0);
+    }
+  }
+  return `popup,width=${width},height=${height},left=${left},top=${top}`;
+}
+
+function hydrateTab(st) {
+  const cur = {
+    id: st.id || '',
+    draft: !!st.draft,
+    from: st.from || '',
+    project: st.project || (SC.defaults && SC.defaults.project) || '',
+    location: st.location || (SC.defaults && SC.defaults.location) || '',
+    sql: st.sql || '',
+  };
+  const t = makeTab(cur);
+  t.savedSql = st.savedSql !== undefined ? st.savedSql : cur.sql;
+  t.hideResults = !!st.hideResults;
+  t.filters = st.filters || {};
+  t.sort = st.sort || null;
+  t.sel = st.sel || null;
+  t.scrollTop = st.scrollTop || 0;
+  t.editorScroll = st.editorScroll || 0;
+  if (st.editor && st.editor.doc === cur.sql) t.editor = st.editor;
+  if (st.run && st.run.sql) {
+    t.run = {
+      sql: st.run.sql,
+      phase: st.run.phase || 'done',
+      job: st.run.job || null,
+      status: st.run.status || null,
+      started: st.run.started || Date.now(),
+      ended: st.run.ended || 0,
+      restored: st.run.restored || 0,
+      error: st.run.error || '',
+      schema: st.run.schema || null,
+      rows: st.run.rows || [],
+      next: st.run.next || '',
+      total: st.run.total || 0,
+      loadingMore: false,
+      children: st.run.children || [],
+      child: st.run.child || '',
+      rowsJob: st.run.rowsJob || null,
+      scratch: st.run.scratch || cur.id || '',
+      base: st.run.base || 0,
+      record: !!st.run.record,
+      tab: st.run.tab || 'rows',
+      seq: ++runSeq,
+    };
+    ctxOf.set(t.run, t);
+  }
+  return t;
+}
+
+// popoutScratch moves the Scratch view (or one tab via opts.tabKey) into a
+// separate browser window so it can sit side-by-side with the project.
+// Called synchronously from a click/pointerup/command so window.open keeps
+// browser user activation.
+export function popoutScratch(opts = {}) {
+  if (!S.caps.scratch || !S.key) {
+    S.flash = 'scratch queries need BigQuery access, which this project lacks';
+    redraw();
+    return false;
+  }
+  if (opts.fresh) {
+    const win = window.open(scratchPopoutURL(S.key), '_blank', popoutFeatures(opts.dropPos));
+    if (!win) { S.flash = 'the browser blocked the new window: allow pop-ups for xf web'; redraw(); return false; }
+    try { win.opener = null; } catch { /* cross-context */ }
+    return true;
+  }
+  const act = SC.tabs.length ? activeTab() : null;
+  if (act) {
+    captureEditor(act);
+    flushSave(act);
+  }
+  let moving = [];
+  let movingAll = true;
+  if (opts.tabKey) {
+    const tab = SC.tabs.find((t) => t.key === opts.tabKey);
+    if (!tab || !tab.cur) return false;
+    if (SC.tabs.length <= 1 && (SC.popout || SC.standalone)) return false;
+    moving = [tab];
+    movingAll = SC.tabs.length <= 1;
+  } else {
+    if (SC.standalone || SC.popout) return false;
+    moving = SC.tabs.filter((t) => t.cur);
+    movingAll = true;
+  }
+  const activeKey = opts.tabKey || SC.activeTab;
+  const token = moving.length
+    ? writeHandoff(snapshotTabsForHandoff(moving, activeKey, false), snapshotTabsForHandoff(moving, activeKey, true))
+    : '';
+  const win = window.open(scratchPopoutURL(S.key, token), '_blank', popoutFeatures(opts.dropPos));
+  if (!win) {
+    if (token) takeHandoff(token);
+    say('the browser blocked the new window: allow pop-ups for xf web');
+    return false;
+  }
+  try { win.opener = null; } catch { /* cross-context */ }
+
+  if (movingAll) {
+    for (const t of SC.tabs) {
+      clearTimeout(t.dryTimer);
+      clearTimeout(t.saveTimer);
+      t.closed = true;
+    }
+    SC.tabs = [];
+    SC.activeTab = '';
+    SC.open = false;
+    if (ed) ed.blur();
+    redraw();
+    return true;
+  }
+  const tab = moving[0];
+  const idx = SC.tabs.indexOf(tab);
+  const wasActive = tab === activeTab();
+  clearTimeout(tab.dryTimer);
+  clearTimeout(tab.saveTimer);
+  tab.closed = true;
+  SC.tabs.splice(idx, 1);
+  if (wasActive && SC.tabs.length) {
+    const next = SC.tabs[Math.min(idx, SC.tabs.length - 1)];
+    SC.activeTab = next.key;
+    if (next.cur && next.cur.id) SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === next.cur.id));
+    applyEditor(next);
+    if (!next.dry || next.dry.stale) scheduleDry(0, next);
+  }
+  redraw();
+  return true;
+}
+
+// openScratchPopout boots a popped-out Scratch window from a one-time handoff
+// token, its own saved workspace on reload, or a fresh Scratch view.
+export async function openScratchPopout(handoffToken, savedWorkspace) {
+  if (!S.caps.scratch) return;
+  SC.popout = true;
+  SC.standalone = false;
+  const data = handoffToken ? takeHandoff(handoffToken) : null;
+  if (data && Array.isArray(data.tabs) && data.tabs.length) {
+    const seq = ++openSeq;
+    SC.open = true;
+    SC.focus = data.focus || 'editor';
+    SC.listOpen = !!data.listOpen;
+    await Promise.all([loadList(), loadDefaults(), loadRecent()]);
+    if (seq !== openSeq) return;
+    const built = data.tabs.map(hydrateTab);
+    resetTabs();
+    SC.tabs = built;
+    const activeIdx = Math.min(Math.max(data.activeIndex || 0, 0), built.length - 1);
+    const act = built[activeIdx];
+    SC.activeTab = act.key;
+    if (act.cur && act.cur.id) SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === act.cur.id));
+    for (const t of built) {
+      if (t.run && t.run.phase === 'running' && t.run.job) poll(t.run);
+      else if (!t.run && t.cur.id) {
+        const recent = SC.recent.find((r) => r.scratch === t.cur.id);
+        if (recent) showRecent(recent, t);
+      }
+      if (t.cur.sql !== t.savedSql) flushSave(t);
+    }
+    redraw();
+    let tries = 0;
+    const put = () => {
+      if (!ed) { if (++tries < 40) setTimeout(put, 25); return; }
+      if (activeTab() === act) {
+        applyEditor(act);
+        scheduleDry(0, act);
+        if (SC.focus === 'editor') ed.focus();
+      }
+    };
+    put();
+    return;
+  }
+  if (savedWorkspace) {
+    await restoreScratchWorkspace(savedWorkspace);
+    return;
+  }
+  await openScratchView();
+  focusEditor();
+}
+
+// importDockedTabs receives tabs sent back from a popped-out Scratch window
+// over BroadcastChannel and opens them in this window's Scratch view.
+export async function importDockedTabs(handoffToken) {
+  const data = takeHandoff(handoffToken);
+  if (!data || !Array.isArray(data.tabs) || !data.tabs.length) return;
+  const wasOpen = SC.open;
+  SC.open = true;
+  if (!wasOpen) await Promise.all([loadList(), loadDefaults(), loadRecent()]);
+  const incoming = data.tabs.map(hydrateTab);
+  // Drop a lone empty placeholder slot before merging docked tabs.
+  if (SC.tabs.length === 1 && (!SC.tabs[0].cur || isEmptyDraft(SC.tabs[0]))) {
+    SC.tabs = [];
+    SC.activeTab = '';
+  }
+  let targetActive = null;
+  incoming.forEach((t, i) => {
+    const dup = t.cur.id ? SC.tabs.find((x) => x.cur && x.cur.id === t.cur.id) : null;
+    if (dup) {
+      dup.cur = t.cur;
+      dup.savedSql = t.savedSql;
+      dup.editor = t.editor;
+      dup.editorScroll = t.editorScroll;
+      dup.filters = t.filters;
+      dup.sort = t.sort;
+      dup.sel = t.sel;
+      dup.scrollTop = t.scrollTop;
+      dup.hideResults = t.hideResults;
+      if (t.run) { dup.run = t.run; ctxOf.set(dup.run, dup); }
+      if (i === (data.activeIndex || 0)) targetActive = dup;
+    } else {
+      SC.tabs.push(t);
+      if (i === (data.activeIndex || 0)) targetActive = t;
+    }
+    const liveTab = dup || t;
+    if (liveTab.run && liveTab.run.phase === 'running' && liveTab.run.job) poll(liveTab.run);
+  });
+  if (targetActive) {
+    SC.activeTab = targetActive.key;
+    if (targetActive.cur && targetActive.cur.id) SC.listCursor = Math.max(0, SC.list.findIndex((s) => s.id === targetActive.cur.id));
+    applyEditor(targetActive);
+    scheduleDry(0, targetActive);
+  }
+  redraw();
+}
+
+// dockScratch moves a popped-out Scratch window's tabs back into an open
+// project window and closes the pop-out, or switches to the project view here
+// if no other window has the project open.
+export async function dockScratch() {
+  if (!SC.popout) return;
+  const act = SC.tabs.length ? activeTab() : null;
+  if (act) {
+    captureEditor(act);
+    flushSave(act);
+  }
+  const moving = SC.tabs.filter((t) => t.cur);
+  if (moving.length && hooks.dockScratchToPeer && S.key) {
+    const token = writeHandoff(snapshotTabsForHandoff(moving, SC.activeTab, false), snapshotTabsForHandoff(moving, SC.activeTab, true));
+    if (token) {
+      const ok = await hooks.dockScratchToPeer(S.key, token);
+      if (ok) {
+        for (const t of SC.tabs) { clearTimeout(t.dryTimer); clearTimeout(t.saveTimer); t.closed = true; }
+        SC.tabs = [];
+        SC.activeTab = '';
+        window.close();
+        return;
+      }
+      takeHandoff(token); // clean up unclaimed handoff
+    }
+  }
+  SC.popout = false;
+  if (S.key && typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', projectURL(S.key));
+  await closeScratchView();
+}
+
+// closePopout closes a popped-out Scratch window without closing the project in
+// other windows, asking first if any scratch tab has a query running.
+export async function closePopout(force = false) {
+  if (!SC.popout) return false;
+  if (!force && anyRunning()) {
+    activeTab().confirm = {
+      action: 'closePopout',
+      why: ['A query is running in this Scratch window. Closing it cancels the query.'],
+      danger: true,
+    };
+    if (ed) ed.blur();
+    SC.focus = 'results';
+    redraw();
+    return false;
+  }
+  if (anyRunning()) await cancelAllRuns();
+  const act = SC.tabs.length ? activeTab() : null;
+  if (act) captureEditor(act);
+  await flushAllSaves();
+  if (act) act.confirm = null;
+  for (const t of SC.tabs) { clearTimeout(t.dryTimer); clearTimeout(t.saveTimer); t.closed = true; }
+  if (typeof window !== 'undefined' && window.close) window.close();
+  // If the browser refused window.close() (e.g. opened as a normal tab), fall
+  // back to showing the project here so ctrl+q never leaves the page stuck.
+  if (typeof window === 'undefined' || !window.closed) {
+    SC.popout = false;
+    SC.open = false;
+    if (S.key && typeof history !== 'undefined' && history.replaceState) history.replaceState(null, '', projectURL(S.key));
+    if (ed) ed.blur();
+    redraw();
+  }
+  return true;
 }
 
 // ---- making and deleting ----
@@ -1078,6 +1528,7 @@ export function confirmRun() {
   if (c && c.action === 'searchAll') { SC.confirm = null; return searchAll(true); }
   if (c && c.action === 'closeTab') { const k = c.tabKey; SC.confirm = null; return closeTab(k, true); }
   if (c && c.action === 'closeOtherTabs') { const k = c.tabKey; SC.confirm = null; return closeOtherTabs(k, true); }
+  if (c && c.action === 'closePopout') { SC.confirm = null; return closePopout(true); }
   return runScratch(true);
 }
 export function dismissConfirm() { SC.confirm = null; redraw(); }
@@ -1364,6 +1815,9 @@ export function scratchCommands() {
   }
   if (canCloseTab()) add('Scratch: close tab', tabCloseKey, () => closeTab());
   if (SC.tabs.length > 1) add('Scratch: close other tabs', '', () => closeOtherTabs(), (SC.tabs.length - 1) + ' others');
+  if (!SC.standalone && !SC.popout) add('Scratch: pop out in new window', '', () => popoutScratch());
+  if (SC.tabs.length > 1 || (!SC.standalone && !SC.popout)) add('Scratch: move tab to new window', '', () => popoutScratch({ tabKey: SC.activeTab }));
+  if (SC.popout) add('Scratch: dock back to project', '', () => dockScratch(), S.boot && S.boot.name);
   if (cur && !cur.draft) add('Scratch: delete this scratch', 'd', () => { toResults(); SC.delAsk = cur.id; }, cur.id);
   if (cur) add(onDbx() ? 'Scratch: change its catalog' : onSf() ? 'Scratch: change its database' : 'Scratch: change its project or location', '', () => {
     toResults();
@@ -1401,9 +1855,11 @@ export function scratchCommands() {
     }
     add('Project: switch or add', '', openProjects);
     add('Close scratch: back to the projects', 'ctrl+q', () => { flushAllSaves().then(() => askQuit()); });
+  } else if (SC.popout) {
+    add('Close scratch window', 'ctrl+q', () => closePopout());
   } else {
     add('Project: switch or add', '', openProjects);
-    add('Close scratch: back to the project', 'esc', closeScratchView, S.boot && S.boot.name);
+    add('Close scratch: back to the project', 'ctrl+q', closeScratchView, S.boot && S.boot.name);
   }
   return out;
 }
@@ -1615,6 +2071,10 @@ function warehouseMenuKey(k) {
 }
 hooks.openScratch = openScratchView;
 hooks.openLastScratch = openLastScratch;
+hooks.openScratchPopout = openScratchPopout;
+hooks.popoutScratch = popoutScratch;
+hooks.importDockedTabs = importDockedTabs;
+hooks.scratchPopout = () => SC.popout;
 hooks.askNew = askNew;
 hooks.scratchKey = scratchKey;
 hooks.scratchNewKey = scratchNewKey;

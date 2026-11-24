@@ -8,7 +8,7 @@
 
 import { S, redraw, hooks, leaveOverlay, askQuit, closeProject } from './state.js';
 import { SET, closeSettings } from './settings.js';
-import { SC, closeScratchView, closeWarehouseMenu } from './scratch.js';
+import { SC, closeScratchView, closeWarehouseMenu, closePopout } from './scratch.js';
 import { closeChecks } from './checks.js';
 import { T, closeThemePicker } from './theme.js';
 
@@ -22,7 +22,7 @@ export function exitLevel() {
   if (SET.open) return 'settings';
   if (S.mode === 'picker' && S.scratchPick) return 'scratchPick';
   if (S.mode !== 'project') return '';
-  if (SC.open) return SC.whOpen ? 'warehouse' : SC.standalone ? 'project' : 'scratch';
+  if (SC.open) return SC.whOpen ? 'warehouse' : SC.standalone ? 'project' : SC.popout ? 'popout' : 'scratch';
   if (S.checks) return 'checks';
   if (S.inspector && hooks.closeInspector) return 'inspector';
   return 'project';
@@ -40,6 +40,9 @@ export function exitKey() {
       return true;
     case 'scratchPick': S.scratchPick = null; redraw(); return true;
     case 'warehouse': closeWarehouseMenu(); return true;
+    case 'popout':
+      closePopout(!!(SC.confirm && SC.confirm.action === 'closePopout'));
+      return true;
     case 'scratch': closeScratchView(); return true;
     case 'checks': closeChecks(); redraw(); return true;
     case 'inspector': hooks.closeInspector(); return true;

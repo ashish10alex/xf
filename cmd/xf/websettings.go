@@ -120,6 +120,7 @@ var settingMetas = map[string]settingMeta{
 	config.KeyVimBuffers:           {"Vim", "text", nil, true},
 	config.KeyVimBufferDelete:      {"Vim", "text", nil, true},
 	config.KeyVimFiles:             {"Vim", "text", nil, true},
+	config.KeyVimFileTree:          {"Vim", "text", nil, true},
 	config.KeyVimFormat:            {"Vim", "text", nil, true},
 }
 

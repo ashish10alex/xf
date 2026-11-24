@@ -55,7 +55,7 @@ export function snapshot() {
       focus: SC.focus, cur: SC.cur && SC.cur.id,
       tabs: SC.tabs.map((t) => ({ key: t.key, id: t.cur && t.cur.id, active: t.key === SC.activeTab, running: !!(t.run && ['starting', 'running'].includes(t.run.phase)) })),
       running: SC.tabs.some((t) => t.run && ['starting', 'running'].includes(t.run.phase)),
-      confirm: !!SC.confirm, delAsk: SC.delAsk, standalone: SC.standalone, flash: SC.flash,
+      confirm: !!SC.confirm, delAsk: SC.delAsk, standalone: SC.standalone, popout: SC.popout, flash: SC.flash,
     } : null,
     theme: { choice: THEME.choice.theme, picking: !!THEME.pick },
     tree: { cursor: TREE.cursor, filter: TREE.filter, prompt: TREE.prompt ? TREE.prompt.kind : '' },
@@ -240,7 +240,7 @@ const ops = {
     const was = layer();
     if (was === 'menu') closeMenu();
     else if (S.overlay) { leaveOverlay(); redraw(); }
-    else if (!was || (SC.open && SC.standalone)) return { reason: was ? 'closing the standalone Scratch closes it all' : 'nothing to close' };
+    else if (!was || (SC.open && (SC.standalone || SC.popout))) return { reason: was ? (SC.popout ? 'closing the popped-out Scratch closes its window' : 'closing the standalone Scratch closes it all') : 'nothing to close' };
     else exitKey();
     return { closed: was };
   },

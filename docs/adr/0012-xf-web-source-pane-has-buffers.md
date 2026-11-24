@@ -16,6 +16,8 @@ The three buffer commands are vim keys like the others (`vimBufferPrev`, `vimBuf
 Added 2026-10-23: `<leader>x` (`vimBufferDelete`) is `:bd` on the buffer shown, and `<leader>f` (`vimFiles`) opens the palette's file finder, as `cmd+p` does.
 The user had both in neovim.
 
+Added 2026-11-24: `<leader>nt` (`vimFileTree`) toggles the file tree (as `cmd+b` does) from the source editor in normal mode and from the file tree and other non-editor panes when `vimMode` is on, matching the user's `NvimTreeToggle` mapping in neovim.
+
 - Going to a buffer with unsaved changes saves them first, autosave on or off.
   A failed save (the file changed on disk, a write error) keeps the pane where it is, with the conflict a `:w` would show.
 - It selects the action the buffer last showed, so pane 2 follows. A file with no action opens on its own.

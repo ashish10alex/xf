@@ -84,6 +84,18 @@ export function restoreParts(ws, skip = []) {
   }
 }
 
+// clearSessionWorkspace drops workspaces inherited from an opener window
+// (for a popped-out Scratch window starting from a fresh handoff).
+export function clearSessionWorkspace() {
+  try {
+    sessionStorage.removeItem(unsavedKey);
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(prefix)) sessionStorage.removeItem(k);
+    }
+  } catch { /* no storage */ }
+}
+
 // ---- unsaved files ----
 
 // The tab's workspaces may hold unsaved text of projects it no longer

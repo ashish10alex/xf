@@ -38,6 +38,84 @@ function Editor() {
   return html`<div class=${'sc-editor' + (SC.focus === 'editor' ? ' focused' : '')} ref=${box}></div>`;
 }
 
+// ---- drag out to a new window ----
+
+let suppressClickUntil = 0;
+const wasDragged = () => Date.now() < suppressClickUntil;
+
+// startTearDrag tracks a pointer drag on a Scratch tab or the Scratch header
+// so pulling it away (or outside the browser window) pops it into its own
+// side-by-side window on release, while keeping normal clicks untouched.
+function startTearDrag(e, { tabKey = '', label = 'Scratch', threshold = 32 }) {
+  if (e.button !== 0) return;
+  const el = e.currentTarget;
+  const startX = e.clientX, startY = e.clientY;
+  const pointerId = e.pointerId;
+  let moved = false, detached = false, ghost = null;
+
+  const ensureGhost = () => {
+    if (ghost) return ghost;
+    ghost = document.createElement('div');
+    ghost.className = 'sc-drag-ghost';
+    document.body.appendChild(ghost);
+    return ghost;
+  };
+  const placeGhost = (ev, isDetached) => {
+    const g = ensureGhost();
+    g.classList.toggle('detached', isDetached);
+    g.textContent = isDetached
+      ? `↗ Drop to open ${label} in new window`
+      : `Drag out to move ${label} to new window`;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const x = Math.min(Math.max(ev.clientX + 14, 12), Math.max(vw - 280, 12));
+    const y = Math.min(Math.max(ev.clientY + 14, 12), Math.max(vh - 40, 12));
+    g.style.left = x + 'px';
+    g.style.top = y + 'px';
+  };
+  const cleanup = () => {
+    window.removeEventListener('pointermove', onMove, true);
+    window.removeEventListener('pointerup', onUp, true);
+    window.removeEventListener('pointercancel', onCancel, true);
+    window.removeEventListener('keydown', onKey, true);
+    if (el && el.classList) el.classList.remove('dragging');
+    document.body.classList.remove('sc-dragging');
+    if (ghost) { ghost.remove(); ghost = null; }
+    try { if (el && el.hasPointerCapture && el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId); } catch { /* released */ }
+  };
+  const onMove = (ev) => {
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (!moved) {
+      if (Math.hypot(dx, dy) < 8) return;
+      moved = true;
+      if (el && el.classList) el.classList.add('dragging');
+      document.body.classList.add('sc-dragging');
+      try { if (el && el.setPointerCapture) el.setPointerCapture(pointerId); } catch { /* unsupported */ }
+    }
+    const outside = ev.clientX < 4 || ev.clientY < 4 || ev.clientX > window.innerWidth - 4 || ev.clientY > window.innerHeight - 4;
+    detached = outside || (tabKey ? Math.abs(dy) > threshold : Math.hypot(dx, dy) > threshold);
+    placeGhost(ev, detached);
+  };
+  const onUp = (ev) => {
+    const didMove = moved, didDetach = detached;
+    cleanup();
+    if (didMove) suppressClickUntil = Date.now() + 250;
+    if (didDetach) {
+      sc.popoutScratch({ tabKey: tabKey || undefined, dropPos: { screenX: ev.screenX, screenY: ev.screenY } });
+    }
+  };
+  const onCancel = () => {
+    if (moved) suppressClickUntil = Date.now() + 250;
+    cleanup();
+  };
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); onCancel(); }
+  };
+  window.addEventListener('pointermove', onMove, true);
+  window.addEventListener('pointerup', onUp, true);
+  window.addEventListener('pointercancel', onCancel, true);
+  window.addEventListener('keydown', onKey, true);
+}
+
 // ---- the tab bar ----
 
 function TabBar() {
@@ -52,6 +130,7 @@ function TabBar() {
   const newTip = `New scratch tab (${mac ? '⌥t' : 'alt+t'})`;
   const closeTip = `Close tab (${mac ? '⌥w' : 'alt+w'})`;
   const openTabs = SC.tabs.filter((t) => t.cur);
+  const canDragTab = !SC.standalone && (openTabs.length > 1 || !SC.popout);
   return html`<div class="sc-tabbar" role="tablist" aria-label="Scratch tabs">
     ${openTabs.map((t) => {
       const on = t.key === SC.activeTab;
@@ -63,9 +142,10 @@ function TabBar() {
         : null;
       const label = sc.tabLabel(t);
       const cur = t.cur;
-      const tip = [cur.id ? cur.id + '.sql' : 'new scratch', cur.from ? 'from ' + cur.from : '', cur.project ? [cur.project, cur.location].filter(Boolean).join(' · ') : ''].filter(Boolean).join(' · ');
+      const tip = [cur.id ? cur.id + '.sql' : 'new scratch', cur.from ? 'from ' + cur.from : '', cur.project ? [cur.project, cur.location].filter(Boolean).join(' · ') : '', canDragTab ? 'drag out for new window' : ''].filter(Boolean).join(' · ');
       return html`<div key=${t.key} ref=${on ? activeRef : null} class=${'sc-tab' + (on ? ' on' : '')} role="tab" aria-selected=${on} title=${tip}
-        onClick=${() => sc.switchTab(t.key)}
+        onPointerDown=${canDragTab ? (e) => { if (!e.target.closest('.sc-tab-close')) startTearDrag(e, { tabKey: t.key, label: `"${label}"`, threshold: 36 }); } : null}
+        onClick=${() => { if (!wasDragged()) sc.switchTab(t.key); }}
         onAuxClick=${(e) => { if (e.button === 1) { e.preventDefault(); sc.closeTab(t.key); } }}>
         ${state}
         <span class="sc-tab-name">${label}</span>
@@ -583,9 +663,10 @@ function ConfirmBox() {
   const title = c.action === 'searchAll' ? 'search every row'
     : c.action === 'closeTab' ? 'close this tab'
     : c.action === 'closeOtherTabs' ? 'close other tabs'
+    : c.action === 'closePopout' ? 'close this Scratch window'
     : 'run this';
   const verb = c.action === 'searchAll' ? 'search'
-    : c.action === 'closeTab' || c.action === 'closeOtherTabs' ? 'close & cancel'
+    : c.action === 'closeTab' || c.action === 'closeOtherTabs' || c.action === 'closePopout' ? 'close & cancel'
     : 'run';
   return html`<div class="overlay-back" onMouseDown=${(e) => { if (e.target === e.currentTarget) sc.dismissConfirm(); }}>
     <div class=${'overlay pane focused confirm ' + (c.danger ? 'amber' : '')}>
@@ -625,22 +706,32 @@ function WarehouseMenu() {
 
 export function ScratchPage() {
   useEffect(() => {
-    document.title = SC.standalone ? 'xf · ' + sc.site() + ' scratch' : 'xf · scratch';
+    document.title = SC.standalone ? 'xf · ' + sc.site() + ' scratch' : SC.popout ? 'xf · ' + S.boot.name + ' · scratch' : 'xf · scratch';
     return () => { document.title = 'xf · ' + S.boot.name; };
-  }, [SC.standalone, S.caps && S.caps.warehouse]);
+  }, [SC.standalone, SC.popout, S.boot && S.boot.name, S.caps && S.caps.warehouse]);
   const k = (list) => list.map(([a, b]) => html`<span class="key"><kbd>${a}</kbd> ${b}</span>`);
   const focus = SC.focus;
   const canSwitchWh = SC.standalone && S.scratchWarehouses && S.scratchWarehouses.length > 1;
+  const canPopout = !SC.standalone && !SC.popout;
+  const onBarDrag = canPopout ? (e) => {
+    if (e.target.closest('button, a, input')) return;
+    startTearDrag(e, { label: 'Scratch', threshold: 28 });
+  } : null;
   return html`<div class="app scratch-app">
-    <div class="status">
+    <div class=${'status' + (canPopout ? ' can-drag' : '')} onPointerDown=${onBarDrag} title=${canPopout ? 'Drag out to move Scratch into its own window' : ''}>
       ${SC.standalone
         ? html`<span class="badge">XF</span><span class="dim"> · </span>${canSwitchWh
             ? html`<button class="link sc-wh-btn" onClick=${() => sc.toggleWarehouseMenu()} title="Switch standalone scratch warehouse">${sc.site()} ▾</button>`
             : html`<span>${sc.site()}</span>`}<span class="dim"> · </span><button class="link" onClick=${() => { openProjects(); redraw(); }} title="Switch or add a project">⇄ projects</button><span class="dim"> · </span>`
-        : html`<button class="link" onClick=${() => sc.closeScratchView()} title="Back to the project (ctrl+q)">← ${S.boot.name}</button><span class="dim"> · </span><button class="link" onClick=${() => { openProjects(); redraw(); }} title="Switch or add a project">⇄ projects</button><span class="dim"> · </span>`}<button class="link" onClick=${() => sc.toggleList()} title="Show or hide the scratch list (cmd+b)">☰ scratches</button>
+        : SC.popout
+          ? html`<span class="badge">XF</span><span class="dim"> · </span><span>${S.boot.name}</span><span class="dim"> · </span><button class="link" onClick=${() => sc.dockScratch()} title="Move Scratch back to the project window">↙ dock</button><span class="dim"> · </span>`
+          : html`<button class="link" onClick=${() => sc.closeScratchView()} title="Back to the project (ctrl+q)">← ${S.boot.name}</button><span class="dim"> · </span><button class="link" onClick=${() => { openProjects(); redraw(); }} title="Switch or add a project">⇄ projects</button><span class="dim"> · </span>`}<button class="link" onClick=${() => sc.toggleList()} title="Show or hide the scratch list (cmd+b)">☰ scratches</button>
       <span class="dim"> · </span><span title="The scratch file">${SC.cur && SC.cur.id ? SC.cur.id + '.sql' : SC.cur ? 'new scratch' : 'scratch'}</span>
       ${SC.cur && SC.cur.from && html`<span class="dim"> · from ${SC.cur.from}</span>`}
       <span class="spacer"></span>
+      ${canPopout && html`<button class="link sc-popout-btn" title="Move Scratch into its own window — click or drag out"
+        onPointerDown=${(e) => startTearDrag(e, { label: 'Scratch', threshold: 20 })}
+        onClick=${() => { if (!wasDragged()) sc.popoutScratch(); }}>↗ pop out</button>`}
       <${WindowsPill} /><${ThemeButton} />
     </div>
     ${S.overlay === 'projects' && hooks.projectsOverlay && hooks.projectsOverlay()}
@@ -684,8 +775,8 @@ export function ScratchPage() {
     </div>
     ${SC.flash ? html`<div class="footer warn">${SC.flash}</div>`
       : html`<div class="footer">${focus === 'editor'
-        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [savesWith(), 'save'], [/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌥t/⌥w' : 'alt+t/w', 'new/close tab'], [/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌥⌘←/→' : 'ctrl+alt+←/→', 'tabs'], ['⌘J', 'results'], ['⌘B', 'scratches'], ['ctrl+q', SC.standalone ? 'close' : 'back']])
-        : k([[commandsKey, 'commands'], ['i', 'edit'], ['⌘↵/r', 'run'], ['ctrl+c', 'cancel run'], ['t/x', 'new/close tab'], ['[/]', 'tabs'], ['j/k', 'switch scratch'], ['h', 'recent results'], ['⌘J', 'results'], ['⌘B/b', 'scratches'], ['n', 'new'], ['d', 'delete'], ['y/Y', 'copy cell/row'], ['ctrl+q', SC.standalone ? 'close' : 'back']])}</div>`}
+        ? k([[commandsKey, 'commands'], ['ctrl+w', 'leave editor'], ['⌘↵', 'run selection or file'], [savesWith(), 'save'], [/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌥t/⌥w' : 'alt+t/w', 'new/close tab'], [/Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌥⌘←/→' : 'ctrl+alt+←/→', 'tabs'], ['⌘J', 'results'], ['⌘B', 'scratches'], ['ctrl+q', SC.standalone || SC.popout ? 'close' : 'back']])
+        : k([[commandsKey, 'commands'], ['i', 'edit'], ['⌘↵/r', 'run'], ['ctrl+c', 'cancel run'], ['t/x', 'new/close tab'], ['[/]', 'tabs'], ['j/k', 'switch scratch'], ['h', 'recent results'], ['⌘J', 'results'], ['⌘B/b', 'scratches'], ['n', 'new'], ['d', 'delete'], ['y/Y', 'copy cell/row'], ['ctrl+q', SC.standalone || SC.popout ? 'close' : 'back']])}</div>`}
     <${NewBox} />
     <${ConfirmBox} />
     <${RecentMenu} />

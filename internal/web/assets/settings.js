@@ -10,7 +10,7 @@
 // it; ctrl+q leaves it.
 
 import { S, get, getLines, post, redraw, hooks, fitFocus, pane2Default, say } from './state.js';
-import { setVimKeys, setVimMode, setWrap } from './editor.js';
+import { setVimKeys, setVimMode, setWrap, setLocalClipboard } from './editor.js';
 
 export const GIT = 'Git'; // defaultBranch, diffStyle, the hosts and their tokens (forge-view.js), then forgePollSeconds
 export const VIM = 'Vim'; // the vim keys of the editor, in the user's file
@@ -737,6 +737,7 @@ hooks.refreshSettingsInfo = refreshInfo;
 hooks.vimKeys = setVimKeys;
 hooks.vimMode = setVimMode;
 hooks.wrapLines = setWrap;
+hooks.localClipboard = setLocalClipboard;
 hooks.settingsChanged = (ev) => {
   if (S.boot) {
     if (ev.pane2Tab !== S.boot.pane2Tab) pane2Default(ev.pane2Tab);

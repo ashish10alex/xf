@@ -868,6 +868,7 @@ part('tree', () => ({ cursor: T.cursor, filter: T.filter }), (v) => {
 });
 
 hooks.treeKey = key;
+hooks.treeBlocksLeader = (first) => !!(T.prompt || T.filtering || (T.view === 'scm' && first === 'space'));
 hooks.treeFocus = focusTree;
 hooks.toggleTree = toggleTree;
 hooks.revealActive = revealActive;

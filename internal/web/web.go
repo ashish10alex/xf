@@ -144,6 +144,12 @@ type Config struct {
 	// OpenURL opens a link in the system's browser, for a page in an app
 	// window (openurl.go); nil leaves the page to open it.
 	OpenURL func(url string) error
+	// ClipboardRead and ClipboardWrite read and write this machine's
+	// clipboard for local browsers (clipboard.go), so vim's p/P and Paste
+	// work without a browser clipboard-read permission prompt. Ignored
+	// when Hosts are set (--allow-host) or behind a proxy.
+	ClipboardRead  func() (string, error)
+	ClipboardWrite func(string) error
 }
 
 // Project is an open project.
@@ -461,6 +467,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/reopen", s.reopen)
 	mux.HandleFunc("POST /api/pagelog", s.postPageLog)
 	mux.HandleFunc("POST /api/open-url", s.openURL)
+	mux.HandleFunc("GET /api/clipboard", s.clipboardRead)
+	mux.HandleFunc("POST /api/clipboard", s.clipboardWrite)
 	s.forgeRoutes(mux)
 	s.worktreeRoutes(mux)
 	s.projectRoutes(mux)
@@ -615,6 +623,9 @@ type bootView struct {
 	// StartScratchPicker opens the picker's Scratch warehouse chooser on
 	// first load (bare `xf scratch` outside a project).
 	StartScratchPicker bool `json:"startScratchPicker,omitempty"`
+	// LocalClipboard says the server can read and write this machine's
+	// clipboard directly over /api/clipboard (local browsers only).
+	LocalClipboard bool `json:"localClipboard,omitempty"`
 }
 
 // ScratchWarehouse is a warehouse standalone scratch queries can run against.
@@ -655,11 +666,12 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 	openIn := s.openIn()
 	missing := ""
 	sw := s.scratchWarehouses()
+	localClip := s.localClipboard(r)
 	if key := r.URL.Query().Get("project"); key != "" {
 		op, err := s.ensure(key)
 		if err == nil {
 			s.touch(op)
-			writeJSON(w, bootView{Project: op.p.boot(), Key: op.key, Theme: s.theme(op.p.deps.Root), ThemeOwn: themeOwn(op.p.deps.Root), Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw})
+			writeJSON(w, bootView{Project: op.p.boot(), Key: op.key, Theme: s.theme(op.p.deps.Root), ThemeOwn: themeOwn(op.p.deps.Root), Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw, LocalClipboard: localClip})
 			return
 		}
 		missing = err.Error()
@@ -679,7 +691,7 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	home, _ := os.UserHomeDir()
 	if frontend.IsPathQuery(q) {
-		writeJSON(w, bootView{Picker: out, Paths: frontend.PathRows(home, q, projects), Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw})
+		writeJSON(w, bootView{Picker: out, Paths: frontend.PathRows(home, q, projects), Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw, LocalClipboard: localClip})
 		return
 	}
 	isOpen := map[string]bool{}
@@ -700,7 +712,7 @@ func (s *Server) boot(w http.ResponseWriter, r *http.Request) {
 			When: frontend.RelTime(now, pr.LastVisited), Key: s.keyOf(pr.Root, projects, open), Open: isOpen[project.RealPath(pr.Root)],
 			Unsaved: s.unsavedOf(pr.Root, ""), worktreeOf: wv})
 	}
-	writeJSON(w, bootView{Picker: out, Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw, StartScratchPicker: startPick && q == ""})
+	writeJSON(w, bootView{Picker: out, Total: len(projects), Missing: missing, Theme: theme, Themes: webtheme.All(), OpenIn: openIn, Open: s.summaries(), Find: s.cfg.Add != nil, ScratchWarehouses: sw, StartScratchPicker: startPick && q == "", LocalClipboard: localClip})
 }
 
 // openIn is where a project picked from a project's page opens:

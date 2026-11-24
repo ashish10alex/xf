@@ -449,6 +449,8 @@ const vimCommands = {
   vimBufferDelete: { keys: '<leader>x', run: (a, o) => (o && o.bufferDelete ? o.bufferDelete() : say(o, 'no buffers here')) },
   // The palette's file finder, as cmd+p (ctrl+p off a Mac) opens it.
   vimFiles: { keys: '<leader>f', run: (a, o) => (o && o.files ? o.files() : say(o, 'no files here')) },
+  // The file tree (tree.js), as cmd+b (ctrl+b off a Mac) toggles it.
+  vimFileTree: { keys: '<leader>nt', run: (a, o) => (o && o.fileTree ? o.fileTree() : say(o, 'no file tree here')) },
   // Format the file's SQL and config block (ADR 0024): :format, with a key
   // only when one is set; no keys, no mapping.
   vimFormat: { keys: '', run: (a, o) => (o && o.format ? o.format() : say(o, 'nothing to format here')) },
@@ -595,36 +597,105 @@ function installHold() {
 // clipboard, and p and P paste from it, as vim's clipboard=unnamedplus
 // does. The clipboard keeps only text: when it still holds what vim last
 // put there, p pastes the register itself, which knows whether that was
-// whole lines or a block. Where the browser gives no clipboard (http other
-// than localhost) or refuses a read, p pastes the register.
+// whole lines or a block. For a local browser (not --allow-host), xf web
+// serves /api/clipboard so p, P and Paste read this machine's clipboard
+// directly without a browser clipboard-read permission prompt; remotely,
+// or if /api/clipboard fails, it falls back to navigator.clipboard and
+// then vim's register.
 let clipboardShared = false;
+let localClipboard = false;
 
-function shareClipboard() {
+export function setLocalClipboard(on) { localClipboard = !!on; }
+
+async function readSystemClipboard() {
+  if (localClipboard && typeof fetch === 'function') {
+    try {
+      const r = await fetch('/api/clipboard', { credentials: 'same-origin' });
+      if (r.ok) {
+        const d = await r.json();
+        return { ok: true, text: typeof d.text === 'string' ? d.text : '' };
+      }
+    } catch {}
+  }
+  const c = navigator.clipboard;
+  if (c && typeof c.readText === 'function') {
+    try {
+      return { ok: true, text: await c.readText() };
+    } catch {}
+  }
+  return { ok: false, text: '' };
+}
+
+function writeSystemClipboard(text) {
+  const local = () => {
+    if (!localClipboard || typeof fetch !== 'function') return;
+    fetch('/api/clipboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }), credentials: 'same-origin' }).catch(() => {});
+  };
+  const c = navigator.clipboard;
+  if (c && typeof c.writeText === 'function') {
+    c.writeText(text).catch(local);
+  } else {
+    local();
+  }
+}
+
+export function shareClipboard() {
   if (clipboardShared) return;
   clipboardShared = true;
   const Vim = cm.Vim;
   const rc = Vim.getRegisterController();
-  const clip = () => navigator.clipboard;
 
   const push = rc.pushText.bind(rc);
   rc.pushText = (name, operator, text, linewise, blockwise) => {
     push(name, operator, text, linewise, blockwise);
     if (name && name !== '"' && rc.isValidRegister(name)) return; // "a, "_, and "+ (which writes itself)
-    if (clip()) clip().writeText(rc.unnamedRegister.toString()).catch(() => {});
+    writeSystemClipboard(rc.unnamedRegister.toString());
   };
 
   Vim.defineAction('paste', function (cmAdapter, args, vim) {
+    if (cmAdapter.cm6 && cmAdapter.cm6.state.readOnly) return;
     const register = rc.getRegister(args.registerName);
-    const own = () => this.continuePaste(cmAdapter, args, vim, register.toString(), register);
     const unnamed = !args.registerName || args.registerName === '"';
-    // A macro's keys run one after another, so its pastes can't wait.
-    if (!(unnamed || args.registerName === '+') || !clip() || Vim.getVimGlobalState_().macroModeState.isPlaying) { own(); return; }
-    clip().readText().then((text) => {
+    const syncClip = unnamed || args.registerName === '+';
+    const run = (text, shape) => {
+      if (cmAdapter.cm6 && (cmAdapter.cm6.destroyed || cmAdapter.cm6.state.readOnly)) return;
+      const wasVisual = !!vim.visualMode;
+      const prevUnnamed = { text: rc.unnamedRegister.toString(), linewise: !!rc.unnamedRegister.linewise, blockwise: !!rc.unnamedRegister.blockwise };
+      // Run inside a vim operation so async clipboard pastes keep their own
+      // undo step, scroll into view, and don't trigger external-selection
+      // handling mid-paste (such as visual-block replacement).
+      cmAdapter.operation(() => {
+        if (cmAdapter.curOp) cmAdapter.curOp.isVimOp = true;
+        this.continuePaste(cmAdapter, args, vim, text, shape);
+      });
+      if (text) {
+        if (wasVisual && !args.after) {
+          // Visual P keeps the register (Neovim's :h v_P) instead of
+          // overwriting it with the replaced selection.
+          if (syncClip) rc.unnamedRegister.setText(text, !!shape.linewise, !!shape.blockwise);
+          else rc.unnamedRegister.setText(prevUnnamed.text, prevUnnamed.linewise, prevUnnamed.blockwise);
+        } else if (!wasVisual && syncClip) {
+          // Sync unnamed register so dot repeat (.) pastes what we just pasted.
+          rc.unnamedRegister.setText(text, !!shape.linewise, !!shape.blockwise);
+        }
+      }
+      if (cmAdapter.signal) cmAdapter.signal('vim-command-done');
+    };
+    const own = () => run(register.toString(), register);
+    // A macro's or dot-repeat's keys run synchronously, so its pastes can't wait.
+    if (!syncClip || Vim.getVimGlobalState_().macroModeState.isPlaying) { own(); return; }
+    readSystemClipboard().then((res) => {
+      if (!res.ok) {
+        if (register.toString()) { own(); return; }
+        say(ownerOf(cmAdapter), 'clipboard read blocked by the browser: use ' + (onMac ? '⌘v' : 'ctrl+v') + ' or allow clipboard permission');
+        return;
+      }
+      const text = res.text.replace(/\r\n?/g, '\n');
       if (text === register.toString()) { own(); return; }
       // Text from elsewhere that ends a line pastes as lines, as in vim.
       const shape = { linewise: text.endsWith('\n'), blockwise: false };
-      this.continuePaste(cmAdapter, args, vim, text, shape);
-    }, own);
+      run(text, shape);
+    });
   });
 }
 
@@ -638,11 +709,11 @@ export function clipCopy(view, from, to, cut) {
 }
 
 // clipText is what a paste puts in: the clipboard's text, or the unnamed
-// register's where the browser gives no clipboard or refuses the read.
+// register's where no clipboard is reachable.
 export async function clipText() {
-  const own = cm.Vim.getRegisterController().getRegister('"').toString();
-  if (!navigator.clipboard) return own;
-  try { return await navigator.clipboard.readText(); } catch { return own; }
+  const res = await readSystemClipboard();
+  if (res.ok) return res.text.replace(/\r\n?/g, '\n');
+  return cm.Vim.getRegisterController().getRegister('"').toString();
 }
 
 // ---- the error lens ----

@@ -41,7 +41,7 @@ const announce = (t) => send({ t, since: me.since, project, label });
 
 // heard is the windows that answered since this one last asked, while
 // it waits for them.
-let heard = null, askTimer = 0;
+let heard = null, askTimer = 0, dockWait = null;
 
 if (ch) {
   ch.onmessage = ({ data: m }) => {
@@ -69,6 +69,20 @@ if (ch) {
         return;
       case 'focused':
         if (m.to === me.id) answered(m.id, !!m.ok);
+        return;
+      case 'scratch-dock':
+        if (m.to === me.id && alive && hooks.importDockedTabs) {
+          hooks.importDockedTabs(m.token);
+          comeForward(m.id);
+          send({ t: 'scratch-docked', to: m.id, ok: true });
+        }
+        return;
+      case 'scratch-docked':
+        if (m.to === me.id && dockWait) {
+          const fn = dockWait;
+          dockWait = null;
+          fn(!!m.ok);
+        }
         return;
     }
   };
@@ -274,7 +288,24 @@ export function windowsOn(key) {
   return { self: (all.find((w) => w.self) || {}).n || 0, others: all.filter((w) => !w.self && w.project === key).map((w) => w.n) };
 }
 
+// dockToPeer sends a popped-out Scratch's handoff token to another open
+// window on the same project and resolves true when that window accepts it.
+export function dockToPeer(projectKey, token) {
+  if (!ch) return Promise.resolve(false);
+  const peers = windows().filter((w) => !w.self && w.project === projectKey);
+  if (!peers.length) return Promise.resolve(false);
+  const target = peers.find((w) => !/ · scratch\b/.test(w.label)) || peers[0];
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (dockWait) { dockWait = null; resolve(false); }
+    }, 800);
+    dockWait = (ok) => { clearTimeout(timer); resolve(ok); };
+    send({ t: 'scratch-dock', to: target.id, token });
+  });
+}
+
 // The palette's command finds the list from anywhere.
 hooks.otherWindows = others;
 hooks.windowsOn = windowsOn;
 hooks.openWindows = () => openWindows(document.querySelector('.win-pill'));
+hooks.dockScratchToPeer = dockToPeer;

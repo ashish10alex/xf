@@ -6,14 +6,14 @@
 import * as vim from './vim.js';
 import { diagSetup, drew, drawFailed, note, requestStart } from './diag.js';
 import { T, applyTheme, themeHooks, openThemePicker, themeName } from './theme.js';
-import { part, setWorkspaceRoot, saveWorkspace, workspaceOf, restoreParts, unsavedNow } from './workspace.js';
+import { part, setWorkspaceRoot, saveWorkspace, workspaceOf, restoreParts, unsavedNow, clearSessionWorkspace } from './workspace.js';
 import { baseKey, branchesKey, closeBase, onBase, onBranch, openBase, openBranches, openNewWorktree, readBranch } from './branches.js';
 import { answerProd, askDefer, changedKey, checkKey, deferAskKey, deferOn, onProgress, openChanged, openCost, openImpact, openTags, recheckShowing, removeProxies, requestChanged, runTags, scrollOverlay, toggleDefer, toggleTag } from './checks.js';
 import { errorsTabKey, errorsTabShown, nextSQLTab, pickSQLTab, readErrors, showErrorsTab, sqlTabOn } from './errors-tab.js';
 import { clearHistory, closeTerm, closeWatch, hasTabs, jobsTableKey, loadTerms, logKey, logTabs, newTerm, nextTab, openKept, openURL, openWatch, setTerms } from './log-tabs.js';
 import { askRemoveWorktreeHere, closeScratchPicker, cycleProject, nextOpenProject, openByName, openScratchPicker, openScratchWarehouse, pickScratchWarehouse, pickerKey, readOpenWorktrees, setPickerQuery, stopFind, switchProject } from './picker.js';
 import { columnsKey, searchSQLFromPalette, sqlKey } from './sql-pane.js';
-import { unsavedIn, noteVimMode } from './vim-mode.js';
+import { unsavedIn, noteVimMode, vimOn } from './vim-mode.js';
 
 // hooks are what modules that import this one (scratch.js) fill in, for the
 // keys and commands here to call.
@@ -195,7 +195,7 @@ function holdFirstDraw() {
 }
 function firstReady() {
   if (!fontsIn) return false;
-  if (S.mode !== 'project' || S.overlay) return true;
+  if (S.mode !== 'project' || S.overlay || (hooks.scratchOpen && hooks.scratchOpen())) return true;
   if (S.sel && !(S.view && S.view.id === S.sel)) return false;
   return !(hooks.sourceLoading && hooks.sourceLoading()) && !(hooks.treeLoading && hooks.treeLoading());
 }
@@ -337,6 +337,10 @@ themeHooks({ post, redraw, say, inProject: () => S.mode === 'project' });
 
 // projectURL is the page of the project key names.
 export const projectURL = (key) => '/?project=' + encodeURIComponent(key).replace(/%2F/g, '/').replace(/%7E/g, '~');
+
+// scratchPopoutURL is a popped-out Scratch window on the project key names,
+// with an optional one-time handoff token for tabs transferred from another window.
+export const scratchPopoutURL = (key, handoff) => projectURL(key) + '&scratch=popout' + (handoff ? '&handoff=' + encodeURIComponent(handoff) : '');
 
 // bootPath asks for the project key names, which opens it.
 const bootPath = (key) => '/api/boot' + (key ? '?project=' + encodeURIComponent(key) : '');
@@ -522,25 +526,41 @@ function reportUnsaved() {
 setInterval(reportUnsaved, 1000);
 
 export async function start() {
-  const want = new URLSearchParams(location.search).get('project') || '';
+  const params = new URLSearchParams(location.search);
+  const want = params.get('project') || '';
+  const isScratchPopout = params.get('scratch') === 'popout';
+  const handoff = params.get('handoff') || '';
   const said = carried();
   try {
     const b = await get(bootPath(want));
     applyTheme(b.theme, b.themes, b.themeOwn);
     S.openIn = b.openIn || 'same-tab';
     S.canFind = !!b.find;
+    S.localClipboard = !!b.localClipboard;
+    if (hooks.localClipboard) hooks.localClipboard(S.localClipboard);
     S.scratchWarehouses = b.scratchWarehouses || [];
     S.scratchPick = null;
     S.open = b.open || [];
     if (b.project) {
       holdFirstDraw();
       S.key = b.key;
-      if (b.key !== want) history.replaceState(null, '', projectURL(b.key));
-      noteShown(b.key);
-      setWorkspaceRoot(b.project.root);
-      const ws = workspaceOf(b.project.root);
-      startProject(b.project, ws && ws.parts.view);
-      restoreParts(ws, ['view']);
+      if (isScratchPopout) {
+        // A fresh pop-out clears sessionStorage copied from the opener so it
+        // never reports the opener's unsaved source files as its own.
+        if (handoff) clearSessionWorkspace();
+        history.replaceState(null, '', scratchPopoutURL(b.key));
+        setWorkspaceRoot(b.project.root);
+        const ws = workspaceOf(b.project.root);
+        startProject(b.project, null);
+        if (hooks.openScratchPopout) hooks.openScratchPopout(handoff, ws && ws.parts.scratch);
+      } else {
+        if (b.key !== want) history.replaceState(null, '', projectURL(b.key));
+        noteShown(b.key);
+        setWorkspaceRoot(b.project.root);
+        const ws = workspaceOf(b.project.root);
+        startProject(b.project, ws && ws.parts.view);
+        restoreParts(ws, ['view']);
+      }
       if (said) S.flash = said;
     } else {
       // A project that didn't open (forgotten, moved) leaves the
@@ -1215,6 +1235,12 @@ export async function copy(text, what) {
     } catch {}
     ta.remove();
   }
+  if (!ok && S.localClipboard) {
+    try {
+      await post('/api/clipboard', { text });
+      ok = true;
+    } catch {}
+  }
   if (what) say(what);
 }
 
@@ -1290,6 +1316,7 @@ export function openProfilePicker(then) {
 const rightPanes = ['actions', 'lineage', 'run', 'defer', 'sql'];
 
 export function setFocus(p) {
+  clearVimSeq();
   // A hidden pane 2 comes back only with its own key.
   if (rightPanes.includes(p) && !rightShown()) { sayRightHidden(); return; }
   // Beside a Markdown file pane 2 is the preview alone.
@@ -2085,6 +2112,7 @@ function commands() {
     add('Scratch: go to last query', '', () => hooks.openLastScratch());
     add('Scratch: open scratch queries', '', () => hooks.openScratch());
     add('Scratch: new empty query', '', () => hooks.openScratch(null, { draft: true }));
+    add('Scratch: open in new window', '', () => hooks.popoutScratch && hooks.popoutScratch({ fresh: true }));
   }
   add('Check: compile', saveKey, saveAndCompile);
   add('Check: show errors', 'e', showErrorsOrSay);
@@ -2492,6 +2520,86 @@ export function keyName(e) {
   return k;
 }
 
+// vimKeyTokens splits a vim key sequence (with <leader> expanded) into
+// keyName() tokens so non-editor panes can match vimFileTree too.
+const vimSpecial = {
+  space: 'space', cr: 'enter', enter: 'enter', return: 'enter',
+  esc: 'esc', escape: 'esc', tab: 'tab', 's-tab': 'shift+tab',
+  bs: 'backspace', backspace: 'backspace',
+  up: 'up', down: 'down', left: 'left', right: 'right',
+  home: 'home', end: 'end', pageup: 'pgup', pagedown: 'pgdown',
+  lt: '<', bar: '|', bslash: '\\',
+};
+export function vimKeyTokens(keys) {
+  const parts = (keys || '').match(/<[^>]+>|./gsu) || [];
+  return parts.map((p) => {
+    if (!p.startsWith('<') || !p.endsWith('>')) return p;
+    const inner = p.slice(1, -1).toLowerCase();
+    if (vimSpecial[inner]) return vimSpecial[inner];
+    const ctrl = /^c-(.)$/.exec(inner);
+    if (ctrl) return 'ctrl+' + ctrl[1];
+    return p;
+  });
+}
+
+function vimTreeTokens() {
+  const ks = S.boot && S.boot.vimKeys;
+  const leader = (ks && ks.vimLeader) || '<Space>';
+  const raw = (ks && ks.vimFileTree) || '<leader>nt';
+  return vimKeyTokens(raw.replace(/<leader>/gi, leader));
+}
+
+let vimSeqHeld = [], vimSeqTimer = 0, vimSeqReplaying = false;
+function clearVimSeq() {
+  clearTimeout(vimSeqTimer);
+  vimSeqTimer = 0;
+  vimSeqHeld = [];
+}
+
+function canMatchVimTree(seq) {
+  if (!vimOn() || vimSeqReplaying || !hooks.toggleTree || !seq.length) return false;
+  if (columnsFocused() && S.cols.typing) return false;
+  if (S.focus === 'tree' && hooks.treeBlocksLeader && hooks.treeBlocksLeader(seq[0])) return false;
+  if (S.focus === 'sql' && errorsTabShown() && seq[0] === 'space') return false;
+  return true;
+}
+
+function matchVimTreeKey(k) {
+  const seq = vimTreeTokens();
+  if (!canMatchVimTree(seq)) { clearVimSeq(); return false; }
+  if (k === 'esc' && vimSeqHeld.length) { clearVimSeq(); return true; }
+  const typed = [...vimSeqHeld, k];
+  if (typed.every((tok, i) => tok === seq[i])) {
+    if (typed.length === seq.length) {
+      clearVimSeq();
+      hooks.toggleTree();
+      return true;
+    }
+    vimSeqHeld = typed;
+    clearTimeout(vimSeqTimer);
+    vimSeqTimer = setTimeout(() => {
+      const keys = vimSeqHeld;
+      clearVimSeq();
+      vimSeqReplaying = true;
+      try { for (const hk of keys) handleKey(hk); } finally { vimSeqReplaying = false; }
+      redraw();
+    }, 1000);
+    if (vimSeqTimer && vimSeqTimer.unref) vimSeqTimer.unref();
+    return true;
+  }
+  if (!vimSeqHeld.length) return false;
+  const prev = vimSeqHeld;
+  clearVimSeq();
+  vimSeqReplaying = true;
+  let used = false;
+  try {
+    for (const hk of prev) if (handleKey(hk)) used = true;
+  } finally {
+    vimSeqReplaying = false;
+  }
+  return handleKey(k) || used;
+}
+
 // handleKey is the TUI's handleKey: overlays first, then the focused
 // pane's keys, then the global ones. It reports whether it used the key.
 export function handleKey(k) {
@@ -2499,6 +2607,9 @@ export function handleKey(k) {
   // Down and Up bindings).
   if (k === 'ctrl+n') k = 'down';
   if (k === 'ctrl+p') k = 'up';
+  if (vimSeqHeld.length && (S.mode !== 'project' || S.overlay || S.checks || S.inspector || S.sqlSearch.typing ||
+      (hooks.settingsOpen && hooks.settingsOpen()) || (hooks.scratchOpen && hooks.scratchOpen()) ||
+      k === 'palette' || k === 'commands' || k === 'ctrl+c')) clearVimSeq();
   if (hooks.settingsOpen && hooks.settingsOpen()) return hooks.settingsKey(k);
   if (S.mode === 'picker') return pickerKey(k);
   if (S.mode !== 'project') return false;
@@ -2594,6 +2705,7 @@ export function handleKey(k) {
     case 'gitOutput': return hooks.gitOutputKey(k);
   }
   if (S.sqlSearch.typing) return false;
+  if (matchVimTreeKey(k)) return true;
 
   if (S.focus === 'sql' && previewShown()) {
     if (hooks.markdownKey && hooks.markdownKey(k)) return true;

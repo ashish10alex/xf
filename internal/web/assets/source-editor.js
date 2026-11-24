@@ -186,6 +186,7 @@ function mountSourceEditor(parent) {
     buffers: () => openBuffers(),
     bufferDelete: () => deleteCommand(''),
     files: () => { openPalette(); redraw(); },
+    fileTree: () => { if (hooks.toggleTree) { hooks.toggleTree(); redraw(); } },
     // gsh stages through Source Control (scm.js).
     // A right-click, the menu key and shift+F10 open the context menu
     // (source-menu.js).

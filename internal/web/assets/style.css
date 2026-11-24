@@ -1101,6 +1101,13 @@ html.win-pulse body { animation: win-pulse 1.2s ease-out 1; }
 .sc-tab-close:hover { opacity: 1; color: var(--fg); background: var(--focus-glow); }
 .sc-tab-add { flex: none; border: 0; background: none; color: var(--dim); font: 15px/28px var(--chrome); padding: 0 10px; cursor: pointer; }
 .sc-tab-add:hover { color: var(--fg); background: var(--focus-glow); }
+.sc-tab.dragging { opacity: 0.45; }
+.scratch-app > .status.can-drag { cursor: grab; }
+.scratch-app > .status.can-drag button { cursor: pointer; }
+.sc-popout-btn { white-space: nowrap; }
+body.sc-dragging { user-select: none; cursor: grabbing !important; }
+.sc-drag-ghost { position: fixed; z-index: 9999; pointer-events: none; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--rule); background: var(--panel); color: var(--dim); font: 12px/1.3 var(--chrome); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); white-space: nowrap; }
+.sc-drag-ghost.detached { border-color: var(--focus); color: var(--fg); box-shadow: 0 0 0 1px var(--focus), 0 8px 24px rgba(0, 0, 0, 0.45); }
 .sc-editor-pane { flex: 0 0 42%; min-height: 160px; display: flex; flex-direction: column; border-bottom: 1px solid var(--rule); }
 .sc-editor-pane.full { flex: 1; border-bottom: 0; }
 .sc-editor-pane.focused { box-shadow: inset 0 0 0 1px var(--focus), inset 0 0 12px var(--focus-glow); }
