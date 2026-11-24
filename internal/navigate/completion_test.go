@@ -121,3 +121,30 @@ func TestCompletionsAmbiguousName(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// The page keeps a $'s list and filters it at each key (source-smart.js
+// serverSource), which is right only while the list and its Start are the
+// same whatever is typed after the $.
+func TestCompletionsSameAlongDollarWord(t *testing.T) {
+	p := navProject(t)
+	sqlx := filepath.Join(p.Root, "definitions", "new.sqlx")
+	head := "config { type: \"view\" }\nSELECT * FROM "
+	var first []Completion
+	for _, typed := range []string{"$", "$a", "$ab"} {
+		src := []byte(head + typed + "\nWHERE 1 = 1")
+		got := Completions(p, sqlx, src, len(head)+len(typed))
+		if len(got) == 0 {
+			t.Fatalf("%q: no completions", typed)
+		}
+		if got[0].Start != len(head) {
+			t.Errorf("%q: Start %d, want %d", typed, got[0].Start, len(head))
+		}
+		if first == nil {
+			first = got
+			continue
+		}
+		if !slices.Equal(got, first) {
+			t.Errorf("%q: got %+v\nwant %+v", typed, got, first)
+		}
+	}
+}

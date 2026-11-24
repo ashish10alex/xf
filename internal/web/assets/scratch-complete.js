@@ -359,6 +359,26 @@ export function byParts(options, typed) {
     .map((x) => ({ ...x.o, ranges: x.m.ranges }));
 }
 
+// partsResult is a completion result of all, as byParts keeps them for the
+// text typed since from (typedOf makes it what byParts matches), which
+// filters all again at each key on the page, asking nothing, while
+// stillValid says the typed text still asks for this list; when it no
+// longer does, or the text before from changes, CodeMirror asks again.
+// null when nothing matches.
+export function partsResult(all, from, typedOf, stillValid, typed) {
+  const options = byParts(all, typedOf(typed));
+  if (!options.length) return null;
+  return {
+    from, options, filter: false, getMatch: (o) => o.ranges,
+    update(current, from2, to, ctx) {
+      if (from2 !== from || to < from) return null;
+      const now = ctx.state.sliceDoc(from, to);
+      if (!stillValid(now)) return null;
+      return { ...current, options: byParts(all, typedOf(now)) };
+    },
+  };
+}
+
 // inFromList is whether a table is what the text before start asks for:
 // after FROM, JOIN or another TABLE_AT word, or after a comma in a FROM list.
 export function inFromList(clean, start) {

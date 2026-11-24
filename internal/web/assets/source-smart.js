@@ -35,7 +35,7 @@ import { S, get, post, redraw, hooks, setFocus, say, onMac, tablesSite } from '.
 import { SRC, sourceEditor, goToPlace, isLibraryFile } from './source.js';
 import { wordMarks } from './diff.js';
 import { jumpWithin } from './editor.js';
-import { tableCard, cardDOM, keyedCard, keyOnFocus, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts, afterTable, madeColumns } from './scratch-complete.js';
+import { tableCard, cardDOM, keyedCard, keyOnFocus, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts, partsResult, afterTable, madeColumns } from './scratch-complete.js';
 import { loadFunctions, functionOptions, clauseOptions, inPivotAggregate, valueOptions, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 import { sqlText, inJavaScript } from './sqlx.js';
 import { pathSource, unlessPaths, pathExtensions } from './source-paths.js';
@@ -421,15 +421,29 @@ async function serverSource(context) {
   const from = Math.min(...res.items.map((i) => i.from));
   // Names match as Scratch's tables do, by any part or a few words of
   // them ($0300_ROI finds 0300_PROMOTIONS_DATA_ROI), so the list is
-  // filtered here and asked for again at each key.
-  const typed = state.doc.sliceString(from, pos).replace(/^\$/, '');
-  const options = byParts(res.items.map((i) => ({
+  // filtered here.
+  const all = res.items.map((i) => ({
     label: i.label, detail: i.detail, apply: i.insert,
     type: KIND_TYPES[i.kind] || 'class', boost: 3,
-  })), typed);
+  }));
+  const typed = state.doc.sliceString(from, pos);
+  const stripDollar = (t) => t.replace(/^\$/, '');
+  // After a $ the server's refs are the same whatever is typed after it,
+  // so the page filters them at each key until the next compile, which
+  // may change the models; config keys and values, and a dbt ref('…'),
+  // depend on more than the typed letters and are asked for again.
+  if (res.items.every((i) => i.kind === 'ref') && state.doc.sliceString(from, from + 1) === '$') {
+    const gen = compileGen;
+    return partsResult(all, from, stripDollar, (t) => /^\$\w*$/.test(t) && gen === compileGen, typed);
+  }
+  const options = byParts(all, stripDollar(typed));
   if (!options.length) return null;
   return { from, options, filter: false, getMatch: (o) => o.ranges };
 }
+
+// compileGen counts the compiles finished, after which a $'s refs are
+// asked for again.
+let compileGen = 0;
 
 // inLiteral says whether pos is in a comment or a string.
 function inLiteral(state, pos) {
@@ -848,6 +862,6 @@ hooks.sourceLoaded = () => {
   pythonShown(SRC.view);
 };
 hooks.sourceSaved = () => { resetSinceSave(); };
-hooks.sourceDiagnose = () => { diagnose(); refLabels(); };
+hooks.sourceDiagnose = () => { compileGen++; diagnose(); refLabels(); };
 hooks.sourceSymbols = sourceSymbols;
 hooks.jumpToSymbol = jumpToSymbol;
