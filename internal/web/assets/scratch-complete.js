@@ -28,6 +28,7 @@ function cached(url) {
 }
 
 export function clearMetaCache() { cache.clear(); }
+export function clearModelsCache() { cache.delete('/api/scratch/meta/models'); }
 onClearMeta(clearMetaCache);
 
 const q = (o) => new URLSearchParams(o).toString();

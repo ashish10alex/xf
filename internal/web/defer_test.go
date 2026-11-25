@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -238,4 +240,81 @@ func TestBuildChangedFirstAddsThemToTheRun(t *testing.T) {
 	}
 	close(f.lines)
 	f.done <- project.RunResult{}
+}
+
+func TestRefLabelsPendingWhileRefreshingAfterCompile(t *testing.T) {
+	root := t.TempDir()
+	defs := filepath.Join(root, "definitions")
+	if err := os.MkdirAll(defs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(defs, "orders.sqlx"), []byte(`SELECT * FROM ${ref("customers")}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	eng := deferEngine(deferGraph(), true)
+	var mu sync.Mutex
+	prodProject := "prod-old"
+	var gate chan struct{}
+	ask := func(_ context.Context, _ engine.DeferralRequest) (*engine.DeferralResult, error) {
+		mu.Lock()
+		ch := gate
+		mu.Unlock()
+		if ch != nil {
+			<-ch
+		}
+		mu.Lock()
+		proj := prodProject
+		mu.Unlock()
+		prod := project.Target{Database: proj, Schema: "s", Name: "customers"}
+		d := &deferral.Deferral{
+			Entries: []deferral.Entry{{Dev: project.Target{Database: "dev", Schema: "s", Name: "customers"}, Prod: &prod, Status: deferral.Deferred}},
+		}
+		return &engine.DeferralResult{Deferral: d}, nil
+	}
+	s, ts, c := newTest(t, frontend.Deps{Root: root, Engine: eng, Deferral: ask, SetDefer: func(bool) {}})
+	p := s.only()
+	// First load settles on prod-old.
+	var v refLabelsView
+	waitFor(t, func() bool {
+		v = refLabelsView{}
+		getJSON(t, c, ts.URL+"/api/defer/refs?file=definitions/orders.sqlx", &v)
+		return v.On && !v.Pending
+	})
+	if len(v.Labels) != 1 || v.Labels[0].Prod != "prod-old.s.customers" {
+		t.Fatalf("initial refLabels = %+v, want prod-old.s.customers", v.Labels)
+	}
+
+	// A new compile expires the Deferral; while the refresh is in flight,
+	// /api/defer/refs must report Pending: true so the page re-asks on detail.
+	mu.Lock()
+	prodProject = "prod-new"
+	gate = make(chan struct{})
+	mu.Unlock()
+	eng.states <- engine.State{Graph: deferGraph(), Compiles: 2, CompiledAt: time.Now(), Defer: true}
+	waitFor(t, func() bool {
+		p.mu.Lock()
+		n := p.st.Compiles
+		p.mu.Unlock()
+		return n == 2
+	})
+
+	// Both the call that kicks off the refresh and a concurrent follow-up
+	// while it is still in flight must report Pending: true.
+	for range 2 {
+		v = refLabelsView{}
+		getJSON(t, c, ts.URL+"/api/defer/refs?file=definitions/orders.sqlx", &v)
+		if !v.Pending {
+			t.Fatalf("refLabels while refreshing after compile: got Pending=false, want true (%+v)", v)
+		}
+	}
+
+	close(gate)
+	waitFor(t, func() bool {
+		v = refLabelsView{}
+		getJSON(t, c, ts.URL+"/api/defer/refs?file=definitions/orders.sqlx", &v)
+		return v.On && !v.Pending
+	})
+	if len(v.Labels) != 1 || v.Labels[0].Prod != "prod-new.s.customers" {
+		t.Fatalf("refreshed refLabels = %+v, want prod-new.s.customers", v.Labels)
+	}
 }

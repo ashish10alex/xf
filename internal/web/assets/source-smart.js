@@ -35,19 +35,25 @@ import { S, get, post, redraw, hooks, setFocus, say, onMac, tablesSite } from '.
 import { SRC, sourceEditor, goToPlace, isLibraryFile } from './source.js';
 import { wordMarks } from './diff.js';
 import { jumpWithin } from './editor.js';
-import { tableCard, cardDOM, keyedCard, keyOnFocus, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts, partsResult, afterTable, madeColumns } from './scratch-complete.js';
+import { tableCard, cardDOM, keyedCard, keyOnFocus, columnsOf, mergeColumns, quoteIdent, words, NOT_ALIAS, blank, inFromList, byParts, partsResult, afterTable, madeColumns, clearModelsCache } from './scratch-complete.js';
 import { loadFunctions, functionOptions, clauseOptions, inPivotAggregate, valueOptions, functionAt, functionCard, functionExtensions } from './scratch-functions.js';
 import { sqlText, inJavaScript } from './sqlx.js';
 import { pathSource, unlessPaths, pathExtensions } from './source-paths.js';
 
 // ---- the file's tables ----
 
-// refsOf asks which tables text refers to, once for each text.
-let lastRefs = { text: null, p: null };
-function refsOf(text) {
-  if (lastRefs.text === text && lastRefs.p) return lastRefs.p;
-  const p = post('/api/source/refs', { file: SRC.file, text }).catch(() => null);
-  lastRefs = { text, p };
+// refsOf asks which tables text refers to, once for each file, text and
+// compile; a failed call is not kept.
+let lastRefs = { file: null, text: null, p: null };
+export function refsOf(text) {
+  const file = SRC.file;
+  if (lastRefs.file === file && lastRefs.text === text && lastRefs.p) return lastRefs.p;
+  let p;
+  p = post('/api/source/refs', { file, text }).catch(() => {
+    if (lastRefs.p === p) lastRefs = { file: null, text: null, p: null };
+    return null;
+  });
+  lastRefs = { file, text, p };
   return p;
 }
 
@@ -232,15 +238,21 @@ function includeWord(state, pos) {
 }
 
 // includeAt asks for the includes name at pos: {from, to, code, doc,
-// file, line, col, action}, or null; once for each text and word.
-let lastInclude = { text: null, at: -1, p: null };
-function includeAt(state, pos) {
+// file, line, col, action}, or null; once for each file, text, word and
+// compile. A failed call is not kept.
+let lastInclude = { file: null, text: null, at: -1, p: null };
+export function includeAt(state, pos) {
   const at = includeWord(state, pos);
   if (at < 0) return null;
+  const file = SRC.file;
   const text = state.doc.toString();
-  if (lastInclude.text === text && lastInclude.at === at) return lastInclude.p;
-  const p = post('/api/source/include', { file: SRC.file, text, offset: at }).then((r) => r.include, () => null);
-  lastInclude = { text, at, p };
+  if (lastInclude.file === file && lastInclude.text === text && lastInclude.at === at && lastInclude.p) return lastInclude.p;
+  let p;
+  p = post('/api/source/include', { file, text, offset: at }).then((r) => r.include, () => {
+    if (lastInclude.p === p) lastInclude = { file: null, text: null, at: -1, p: null };
+    return null;
+  });
+  lastInclude = { file, text, at, p };
   return p;
 }
 
@@ -290,15 +302,21 @@ function configKeyWord(state, pos) {
 }
 
 // configKeyAt asks for the config key at pos: {from, to, path, kind, doc,
-// values, for, configType, unread}, or null; once for each text and key.
-let lastKey = { text: null, at: -1, p: null };
-function configKeyAt(state, pos) {
+// values, for, configType, unread}, or null; once for each file, text, key
+// and compile. A failed call is not kept.
+let lastKey = { file: null, text: null, at: -1, p: null };
+export function configKeyAt(state, pos) {
   const at = configKeyWord(state, pos);
   if (at < 0) return null;
+  const file = SRC.file;
   const text = state.doc.toString();
-  if (lastKey.text === text && lastKey.at === at) return lastKey.p;
-  const p = post('/api/source/configkey', { file: SRC.file, text, offset: at }).then((r) => r.key, () => null);
-  lastKey = { text, at, p };
+  if (lastKey.file === file && lastKey.text === text && lastKey.at === at && lastKey.p) return lastKey.p;
+  let p;
+  p = post('/api/source/configkey', { file, text, offset: at }).then((r) => r.key, () => {
+    if (lastKey.p === p) lastKey = { file: null, text: null, at: -1, p: null };
+    return null;
+  });
+  lastKey = { file, text, at, p };
   return p;
 }
 
@@ -853,7 +871,14 @@ hooks.sourceExtensions = () => (loadFunctions(), [
 hooks.sourceHover = (view) => { cardAtCursor(view); };
 hooks.sourceDefinition = (view) => { goToDefinition(view); };
 hooks.sourceUpdate = (u) => { if (u.docChanged && sinceSave) sinceSave = sinceSave.compose(u.changes); };
+function clearLookups() {
+  lastRefs = { file: null, text: null, p: null };
+  lastInclude = { file: null, text: null, at: -1, p: null };
+  lastKey = { file: null, text: null, at: -1, p: null };
+}
+
 hooks.sourceLoaded = () => {
+  clearLookups();
   const ed = sourceEditor();
   if (ed) ed.setMarks([]);
   resetSinceSave();
@@ -862,6 +887,6 @@ hooks.sourceLoaded = () => {
   pythonShown(SRC.view);
 };
 hooks.sourceSaved = () => { resetSinceSave(); };
-hooks.sourceDiagnose = () => { compileGen++; diagnose(); refLabels(); };
+hooks.sourceDiagnose = () => { compileGen++; clearLookups(); clearModelsCache(); diagnose(); refLabels(); };
 hooks.sourceSymbols = sourceSymbols;
 hooks.jumpToSymbol = jumpToSymbol;

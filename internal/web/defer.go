@@ -313,23 +313,28 @@ func (p *projectState) refLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actions := g.ActionsInFile(file)
+	now := p.deps.Now()
 	ready, starts := p.deferStartsLocked(actions)
+	pending := !ready || len(starts) > 0
 	type known struct {
 		a *project.Action
 		d *deferral.Deferral
 	}
 	var ks []known
 	for _, a := range actions {
-		if k := p.def.byAction[a.ID]; k != nil && k.d != nil {
+		k := p.def.byAction[a.ID]
+		if k == nil || now.Sub(k.at) >= deferMaxAge {
+			pending = true
+		}
+		if k != nil && k.d != nil {
 			ks = append(ks, known{a, k.d})
 		}
 	}
-	now := p.deps.Now()
 	p.mu.Unlock()
 	for _, s := range starts {
 		go s()
 	}
-	v := refLabelsView{On: true, Pending: !ready, Labels: []refLabel{}}
+	v := refLabelsView{On: true, Pending: pending, Labels: []refLabel{}}
 	if len(ks) == 0 {
 		writeJSON(w, v)
 		return
